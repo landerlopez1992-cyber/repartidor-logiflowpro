@@ -20,10 +20,12 @@ import '../main.dart';
 
 class DetalleOrdenScreen extends StatefulWidget {
   final Orden orden;
+  final bool abrirModalFirmaAutomatico;
 
   const DetalleOrdenScreen({
     Key? key,
     required this.orden,
+    this.abrirModalFirmaAutomatico = false,
   }) : super(key: key);
 
   @override
@@ -640,6 +642,20 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
         print('❌ [ERROR CRÍTICO] Llamando _cargarSucursalInfo() después de error crítico en _recargarOrden()');
         _cargarSucursalInfo();
       }
+    }
+    
+    // 🔒 CRÍTICO: Si se solicitó abrir modal de firma automáticamente, hacerlo después de cargar
+    if (widget.abrirModalFirmaAutomatico && mounted) {
+      print('✍️ Abriendo modal de firma automáticamente después de cargar orden...');
+      // Esperar un frame para que la UI se renderice completamente
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _ordenActual.requiereFirma && (_firmaUrl == null || _firmaUrl!.isEmpty)) {
+          print('✍️ Llamando _mostrarModalFirma() automáticamente...');
+          _mostrarModalFirma();
+        } else {
+          print('ℹ️ No se abre modal de firma automáticamente: requiereFirma=${_ordenActual.requiereFirma}, firmaUrl=$_firmaUrl');
+        }
+      });
     }
   }
 

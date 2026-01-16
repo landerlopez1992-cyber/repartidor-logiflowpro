@@ -5164,7 +5164,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     }
   }
 
-  void _mostrarDetallesOrden(Orden orden) async {
+  void _mostrarDetallesOrden(Orden orden, {bool abrirModalFirma = false}) async {
     // Marcar notificación como leída si existe una notificación no leída para esta orden
     try {
       if (_repartidorId != null && orden.numeroOrden != null) {
@@ -5197,7 +5197,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     
     final resultado = await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => DetalleOrdenScreen(orden: orden),
+        builder: (context) => DetalleOrdenScreen(
+          orden: orden,
+          abrirModalFirmaAutomatico: abrirModalFirma,
+        ),
       ),
     );
     
@@ -6641,13 +6644,19 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           ),
           // Botón principal para completar entrega (ir directamente a foto/firma/cobro)
           ElevatedButton.icon(
-            onPressed: () {
+            onPressed: () async {
               Navigator.of(context).pop();
               // Si el error es de foto, abrir selector de cámara/galería directamente
               if (errores.any((e) => e.contains('foto') || e.contains('Foto') || e.contains('📷'))) {
-                _tomarFotoDesdeModal(orden);
-              } else {
-                // Para otros casos (firma, cobro), abrir detalles
+                await _tomarFotoDesdeModal(orden);
+              } 
+              // Si el error es de firma, abrir detalles con modal de firma automático
+              else if (errores.any((e) => e.contains('firma') || e.contains('Firma') || e.contains('✍️'))) {
+                // Abrir pantalla de detalle con modal de firma automático
+                _mostrarDetallesOrden(orden, abrirModalFirma: true);
+              }
+              else {
+                // Para otros casos (cobro), abrir detalles
                 _mostrarDetallesOrden(orden);
               }
             },
