@@ -5101,7 +5101,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       print('      - ID: ${ordenActualizadaNueva.id}');
       print('      - Número: ${ordenActualizadaNueva.numeroOrden}');
       print('      - Emisor: ${ordenActualizadaNueva.emisor}');
-      print('      - Destinatario: ${ordenActualizadaNueva.destinatario}');
+      print('      - Receptor: ${ordenActualizadaNueva.receptor}');
       print('      - Dirección: ${ordenActualizadaNueva.direccionDestino}');
       print('      - Estado: ${ordenActualizadaNueva.estado}');
       print('💾 Orden actualizada en caché: ${ordenActualizadaNueva.numeroOrden} (estado: ENTREGADO)');
@@ -5185,9 +5185,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         // 3️⃣ Si está offline, agregar a cola de sincronización
         print('📴 Sin conexión - Agregando a cola de sincronización');
         await syncService.addOperation(
-          'update_orden_estado',
-          orden.id,
-          {
+          type: 'update_orden_estado',
+          ordenId: orden.id,
+          data: {
             'estado': 'ENTREGADO',
             'fecha_entrega': DateTime.now().toIso8601String(),
           },
