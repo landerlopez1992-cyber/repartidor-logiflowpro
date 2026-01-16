@@ -3871,57 +3871,147 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     // PASO 2: Validar y cobrar PAGO (si requiere)
     if (_ordenActual.requierePago && !_ordenActual.pagado) {
       print('💰 PASO 2: Validando pago...');
+      
+      // 🔒 CRÍTICO: Preservar foto y firma antes de recargar
+      final fotoAntesDePago = _fotoEntregaUrl;
+      final firmaAntesDePago = _firmaUrl;
+      
       final pagoCobrado = await _validarYCobrarPago();
       if (!pagoCobrado) {
         print('❌ Pago no cobrado, cancelando entrega');
         return; // Usuario canceló o no cobró el pago
       }
+      
       // Recargar orden para actualizar estado de pago
       await _recargarOrden();
+      
+      // 🔒 CRÍTICO: Restaurar foto y firma después de recargar
+      if (fotoAntesDePago != null && fotoAntesDePago.isNotEmpty) {
+        _fotoEntregaUrl = fotoAntesDePago;
+        try {
+          final ordenJson = _ordenActual.toJson();
+          ordenJson['foto_entrega'] = fotoAntesDePago;
+          _ordenActual = Orden.fromJson(ordenJson);
+          print('✅ Foto preservada después de recargar por pago: $fotoAntesDePago');
+        } catch (e) {
+          print('⚠️ Error preservando foto después de recargar: $e');
+        }
+      }
+      
+      if (firmaAntesDePago != null && firmaAntesDePago.isNotEmpty) {
+        _firmaUrl = firmaAntesDePago;
+        try {
+          final ordenJson = _ordenActual.toJson();
+          ordenJson['firma_url'] = firmaAntesDePago;
+          _ordenActual = Orden.fromJson(ordenJson);
+          print('✅ Firma preservada después de recargar por pago: $firmaAntesDePago');
+        } catch (e) {
+          print('⚠️ Error preservando firma después de recargar: $e');
+        }
+      }
+      
       print('✅ Pago validado y cobrado');
     }
     
-    // PASO 3: Obtener FIRMA (si requiere) - OBLIGATORIO ANTES DE FOTO
-    if (_ordenActual.requiereFirma) {
-      print('✍️ PASO 3: Validando firma...');
-      if (_firmaUrl == null || _firmaUrl!.isEmpty) {
-        print('✍️ Firma requerida pero no obtenida, mostrando modal...');
-        final firmaObtenida = await _mostrarModalFirma();
-        if (!firmaObtenida) {
-          _mostrarMensaje('❌ No se puede entregar sin la firma del cliente');
-          return; // Usuario canceló o no obtuvo la firma - OBLIGATORIO
-        }
-        
-        // 🔒 CRÍTICO: NO recargar orden después de capturar firma
-        // La firma ya está guardada en _firmaUrl y _ordenActual por el callback onFirmaGuardada
-        // Recargar puede sobrescribir la firma local si el servidor no la tiene aún
-        print('✅ Firma guardada en _firmaUrl: $_firmaUrl');
-        print('✅ Firma guardada en _ordenActual: ${_ordenActual.firmaUrl}');
-        
-        // Verificar que la firma se guardó correctamente
-        if (_firmaUrl == null || _firmaUrl!.isEmpty) {
-          print('❌ Error: La firma no se guardó en _firmaUrl');
-          _mostrarMensaje('❌ Error: La firma no se guardó correctamente. Intenta de nuevo.');
-          return;
-        }
+    // PASO 3: Obtener FOTO (si es obligatoria) - PRIMERO LA FOTO, LUEGO LA FIRMA
+    // 🔒 CRÍTICO: Verificar tanto _fotoEntregaUrl como _ordenActual.fotoEntrega
+    // porque pueden estar desincronizados después de recargas
+    final tieneFoto = (_fotoEntregaUrl != null && _fotoEntregaUrl!.isNotEmpty) ||
+                      (_ordenActual.fotoEntrega != null && _ordenActual.fotoEntrega!.isNotEmpty);
+    
+    if (_fotoEntregaObligatoria && !tieneFoto) {
+      print('📷 PASO 3: Foto obligatoria pero no tomada, pidiendo foto directamente...');
+      print('📷 DEBUG - _fotoEntregaUrl: $_fotoEntregaUrl');
+      print('📷 DEBUG - _ordenActual.fotoEntrega: ${_ordenActual.fotoEntrega}');
+      
+      // 🔒 CRÍTICO: Pedir foto directamente en el flujo, no mostrar error
+      await _tomarFotoEntregaConSelector();
+      
+      // 🔒 CRÍTICO: Sincronizar _fotoEntregaUrl y _ordenActual después de tomar foto
+      // Verificar nuevamente después de tomar la foto
+      final fotoDespues = (_fotoEntregaUrl != null && _fotoEntregaUrl!.isNotEmpty) ||
+                          (_ordenActual.fotoEntrega != null && _ordenActual.fotoEntrega!.isNotEmpty);
+      
+      if (!fotoDespues) {
+        print('❌ Error: La foto no se capturó correctamente');
+        _mostrarMensaje('❌ No se pudo obtener la foto. Intenta de nuevo.');
+        return;
       }
-      print('✅ Firma validada y obtenida');
-    }
-    
-    // PASO 4: Validar FOTO (si es obligatoria)
-    List<String> errores = [];
-    if (_fotoEntregaObligatoria && (_fotoEntregaUrl == null || _fotoEntregaUrl!.isEmpty)) {
-      print('📷 PASO 4: Foto obligatoria pero no tomada');
-      errores.add('📷 Falta tomar la foto de entrega');
+      
+      // 🔒 CRÍTICO: Sincronizar ambos valores
+      if (_fotoEntregaUrl != null && _fotoEntregaUrl!.isNotEmpty) {
+        // Si _fotoEntregaUrl tiene valor, actualizar _ordenActual
+        try {
+          final ordenJson = _ordenActual.toJson();
+          ordenJson['foto_entrega'] = _fotoEntregaUrl;
+          _ordenActual = Orden.fromJson(ordenJson);
+          print('✅ _ordenActual actualizada con foto desde _fotoEntregaUrl: $_fotoEntregaUrl');
+        } catch (e) {
+          print('⚠️ Error actualizando _ordenActual con foto: $e');
+        }
+      } else if (_ordenActual.fotoEntrega != null && _ordenActual.fotoEntrega!.isNotEmpty) {
+        // Si _ordenActual tiene valor, actualizar _fotoEntregaUrl
+        _fotoEntregaUrl = _ordenActual.fotoEntrega;
+        print('✅ _fotoEntregaUrl actualizada desde _ordenActual: $_fotoEntregaUrl');
+      }
+      
+      print('✅ Foto capturada exitosamente: $_fotoEntregaUrl');
     } else {
-      print('✅ Foto validada');
+      print('✅ Foto validada (ya existe o no es obligatoria)');
+      print('📷 DEBUG - _fotoEntregaUrl: $_fotoEntregaUrl');
+      print('📷 DEBUG - _ordenActual.fotoEntrega: ${_ordenActual.fotoEntrega}');
     }
     
-    // Si hay errores de foto, mostrarlos
-    if (errores.isNotEmpty) {
-      print('❌ Mostrando diálogo de errores: $errores');
-      _mostrarDialogoErroresEntrega(errores);
-      return;
+    // PASO 4: Obtener FIRMA (si requiere) - DESPUÉS DE LA FOTO
+    // 🔒 CRÍTICO: Verificar tanto _firmaUrl como _ordenActual.firmaUrl
+    // porque pueden estar desincronizados después de recargas
+    final tieneFirma = (_firmaUrl != null && _firmaUrl!.isNotEmpty) ||
+                       (_ordenActual.firmaUrl != null && _ordenActual.firmaUrl!.isNotEmpty);
+    
+    if (_ordenActual.requiereFirma && !tieneFirma) {
+      print('✍️ PASO 4: Firma requerida pero no obtenida, mostrando modal...');
+      print('✍️ DEBUG - _firmaUrl: $_firmaUrl');
+      print('✍️ DEBUG - _ordenActual.firmaUrl: ${_ordenActual.firmaUrl}');
+      
+      final firmaObtenida = await _mostrarModalFirma();
+      if (!firmaObtenida) {
+        _mostrarMensaje('❌ No se puede entregar sin la firma del cliente');
+        return; // Usuario canceló o no obtuvo la firma - OBLIGATORIO
+      }
+      
+      // 🔒 CRÍTICO: Sincronizar _firmaUrl y _ordenActual después de capturar firma
+      // Verificar nuevamente después de capturar la firma
+      final firmaDespues = (_firmaUrl != null && _firmaUrl!.isNotEmpty) ||
+                           (_ordenActual.firmaUrl != null && _ordenActual.firmaUrl!.isNotEmpty);
+      
+      if (!firmaDespues) {
+        print('❌ Error: La firma no se guardó correctamente');
+        _mostrarMensaje('❌ Error: La firma no se guardó correctamente. Intenta de nuevo.');
+        return;
+      }
+      
+      // 🔒 CRÍTICO: Sincronizar ambos valores
+      if (_firmaUrl != null && _firmaUrl!.isNotEmpty) {
+        // Si _firmaUrl tiene valor, actualizar _ordenActual
+        try {
+          final ordenJson = _ordenActual.toJson();
+          ordenJson['firma_url'] = _firmaUrl;
+          _ordenActual = Orden.fromJson(ordenJson);
+          print('✅ _ordenActual actualizada con firma desde _firmaUrl: $_firmaUrl');
+        } catch (e) {
+          print('⚠️ Error actualizando _ordenActual con firma: $e');
+        }
+      } else if (_ordenActual.firmaUrl != null && _ordenActual.firmaUrl!.isNotEmpty) {
+        // Si _ordenActual tiene valor, actualizar _firmaUrl
+        _firmaUrl = _ordenActual.firmaUrl;
+        print('✅ _firmaUrl actualizada desde _ordenActual: $_firmaUrl');
+      }
+      
+      print('✅ Firma capturada exitosamente: $_firmaUrl');
+    } else {
+      print('✅ Firma validada (ya existe o no es obligatoria)');
+      print('✍️ DEBUG - _firmaUrl: $_firmaUrl');
+      print('✍️ DEBUG - _ordenActual.firmaUrl: ${_ordenActual.firmaUrl}');
     }
     
     // PASO 5: Confirmación de bultos (solo si hay más de 1)
@@ -5151,28 +5241,85 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
         _isLoading = true;
       });
       
+      // ✅ OFFLINE-FIRST: Actualizar estado local INMEDIATAMENTE
       try {
-        await supabase
-            .from('ordenes')
-            .update({
-              'pagado': true,
-              'fecha_pago': DateTime.now().toIso8601String(),
-            })
-            .eq('id', widget.orden.id);
+        // Actualizar estado local
+        final ordenJson = _ordenActual.toJson();
+        ordenJson['pagado'] = true;
+        ordenJson['fecha_pago'] = DateTime.now().toIso8601String();
+        _ordenActual = Orden.fromJson(ordenJson);
         
-        // Recargar la orden para reflejar el cambio
-        await _recargarOrden();
+        // Guardar en caché local INMEDIATAMENTE
+        await OrdenCacheService.updateCachedOrder(_ordenActual);
+        print('💾 Pago registrado en caché local');
         
-        return true;
-      } catch (e) {
-        _mostrarMensaje('Error al registrar el cobro: $e');
-        return false;
-      } finally {
+        final syncService = SyncService();
+        final updateData = {
+          'pagado': true,
+          'fecha_pago': DateTime.now().toIso8601String(),
+        };
+        
+        // Intentar actualizar en BD si hay conexión
+        if (syncService.isOnline) {
+          try {
+            await supabase
+                .from('ordenes')
+                .update(updateData)
+                .eq('id', widget.orden.id);
+            
+            print('✅ Pago registrado en BD (online)');
+          } catch (e) {
+            // Si falla, agregar a cola de sincronización
+            final errorString = e.toString();
+            if (errorString.contains('Failed host lookup') || 
+                errorString.contains('SocketException') ||
+                errorString.contains('ClientException')) {
+              print('📴 Error de conexión - Agregando a cola de sincronización');
+              await syncService.addOperation(
+                type: 'update_orden_estado',
+                ordenId: widget.orden.id,
+                data: updateData,
+              );
+            } else {
+              // Error no relacionado con conexión
+              _mostrarMensaje('Error al registrar el cobro: $e');
+              if (mounted) {
+                setState(() {
+                  _isLoading = false;
+                });
+              }
+              return false;
+            }
+          }
+        } else {
+          // Sin conexión - Agregar a cola de sincronización
+          print('📴 Sin conexión - Agregando a cola de sincronización');
+          await syncService.addOperation(
+            type: 'update_orden_estado',
+            ordenId: widget.orden.id,
+            data: updateData,
+          );
+        }
+        
+        // NO recargar orden después de registrar pago porque puede sobrescribir foto/firma locales
+        // El estado local ya está actualizado
+        
         if (mounted) {
           setState(() {
             _isLoading = false;
           });
         }
+        
+        return true;
+      } catch (e) {
+        print('❌ Error al registrar el cobro: $e');
+        _mostrarMensaje('Error al registrar el cobro: $e');
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+        return false;
       }
     }
     
@@ -6092,6 +6239,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     }
   }
 
+  // ignore: unused_element
   void _mostrarDialogoErroresEntrega(List<String> errores) {
     if (!mounted) return;
     
