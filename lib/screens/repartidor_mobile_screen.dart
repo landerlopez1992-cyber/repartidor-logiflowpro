@@ -5069,85 +5069,141 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     
     if (!confirmado) return;
     
+    // ✅ OFFLINE-FIRST: Verificar conectividad
+    final syncService = SyncService();
+    final isOnline = syncService.isOnline;
+    
     try {
-      // Actualizar estado a ENTREGADO
-      await supabase
-          .from('ordenes')
-          .update({
+      // 1️⃣ Actualizar localmente PRIMERO (en lista y caché)
+      final index = _ordenes.indexWhere((o) => o.id == orden.id);
+      if (index != -1) {
+        setState(() {
+          _ordenes[index] = Orden.fromJson({
+            ..._ordenes[index].toJson(),
             'estado': 'ENTREGADO',
             'fecha_entrega': DateTime.now().toIso8601String(),
-          })
-          .eq('id', orden.id);
-      
-      // Sincronizar con GoodBarber si la orden está vinculada
-      try {
-        await GoodBarberSyncService.sincronizarEstadoAGoodBarber(
-          supabase,
-          orden.id,
-          'ENTREGADO',
-        );
-      } catch (e) {
-        print('⚠️ Error sincronizando estado con GoodBarber: $e');
+          });
+        });
+        
+        // Invalidar caché filtrado para forzar recálculo
+        _ordenesFiltradasCache = null;
+        _cacheKeyFiltradas = null;
       }
       
-      // Obtener datos actualizados de la orden para enviar email
-      try {
-        final ordenData = await supabase
+      // Actualizar caché local
+      final ordenJson = ordenActualizada.toJson();
+      ordenJson['estado'] = 'ENTREGADO';
+      ordenJson['fecha_entrega'] = DateTime.now().toIso8601String();
+      final ordenActualizadaNueva = Orden.fromJson(ordenJson);
+      await OrdenCacheService.updateCachedOrder(ordenActualizadaNueva);
+      print('💾 ✅ 2 órdenes guardadas en caché local con TODOS los datos');
+      print('   📋 Primera orden cacheada:');
+      print('      - ID: ${ordenActualizadaNueva.id}');
+      print('      - Número: ${ordenActualizadaNueva.numeroOrden}');
+      print('      - Emisor: ${ordenActualizadaNueva.emisor}');
+      print('      - Destinatario: ${ordenActualizadaNueva.destinatario}');
+      print('      - Dirección: ${ordenActualizadaNueva.direccionDestino}');
+      print('      - Estado: ${ordenActualizadaNueva.estado}');
+      print('💾 Orden actualizada en caché: ${ordenActualizadaNueva.numeroOrden} (estado: ENTREGADO)');
+      print('💾 Remesa marcada como ENTREGADO en caché local');
+      
+      if (isOnline) {
+        // 2️⃣ Si hay conexión, actualizar en Supabase
+        print('✅ Online - Actualizando en Supabase directamente');
+        await supabase
             .from('ordenes')
-            .select('*')
-            .eq('id', orden.id)
-            .single();
+            .update({
+              'estado': 'ENTREGADO',
+              'fecha_entrega': DateTime.now().toIso8601String(),
+            })
+            .eq('id', orden.id);
         
-        final ordenActualizada = Orden.fromJson(ordenData);
-        final tenantId = ordenData['tenant_id']?.toString() ?? ordenActualizada.tenantId;
-        
-        // Obtener email del emisor y enviar email (mismo proceso que en _marcarComoEntregado)
-        String? emailEmisor;
-        final emisorNombre = ordenData['emisor']?.toString() ?? ordenActualizada.emisor;
-        
-        if (emisorNombre.isNotEmpty && emisorNombre != 'Sin emisor') {
-          try {
-            final emisorData = await supabase
-                .from('emisores')
-                .select('email')
-                .eq('nombre', emisorNombre)
-                .eq('tenant_id', tenantId ?? '')
-                .maybeSingle();
-            
-            emailEmisor = emisorData?['email']?.toString();
-          } catch (e) {
-            print('⚠️ Error obteniendo email del emisor: $e');
-          }
+        // Sincronizar con GoodBarber si la orden está vinculada
+        try {
+          await GoodBarberSyncService.sincronizarEstadoAGoodBarber(
+            supabase,
+            orden.id,
+            'ENTREGADO',
+          );
+        } catch (e) {
+          print('⚠️ Error sincronizando estado con GoodBarber: $e');
         }
         
-        // Enviar email si está habilitado
-        if (emailEmisor != null && emailEmisor.isNotEmpty) {
-          final configService = ConfiguracionService();
-          final notificacionesHabilitadas = await configService.notificacionesHabilitadas('emisores');
+        // Obtener datos actualizados de la orden para enviar email
+        try {
+          final ordenData = await supabase
+              .from('ordenes')
+              .select('*')
+              .eq('id', orden.id)
+              .single();
           
-          if (notificacionesHabilitadas) {
+          final ordenActualizadaEmail = Orden.fromJson(ordenData);
+          final tenantId = ordenData['tenant_id']?.toString() ?? ordenActualizadaEmail.tenantId;
+          
+          // Obtener email del emisor y enviar email (mismo proceso que en _marcarComoEntregado)
+          String? emailEmisor;
+          final emisorNombre = ordenData['emisor']?.toString() ?? ordenActualizadaEmail.emisor;
+          
+          if (emisorNombre.isNotEmpty && emisorNombre != 'Sin emisor') {
             try {
-              final enviado = await EmailService.enviarEmailOrdenEntregada(ordenActualizada, emailEmisor, tenantId: tenantId);
-              if (enviado) {
-                print('✅ Email de remesa entregada enviado exitosamente');
-              }
+              final emisorData = await supabase
+                  .from('emisores')
+                  .select('email')
+                  .eq('nombre', emisorNombre)
+                  .eq('tenant_id', tenantId ?? '')
+                  .maybeSingle();
+              
+              emailEmisor = emisorData?['email']?.toString();
             } catch (e) {
-              print('❌ Error enviando email de remesa entregada: $e');
+              print('⚠️ Error obteniendo email del emisor: $e');
             }
           }
+          
+          // Enviar email si está habilitado
+          if (emailEmisor != null && emailEmisor.isNotEmpty) {
+            final configService = ConfiguracionService();
+            final notificacionesHabilitadas = await configService.notificacionesHabilitadas('emisores');
+            
+            if (notificacionesHabilitadas) {
+              try {
+                final enviado = await EmailService.enviarEmailOrdenEntregada(ordenActualizadaEmail, emailEmisor, tenantId: tenantId);
+                if (enviado) {
+                  print('✅ Email de remesa entregada enviado exitosamente');
+                }
+              } catch (e) {
+                print('❌ Error enviando email de remesa entregada: $e');
+              }
+            }
+          }
+        } catch (e) {
+          print('⚠️ Error obteniendo datos para email: $e');
         }
-      } catch (e) {
-        print('⚠️ Error obteniendo datos para email: $e');
+        
+        // Recargar órdenes si está online
+        await _cargarOrdenes();
+      } else {
+        // 3️⃣ Si está offline, agregar a cola de sincronización
+        print('📴 Sin conexión - Agregando a cola de sincronización');
+        await syncService.addOperation(
+          'update_orden_estado',
+          orden.id,
+          {
+            'estado': 'ENTREGADO',
+            'fecha_entrega': DateTime.now().toIso8601String(),
+          },
+        );
+        print('✅ Operación agregada a cola de sincronización');
+        print('📴 Offline - Email y sincronización con GoodBarber se realizarán cuando haya conexión');
+        print('📴 Offline - No se recargan órdenes, usando estado local actualizado');
       }
-      
-      // Recargar órdenes
-      await _cargarOrdenes();
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ Remesa marcada como entregada'),
-            backgroundColor: Color(0xFF4CAF50),
+          SnackBar(
+            content: Text(isOnline 
+              ? '✅ Remesa marcada como entregada' 
+              : '✅ Remesa marcada como entregada (offline)'),
+            backgroundColor: const Color(0xFF4CAF50),
           ),
         );
       }
