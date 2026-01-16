@@ -1554,15 +1554,67 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       }
       
       // Verificar que la firma se guardó correctamente
+      print('');
+      print('🔍 ========================================');
+      print('🔍 VERIFICANDO FIRMA DESPUÉS DE CAPTURA');
+      print('🔍 ========================================');
+      print('🔍 _firmaUrl: $_firmaUrl');
+      print('🔍 _ordenActual.firmaUrl: ${_ordenActual.firmaUrl}');
+      print('🔍 _firmaUrl == null: ${_firmaUrl == null}');
+      print('🔍 _firmaUrl.isEmpty: ${_firmaUrl?.isEmpty ?? "null"}');
+      print('🔍 ========================================');
+      print('');
+      
       if (_firmaUrl == null || _firmaUrl!.isEmpty) {
         print('❌ Error: La firma no se guardó en _firmaUrl');
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('❌ Error: La firma no se guardó correctamente. Intenta de nuevo.'),
-            backgroundColor: Color(0xFFDC2626),
-          ),
-        );
-        return;
+        print('❌ _ordenActual.firmaUrl: ${_ordenActual.firmaUrl}');
+        
+        // 🔒 CRÍTICO: Intentar recuperar firma desde _ordenActual
+        if (_ordenActual.firmaUrl != null && _ordenActual.firmaUrl!.isNotEmpty) {
+          print('✅ Recuperando firma desde _ordenActual.firmaUrl: ${_ordenActual.firmaUrl}');
+          setState(() {
+            _firmaUrl = _ordenActual.firmaUrl;
+          });
+          print('✅ _firmaUrl recuperada: $_firmaUrl');
+        } else {
+          // Si aún no hay firma, intentar recuperar desde caché
+          try {
+            final ordenCache = await OrdenCacheService.getCachedOrderById(_ordenActual.id);
+            if (ordenCache != null && ordenCache.firmaUrl != null && ordenCache.firmaUrl!.isNotEmpty) {
+              print('✅ Recuperando firma desde caché: ${ordenCache.firmaUrl}');
+              setState(() {
+                _firmaUrl = ordenCache.firmaUrl;
+              });
+              try {
+                final ordenJson = _ordenActual.toJson();
+                ordenJson['firma_url'] = ordenCache.firmaUrl;
+                _ordenActual = Orden.fromJson(ordenJson);
+                print('✅ _ordenActual actualizada con firma desde caché');
+              } catch (e) {
+                print('⚠️ Error actualizando _ordenActual: $e');
+              }
+              print('✅ _firmaUrl recuperada desde caché: $_firmaUrl');
+            } else {
+              print('❌ No se encontró firma en caché tampoco');
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('❌ Error: La firma no se guardó correctamente. Intenta de nuevo.'),
+                  backgroundColor: Color(0xFFDC2626),
+                ),
+              );
+              return;
+            }
+          } catch (e) {
+            print('❌ Error recuperando firma desde caché: $e');
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('❌ Error: La firma no se guardó correctamente. Intenta de nuevo.'),
+                backgroundColor: Color(0xFFDC2626),
+              ),
+            );
+            return;
+          }
+        }
       }
     }
     
@@ -6934,8 +6986,14 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
           
           // Llamar callback para actualizar el estado del padre
           print('📞 Llamando callback onFirmaGuardada con URL: $firmaUrl');
-          widget.onFirmaGuardada(firmaUrl);
-          print('✅ Callback onFirmaGuardada ejecutado');
+          // 🔒 CRÍTICO: Esperar a que el callback termine ANTES de cerrar el modal
+          // Esto asegura que _firmaUrl esté actualizado cuando el flujo continúe
+          await widget.onFirmaGuardada(firmaUrl);
+          print('✅ Callback onFirmaGuardada ejecutado y completado');
+          
+          // 🔒 CRÍTICO: Esperar un pequeño delay para asegurar que setState se complete
+          await Future.delayed(const Duration(milliseconds: 100));
+          print('✅ Delay completado - estado padre debe estar actualizado');
           
           if (mounted) {
             print('✅ Mostrando SnackBar y cerrando modal');
@@ -6963,8 +7021,9 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
 
             // Llamar callback para actualizar el estado del padre
             print('📞 Llamando callback onFirmaGuardada con URL (online): $firmaUrl');
-            widget.onFirmaGuardada(firmaUrl);
-            print('✅ Callback onFirmaGuardada ejecutado (online)');
+            // 🔒 CRÍTICO: Esperar a que el callback termine ANTES de cerrar el modal
+            await widget.onFirmaGuardada(firmaUrl);
+            print('✅ Callback onFirmaGuardada ejecutado y completado (online)');
 
             if (mounted) {
               print('✅ Mostrando SnackBar y cerrando modal (online)');
@@ -6982,8 +7041,9 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
             print('❌ Error actualizando BD con firma: $e');
             // Aún así, llamar callback para actualizar estado local
             print('📞 Llamando callback onFirmaGuardada (error BD): $firmaUrl');
-            widget.onFirmaGuardada(firmaUrl);
-            print('✅ Callback ejecutado a pesar del error');
+            // 🔒 CRÍTICO: Esperar a que el callback termine ANTES de cerrar el modal
+            await widget.onFirmaGuardada(firmaUrl);
+            print('✅ Callback ejecutado y completado a pesar del error');
             
             if (mounted) {
               print('✅ Mostrando SnackBar y cerrando modal (error BD)');
