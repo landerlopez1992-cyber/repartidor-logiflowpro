@@ -8,6 +8,7 @@ import '../services/goodbarber_sync_service.dart';
 import '../services/email_service.dart';
 import '../services/sync_service.dart';
 import '../services/orden_cache_service.dart';
+import '../services/configuracion_service.dart';
 import 'detalle_orden_screen.dart';
 
 class QRScannerFullscreen extends StatefulWidget {
@@ -368,6 +369,30 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
   }
 
   Future<String?> _mostrarModalConfirmacionRecibir(Orden orden) async {
+    // 🔍 Verificar si se debe validar bultos completos
+    final configService = ConfiguracionService();
+    final validarBultos = await configService.validarBultosCompletos();
+    final cantidadBultos = orden.cantidadBultos;
+    
+    print('🔍 Verificando validación de bultos:');
+    print('   - validar_bultos_completos: $validarBultos');
+    print('   - cantidadBultos: $cantidadBultos');
+    
+    // Si está activo y la orden tiene más de 1 bulto, mostrar modal de validación de bultos
+    if (validarBultos && cantidadBultos > 1) {
+      print('📦 Validación de bultos activa - Mostrando modal de escaneo de bultos');
+      final resultado = await _mostrarModalValidacionBultos(orden);
+      if (!mounted) return null;
+      if (resultado == true) {
+        // Todos los bultos fueron escaneados, proceder con recibir orden
+        return 'recibir';
+      } else {
+        // Cancelado o no completado
+        return null;
+      }
+    }
+    
+    // Si no está activo o tiene 1 bulto, mostrar modal normal
     return showDialog<String>(
       context: context,
       barrierDismissible: false,
@@ -894,6 +919,21 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
     }
   }
 
+  /// Modal para validar que todos los bultos estén escaneados
+  Future<bool?> _mostrarModalValidacionBultos(Orden orden) async {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => _BultosScannerModal(
+        orden: orden,
+        cantidadBultos: orden.cantidadBultos,
+        onCompletado: (todosEscaneados) {
+          // Callback para cuando todos los bultos estén escaneados
+        },
+      ),
+    );
+  }
+
   Future<void> _mostrarIconoConfirmacion() async {
     if (!mounted) return;
     
@@ -1227,5 +1267,309 @@ class _ScannerOverlayPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+/// Modal para escanear bultos uno por uno
+class _BultosScannerModal extends StatefulWidget {
+  final Orden orden;
+  final int cantidadBultos;
+  final Function(bool) onCompletado;
+
+  const _BultosScannerModal({
+    required this.orden,
+    required this.cantidadBultos,
+    required this.onCompletado,
+  });
+
+  @override
+  State<_BultosScannerModal> createState() => _BultosScannerModalState();
+}
+
+class _BultosScannerModalState extends State<_BultosScannerModal> {
+  late MobileScannerController _scannerController;
+  int _bultosEscaneados = 0; // Contador de bultos escaneados
+  bool _procesando = false;
+  DateTime? _ultimoEscaneo; // Para prevenir escaneos muy rápidos
+
+  @override
+  void initState() {
+    super.initState();
+    _scannerController = MobileScannerController(
+      torchEnabled: false,
+      detectionSpeed: DetectionSpeed.noDuplicates,
+      facing: CameraFacing.back,
+    );
+  }
+
+  @override
+  void dispose() {
+    _scannerController.dispose();
+    super.dispose();
+  }
+
+  void _onBarcodeDetect(BarcodeCapture capture) async {
+    if (_procesando) return;
+    
+    // Prevenir escaneos muy rápidos (menos de 500ms entre escaneos)
+    final ahora = DateTime.now();
+    if (_ultimoEscaneo != null && ahora.difference(_ultimoEscaneo!).inMilliseconds < 500) {
+      return;
+    }
+    
+    final barcodes = capture.barcodes;
+    for (final b in barcodes) {
+      final value = b.rawValue;
+      if (value != null && value.isNotEmpty && value == widget.orden.id) {
+        // El QR escaneado debe ser el ID de la orden
+        // Verificar que no se haya alcanzado el máximo de bultos
+        if (_bultosEscaneados >= widget.cantidadBultos) {
+          return;
+        }
+        
+        setState(() {
+          _procesando = true;
+          _bultosEscaneados++;
+          _ultimoEscaneo = ahora;
+        });
+        
+        // Mostrar confirmación de bulto escaneado
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Bulto $_bultosEscaneados/${widget.cantidadBultos} escaneado',
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: const Color(0xFF4CAF50),
+              duration: const Duration(seconds: 1),
+            ),
+          );
+        }
+        
+        // Si todos los bultos están escaneados, habilitar botón de continuar
+        if (_bultosEscaneados >= widget.cantidadBultos) {
+          widget.onCompletado(true);
+        }
+        
+        // Resetear procesando después de un pequeño delay
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (mounted) {
+          setState(() {
+            _procesando = false;
+          });
+        }
+        
+        break;
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final progreso = _bultosEscaneados;
+    final total = widget.cantidadBultos;
+    final porcentaje = total > 0 ? (progreso / total) : 0.0;
+    final todosEscaneados = progreso >= total;
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.all(16),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: const BoxDecoration(
+                color: Color(0xFF2196F3),
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(16),
+                  topRight: Radius.circular(16),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.inventory_2, color: Colors.white, size: 28),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Validar Bultos',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                        Text(
+                          'Orden: #${widget.orden.numeroOrden}',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: Colors.white70,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed: () => Navigator.of(context).pop(false),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Progreso
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Text(
+                    'Bultos escaneados: $progreso/$total',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF2C2C2C),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  LinearProgressIndicator(
+                    value: porcentaje,
+                    backgroundColor: const Color(0xFFE0E0E0),
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      todosEscaneados ? const Color(0xFF4CAF50) : const Color(0xFF2196F3),
+                    ),
+                    minHeight: 8,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  const SizedBox(height: 8),
+                  if (todosEscaneados)
+                    const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.check_circle, color: Color(0xFF4CAF50), size: 20),
+                        SizedBox(width: 8),
+                        Text(
+                          'Todos los bultos escaneados',
+                          style: TextStyle(
+                            color: Color(0xFF4CAF50),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    Text(
+                      'Escanea el siguiente bulto...',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            
+            // Escáner
+            Container(
+              height: 300,
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF2196F3), width: 2),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Stack(
+                  children: [
+                    MobileScanner(
+                      controller: _scannerController,
+                      onDetect: _onBarcodeDetect,
+                    ),
+                    // Overlay con instrucciones
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.3),
+                      ),
+                      child: const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.qr_code_scanner, color: Colors.white, size: 48),
+                            SizedBox(height: 12),
+                            Text(
+                              'Apunta la cámara al QR del bulto',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            
+            const SizedBox(height: 16),
+            
+            // Botones
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      style: TextButton.styleFrom(
+                        foregroundColor: const Color(0xFF666666),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      child: const Text('Cancelar'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: todosEscaneados
+                          ? () => Navigator.of(context).pop(true)
+                          : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF4CAF50),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        disabledBackgroundColor: Colors.grey[300],
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: const Text('Continuar'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 

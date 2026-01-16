@@ -199,6 +199,12 @@ class ConfiguracionService {
     return config['tiempo_espera_entrega'] ?? 15;
   }
 
+  /// Verifica si se debe validar que todos los bultos estén completos antes de entregar
+  Future<bool> validarBultosCompletos() async {
+    final config = await obtenerConfiguracion();
+    return config['validar_bultos_completos'] ?? false;
+  }
+
   /// Limpia el cache de configuración
   void limpiarCache({String? tenantId}) {
     if (tenantId != null) {
