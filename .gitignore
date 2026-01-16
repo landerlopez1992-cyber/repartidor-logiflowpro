@@ -46,3 +46,5 @@ app.*.map.json
 /android/app/build/outputs/
 *.dill
 *.dill.track.dill
+key.properties
+android/app/upload-keystore.jks

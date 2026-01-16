@@ -1,4 +1,4 @@
-package com.example.repartidor_logiflow_pro
+package com.logiflowpro.repartidor
 
 import io.flutter.embedding.android.FlutterActivity
 
