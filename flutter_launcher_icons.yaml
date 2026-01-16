@@ -1,0 +1,22 @@
+flutter_launcher_icons:
+  android: true
+  ios: true
+  # Usar el logo con padding para que quepa perfectamente en el área segura
+  image_path: "assets/logo_julio_icon.png"
+  min_sdk_android: 21 # android min sdk min:16, default 21
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/logo_julio_icon.png"
+  # El logo ya tiene padding incluido (60% del tamaño total, 20% de padding en cada lado)
+  remove_alpha_ios: true
+  web:
+    generate: true
+    image_path: "assets/logo_julio.png"
+    background_color: "#ffffff"
+    theme_color: "#4CAF50"
+  windows:
+    generate: true
+    image_path: "assets/logo_julio.png"
+    icon_size: 256 # min:48, max:256, default: 48 - aumentado para mejor calidad
+  macos:
+    generate: true
+    image_path: "assets/logo_julio.png"
