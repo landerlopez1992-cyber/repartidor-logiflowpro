@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/orden.dart';
+import 'offline_storage_service.dart';
 
 /// Servicio para cachear órdenes localmente
 /// Permite trabajar offline y sincronizar cuando hay conexión
@@ -11,12 +12,14 @@ class OrdenCacheService {
   /// Guardar órdenes en caché local
   /// ✅ FIX CRÍTICO: Asegurar que TODOS los datos se guarden correctamente
   /// 🔒 OFFLINE-FIRST: NO sobrescribir órdenes con cambios de estado locales hasta que se sincronicen
+  /// 🔒 OFFLINE-FIRST: Preservar foto/firma locales con subida pendiente
   /// RETORNA: La lista fusionada de órdenes (con cambios locales preservados si aplica)
   static Future<List<Orden>> cacheOrders(List<Orden> ordenes, {bool preserveLocalChanges = true}) async {
     try {
       // 🔒 OFFLINE-FIRST: Si preserveLocalChanges es true, fusionar con caché existente
       if (preserveLocalChanges) {
         final ordenesCached = await getCachedOrders();
+        final ordenesCachedMap = {for (final orden in ordenesCached) orden.id: orden};
         
         // Obtener operaciones pendientes de sincronización para verificar qué órdenes tienen cambios locales
         // Leer desde SharedPreferences directamente (mismo lugar donde SyncService las guarda)
@@ -24,16 +27,49 @@ class OrdenCacheService {
         
         // Crear un mapa de IDs de órdenes con operaciones pendientes de actualización de estado
         final ordenesConCambiosPendientes = <String>{};
+        final ordenesConFirmaPendiente = <String>{};
+        final ordenesConFotoPendiente = <String>{};
         for (var op in pendingOps) {
           if (op['type'] == 'update_orden_estado' || op['type'] == 'mark_delivered') {
             final ordenId = op['orden_id'] as String? ?? op['orden_id']?.toString();
             if (ordenId != null) {
               ordenesConCambiosPendientes.add(ordenId);
             }
+          } else if (op['type'] == 'upload_firma') {
+            final ordenId = op['orden_id'] as String? ?? op['orden_id']?.toString();
+            if (ordenId != null) {
+              ordenesConFirmaPendiente.add(ordenId);
+            }
+          } else if (op['type'] == 'upload_photo') {
+            final ordenId = op['orden_id'] as String? ?? op['orden_id']?.toString();
+            if (ordenId != null) {
+              ordenesConFotoPendiente.add(ordenId);
+            }
           }
         }
         
         print('🔒 Órdenes con cambios pendientes de sincronización: ${ordenesConCambiosPendientes.length}');
+        
+        // También revisar firmas/fotos pendientes guardadas en SQLite (offline)
+        try {
+          final offlineStorage = OfflineStorageService();
+          final pendingSignatures = await offlineStorage.getPendingSignatures();
+          for (final sig in pendingSignatures) {
+            final ordenId = sig['orden_id']?.toString();
+            if (ordenId != null && ordenId.isNotEmpty) {
+              ordenesConFirmaPendiente.add(ordenId);
+            }
+          }
+          final pendingPhotos = await offlineStorage.getPendingPhotos();
+          for (final photo in pendingPhotos) {
+            final ordenId = photo['orden_id']?.toString();
+            if (ordenId != null && ordenId.isNotEmpty) {
+              ordenesConFotoPendiente.add(ordenId);
+            }
+          }
+        } catch (e) {
+          print('⚠️ Error leyendo fotos/firmas pendientes: $e');
+        }
         
         // Crear un mapa de órdenes modificadas localmente (cualquier cambio de estado)
         final ordenesModificadasLocal = <String, Orden>{};
@@ -63,6 +99,31 @@ class OrdenCacheService {
             }
           }
           
+          // Preservar firma/foto locales si hay subida pendiente
+          final ordenLocal = ordenesCachedMap[ordenSupabase.id];
+          final tieneFirmaLocal = ordenLocal?.firmaUrl != null &&
+              ordenLocal!.firmaUrl!.isNotEmpty &&
+              ordenLocal.firmaUrl!.startsWith('local://');
+          final tieneFotoLocal = ordenLocal?.fotoEntrega != null &&
+              ordenLocal!.fotoEntrega!.isNotEmpty &&
+              ordenLocal.fotoEntrega!.startsWith('local://');
+          final preservarFirma = tieneFirmaLocal && ordenesConFirmaPendiente.contains(ordenSupabase.id);
+          final preservarFoto = tieneFotoLocal && ordenesConFotoPendiente.contains(ordenSupabase.id);
+          
+          if (preservarFirma || preservarFoto) {
+            final ordenJson = ordenSupabase.toJson();
+            if (preservarFirma) {
+              ordenJson['firma_url'] = ordenLocal.firmaUrl;
+            }
+            if (preservarFoto) {
+              ordenJson['foto_entrega'] = ordenLocal.fotoEntrega;
+            }
+            final ordenFusionada = Orden.fromJson(ordenJson);
+            print('🔒 Preservando firma/foto local para orden #${ordenFusionada.numeroOrden}');
+            ordenesFusionadas.add(ordenFusionada);
+            continue;
+          }
+          
           // Si no hay conflicto, usar la orden de Supabase
           ordenesFusionadas.add(ordenSupabase);
         }
@@ -71,6 +132,23 @@ class OrdenCacheService {
         for (var ordenLocal in ordenesModificadasLocal.values) {
           if (!idsProcesados.contains(ordenLocal.id)) {
             print('🔒 Agregando orden modificada localmente que no está en Supabase: #${ordenLocal.numeroOrden} (estado: ${ordenLocal.estado})');
+            ordenesFusionadas.add(ordenLocal);
+          }
+        }
+        
+        // Agregar órdenes con firma/foto local pendiente que no están en la respuesta
+        for (var ordenLocal in ordenesCached) {
+          if (idsProcesados.contains(ordenLocal.id)) continue;
+          final tieneFirmaLocal = ordenLocal.firmaUrl != null &&
+              ordenLocal.firmaUrl!.isNotEmpty &&
+              ordenLocal.firmaUrl!.startsWith('local://');
+          final tieneFotoLocal = ordenLocal.fotoEntrega != null &&
+              ordenLocal.fotoEntrega!.isNotEmpty &&
+              ordenLocal.fotoEntrega!.startsWith('local://');
+          final preservarFirma = tieneFirmaLocal && ordenesConFirmaPendiente.contains(ordenLocal.id);
+          final preservarFoto = tieneFotoLocal && ordenesConFotoPendiente.contains(ordenLocal.id);
+          if (preservarFirma || preservarFoto) {
+            print('🔒 Agregando orden con firma/foto local pendiente que no está en Supabase: #${ordenLocal.numeroOrden}');
             ordenesFusionadas.add(ordenLocal);
           }
         }

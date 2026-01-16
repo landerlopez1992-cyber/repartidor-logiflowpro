@@ -879,7 +879,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       });
     }
     
-    final numeroRemesa = _ordenActual.numeroRemesa ?? _ordenActual.numeroOrden ?? 'N/A';
+    final numeroRemesa = _ordenActual.numeroRemesa ?? _ordenActual.numeroOrden;
     final cantidadRemesa = _ordenActual.cantidadRemesa ?? 0.0;
     // Estados: POR ENVIAR, ENTREGADO EN SUCURSAL (solo si recoger_en_sucursal), ENTREGADO
     final estado = _ordenActual.estado == 'ENTREGADO' 
@@ -1500,7 +1500,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     }
     
     // Si NO es recogida en sucursal: Pedir validaciones (RMSA, ID, firma, foto)
-    final numeroRemesa = _ordenActual.numeroRemesa ?? _ordenActual.numeroOrden ?? 'N/A';
+    final numeroRemesa = _ordenActual.numeroRemesa ?? _ordenActual.numeroOrden;
     final nombreDestinatario = _ordenActual.receptor;
     
     // Primero mostrar modal explicativo con el número RMSA
@@ -1517,11 +1517,37 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     
     // Pedir firma si es necesario
     if (_ordenActual.requiereFirma && (_firmaUrl == null || _firmaUrl!.isEmpty)) {
+      print('✍️ Abriendo modal de firma para remesa...');
       final firmaObtenida = await _mostrarModalFirma();
       if (!firmaObtenida) {
+        print('❌ Usuario canceló la firma');
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('❌ Se requiere la firma del destinatario'),
+            backgroundColor: Color(0xFFDC2626),
+          ),
+        );
+        return;
+      }
+      print('✅ Firma capturada exitosamente para remesa: $_firmaUrl');
+      
+      // 🔒 CRÍTICO: Actualizar _ordenActual con la firma capturada
+      // NO recargar desde BD porque puede sobrescribir la firma local
+      try {
+        final ordenJson = _ordenActual.toJson();
+        ordenJson['firma_url'] = _firmaUrl;
+        _ordenActual = Orden.fromJson(ordenJson);
+        print('✅ _ordenActual actualizada con firma: $_firmaUrl');
+      } catch (e) {
+        print('⚠️ Error actualizando _ordenActual con firma: $e');
+      }
+      
+      // Verificar que la firma se guardó correctamente
+      if (_firmaUrl == null || _firmaUrl!.isEmpty) {
+        print('❌ Error: La firma no se guardó en _firmaUrl');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('❌ Error: La firma no se guardó correctamente. Intenta de nuevo.'),
             backgroundColor: Color(0xFFDC2626),
           ),
         );
@@ -3836,10 +3862,17 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           _mostrarMensaje('❌ No se puede entregar sin la firma del cliente');
           return; // Usuario canceló o no obtuvo la firma - OBLIGATORIO
         }
-        // Recargar para asegurar que la firma se guardó
-        await _recargarOrden();
+        
+        // 🔒 CRÍTICO: NO recargar orden después de capturar firma
+        // La firma ya está guardada en _firmaUrl y _ordenActual por el callback onFirmaGuardada
+        // Recargar puede sobrescribir la firma local si el servidor no la tiene aún
+        print('✅ Firma guardada en _firmaUrl: $_firmaUrl');
+        print('✅ Firma guardada en _ordenActual: ${_ordenActual.firmaUrl}');
+        
+        // Verificar que la firma se guardó correctamente
         if (_firmaUrl == null || _firmaUrl!.isEmpty) {
-          _mostrarMensaje('❌ Error: La firma no se guardó correctamente');
+          print('❌ Error: La firma no se guardó en _firmaUrl');
+          _mostrarMensaje('❌ Error: La firma no se guardó correctamente. Intenta de nuevo.');
           return;
         }
       }
@@ -5290,6 +5323,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     }
   }
 
+  // ignore: unused_element
   Future<void> _tomarFotoEntrega() async {
     if (!mounted) return;
     
@@ -5865,15 +5899,25 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
 
   // Subir firma a Supabase Storage (con soporte offline)
   Future<String?> _subirFirmaASupabase(Uint8List firmaBytes, String ordenId) async {
+    print('');
+    print('☁️ ========================================');
+    print('☁️ _subirFirmaASupabase() INICIADO');
+    print('☁️ ========================================');
+    print('☁️ Orden ID: $ordenId');
+    print('☁️ Firma bytes: ${firmaBytes.length} bytes');
+    print('☁️ ========================================');
+    
     try {
       final firmaBase64 = base64Encode(firmaBytes);
       final syncService = SyncService();
+      print('☁️ Estado online: ${syncService.isOnline}');
       
       // 🔒 CRÍTICO: Verificar si ya existe una operación upload_firma pendiente para esta orden
       // Verificar en pending_signatures de OfflineStorageService
       final offlineStorage = OfflineStorageService();
       final pendingSignatures = await offlineStorage.getPendingSignatures();
       final tieneFirmaPendiente = pendingSignatures.any((sig) => sig['orden_id'] == ordenId);
+      print('☁️ Firma pendiente existente: $tieneFirmaPendiente');
       
       if (tieneFirmaPendiente) {
         print('⚠️ Ya existe una operación upload_firma pendiente para esta orden - No se agregará otra');
@@ -5885,24 +5929,31 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           orElse: () => <String, dynamic>{},
         );
         if (existingSignature.isNotEmpty) {
-          return 'local://${existingSignature['file_path']}';
+          final localUrl = 'local://${existingSignature['file_path']}';
+          print('✅ Retornando URL local existente: $localUrl');
+          return localUrl;
         }
       }
       
       // Guardar firma localmente en almacenamiento PERSISTENTE (no code_cache)
+      print('💾 Guardando firma localmente...');
       final appSupportDir = await getApplicationSupportDirectory();
       final firmasDir = Directory('${appSupportDir.path}/firmas_entrega');
       await firmasDir.create(recursive: true);
       final tempFile = File('${firmasDir.path}/firma_${ordenId}_${DateTime.now().millisecondsSinceEpoch}.png');
       await tempFile.writeAsBytes(firmaBytes);
+      print('💾 Firma guardada en: ${tempFile.path}');
       
+      print('💾 Guardando en pending_signatures...');
       await OfflineStorageService().savePendingSignature(
         ordenId: ordenId,
         filePath: tempFile.path,
       );
+      print('✅ Firma agregada a pending_signatures');
       
       // Intentar subir si hay conexión
       if (syncService.isOnline) {
+        print('🌐 Hay conexión - Intentando subir a Supabase...');
         try {
           final timestamp = DateTime.now().millisecondsSinceEpoch;
           final fileName = 'firma_${ordenId}_$timestamp.png';
@@ -5962,7 +6013,11 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
         }
       } else {
         // Sin conexión, agregar a cola directamente
-        print('📴 Sin conexión - Agregando firma a cola de sincronización');
+        print('📴 ========================================');
+        print('📴 SIN CONEXIÓN - Modo offline');
+        print('📴 ========================================');
+        print('📴 Agregando firma a cola de sincronización...');
+        
         await syncService.addOperation(
           type: 'upload_firma',
           ordenId: ordenId,
@@ -5971,11 +6026,14 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             'file_path': tempFile.path, // 🔒 CRÍTICO: Incluir ruta del archivo
           },
         );
+        print('✅ Firma agregada a cola de sincronización');
         
         // 🔒 CRÍTICO: Eliminar de pending_signatures inmediatamente después de agregar a la cola
         try {
           final offlineStorage = OfflineStorageService();
           final pendingSignatures = await offlineStorage.getPendingSignatures();
+          print('📴 Limpiando pending_signatures (${pendingSignatures.length} firmas pendientes)...');
+          
           for (final sig in pendingSignatures) {
             if (sig['orden_id'] == ordenId && sig['file_path'] == tempFile.path) {
               await offlineStorage.deletePendingSignature(sig['id'].toString());
@@ -5986,10 +6044,21 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           print('⚠️ Error eliminando firma de pending_signatures: $e');
         }
         
-        return 'local://${tempFile.path}'; // URL temporal local
+        final localUrl = 'local://${tempFile.path}';
+        print('✅ Retornando URL local (offline): $localUrl');
+        print('📴 ========================================');
+        print('');
+        return localUrl; // URL temporal local
       }
     } catch (e) {
-      print('❌ Error al procesar firma: $e');
+      print('');
+      print('❌ ========================================');
+      print('❌ ERROR CRÍTICO AL PROCESAR FIRMA');
+      print('❌ ========================================');
+      print('❌ Error: $e');
+      print('❌ Tipo de error: ${e.runtimeType}');
+      print('❌ ========================================');
+      print('');
       return null;
     }
   }
@@ -6242,26 +6311,50 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
 
   // Mostrar modal de firma
   Future<bool> _mostrarModalFirma() async {
-    if (!mounted) return false;
+    print('');
+    print('✍️ ========================================');
+    print('✍️ ABRIENDO MODAL DE FIRMA');
+    print('✍️ ========================================');
+    print('✍️ Mounted: $mounted');
+    print('✍️ Firma actual (_firmaUrl): $_firmaUrl');
+    print('✍️ Firma en _ordenActual: ${_ordenActual.firmaUrl}');
+    print('✍️ Orden ID: ${widget.orden.id}');
+    print('✍️ ========================================');
+    
+    if (!mounted) {
+      print('❌ Widget no está montado, cancelando modal de firma');
+      return false;
+    }
     
     try {
       _signatureController.clear();
+      print('✅ SignatureController limpiado');
     } catch (e) {
       print('⚠️ Error al limpiar signature controller: $e');
     }
     
+    print('📱 Mostrando diálogo de firma...');
     final resultado = await showDialog<bool>(
       context: context,
-      barrierDismissible: true,
+      barrierDismissible: false, // 🔒 NO permitir cerrar tocando fuera
       builder: (dialogContext) => _FirmaDialogWidget(
         signatureController: _signatureController,
         ordenId: widget.orden.id,
         tieneFirmaAnterior: _firmaUrl != null,
         subirFirma: _subirFirmaASupabase,
         onFirmaGuardada: (firmaUrl) async {
+          print('');
+          print('✅ ========================================');
+          print('✅ CALLBACK onFirmaGuardada EJECUTADO');
+          print('✅ ========================================');
+          print('✅ Firma URL recibida: $firmaUrl');
+          print('✅ Widget mounted: $mounted');
+          print('✅ ========================================');
+          
           if (mounted) {
             setState(() {
               _firmaUrl = firmaUrl;
+              print('✅ _firmaUrl actualizada en setState: $_firmaUrl');
             });
             
             // 🔒 CRÍTICO: Actualizar _ordenActual con la firma para que las validaciones la vean
@@ -6269,25 +6362,43 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               final ordenJson = _ordenActual.toJson();
               ordenJson['firma_url'] = firmaUrl;
               final ordenActualizada = Orden.fromJson(ordenJson);
+              
               setState(() {
                 _ordenActual = ordenActualizada;
+                print('✅ _ordenActual actualizada en setState: ${_ordenActual.firmaUrl}');
               });
               
               // Actualizar caché local
               await OrdenCacheService.updateCachedOrder(ordenActualizada);
-              print('💾 _ordenActual y caché actualizados con firma: ${firmaUrl}');
+              print('💾 ✅ ✅ ✅ CACHÉ ACTUALIZADO CON FIRMA: $firmaUrl');
+              print('💾 Orden en caché: ${ordenActualizada.numeroOrden}');
+              print('💾 Estado en caché: ${ordenActualizada.estado}');
+              print('💾 Firma en caché: ${ordenActualizada.firmaUrl}');
             } catch (e) {
-              print('⚠️ Error actualizando _ordenActual y caché con firma: $e');
+              print('❌ Error actualizando _ordenActual y caché con firma: $e');
             }
             
-            // Solo recargar si la firma no es local (para evitar recargas innecesarias offline)
-            if (!firmaUrl.startsWith('local://')) {
-              _recargarOrden();
-            }
+            // 🔒 NO recargar orden después de guardar firma local
+            // Esto evita que se sobrescriba la firma local con datos de BD
+            print('✅ Firma guardada exitosamente - NO se recargará desde BD');
+            print('✅ ========================================');
+            print('');
+          } else {
+            print('⚠️ Widget no está montado, no se puede actualizar estado');
           }
         },
       ),
     );
+    
+    print('');
+    print('✍️ ========================================');
+    print('✍️ MODAL DE FIRMA CERRADO');
+    print('✍️ ========================================');
+    print('✍️ Resultado: $resultado');
+    print('✍️ Firma actual (_firmaUrl): $_firmaUrl');
+    print('✍️ Firma en _ordenActual: ${_ordenActual.firmaUrl}');
+    print('✍️ ========================================');
+    print('');
     
     return resultado ?? false;
   }
@@ -6317,11 +6428,23 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
   bool _isProcessing = false;
 
   Future<void> _guardarFirma() async {
-    if (_isProcessing) return;
+    print('');
+    print('💾 ========================================');
+    print('💾 _guardarFirma() INICIADO');
+    print('💾 ========================================');
+    print('💾 _isProcessing: $_isProcessing');
+    
+    if (_isProcessing) {
+      print('⚠️ Ya se está procesando, ignorando');
+      return;
+    }
 
     // Verificar si hay puntos en la firma
     final points = widget.signatureController.points;
+    print('💾 Puntos en firma: ${points.length}');
+    
     if (points.isEmpty) {
+      print('⚠️ Firma vacía - mostrando mensaje');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -6334,20 +6457,39 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
       return;
     }
 
+    print('✅ Firma tiene puntos, comenzando procesamiento...');
     setState(() {
       _isProcessing = true;
     });
 
     try {
       // Exportar firma como imagen
+      print('🎨 Exportando firma a PNG...');
       final signatureBytes = await widget.signatureController.toPngBytes();
+      print('✅ Firma exportada: ${signatureBytes != null ? "${signatureBytes.length} bytes" : "null"}');
+      
       if (signatureBytes == null || !mounted) {
-        Navigator.of(context).pop(false);
+        print('❌ Error: signatureBytes es null o widget no está montado');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No se pudo generar la firma. Intenta nuevamente.'),
+              backgroundColor: Color(0xFFDC2626),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          setState(() {
+            _isProcessing = false;
+          });
+        }
         return;
       }
 
       // Subir firma a Supabase Storage
+      print('☁️ Subiendo firma a Supabase Storage...');
       final firmaUrl = await widget.subirFirma(signatureBytes, widget.ordenId);
+      print('✅ Firma subida - URL: $firmaUrl');
+      
       if (firmaUrl != null && mounted) {
         final isLocal = firmaUrl.startsWith('local://');
         
@@ -6358,22 +6500,31 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
           
           // 🔒 CRÍTICO: Actualizar caché local de la orden con la firma local
           try {
+            print('📝 Actualizando caché con firma local...');
             final ordenCached = await OrdenCacheService.getCachedOrderById(widget.ordenId);
+            print('📝 Orden cargada desde caché: ${ordenCached != null ? "SI" : "NO"}');
+            
             if (ordenCached != null) {
               final ordenJson = ordenCached.toJson();
               ordenJson['firma_url'] = firmaUrl;
               final ordenActualizada = Orden.fromJson(ordenJson);
               await OrdenCacheService.updateCachedOrder(ordenActualizada);
-              print('💾 Orden actualizada en caché local con firma: ${firmaUrl}');
+              print('💾 ✅ ✅ ✅ Orden actualizada en caché local con firma: ${firmaUrl}');
+              print('💾 Verificación: firma_url en orden actualizada = ${ordenActualizada.firmaUrl}');
+            } else {
+              print('⚠️ No se encontró orden en caché para actualizar');
             }
           } catch (e) {
-            print('⚠️ Error actualizando caché local con firma: $e');
+            print('❌ Error actualizando caché local con firma: $e');
           }
           
           // Llamar callback para actualizar el estado del padre
+          print('📞 Llamando callback onFirmaGuardada con URL: $firmaUrl');
           widget.onFirmaGuardada(firmaUrl);
+          print('✅ Callback onFirmaGuardada ejecutado');
           
           if (mounted) {
+            print('✅ Mostrando SnackBar y cerrando modal');
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 content: Text('✅ Firma guardada (modo offline) - Puedes continuar con la entrega'),
@@ -6381,10 +6532,12 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
               ),
             );
 
+            print('✅ Cerrando modal con resultado: true');
             Navigator.of(context).pop(true);
           }
         } else {
           // Firma subida exitosamente (online) - Actualizar BD
+          print('🌐 Firma subida exitosamente (online) - Actualizando BD...');
           try {
             await supabase
                 .from('ordenes')
@@ -6392,11 +6545,15 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
                   'firma_url': firmaUrl,
                 })
                 .eq('id', widget.ordenId);
+            print('✅ BD actualizada con firma exitosamente');
 
             // Llamar callback para actualizar el estado del padre
+            print('📞 Llamando callback onFirmaGuardada con URL (online): $firmaUrl');
             widget.onFirmaGuardada(firmaUrl);
+            print('✅ Callback onFirmaGuardada ejecutado (online)');
 
             if (mounted) {
+              print('✅ Mostrando SnackBar y cerrando modal (online)');
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text('✅ Firma guardada exitosamente'),
@@ -6404,14 +6561,18 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
                 ),
               );
 
+              print('✅ Cerrando modal con resultado: true (online)');
               Navigator.of(context).pop(true);
             }
           } catch (e) {
             print('❌ Error actualizando BD con firma: $e');
             // Aún así, llamar callback para actualizar estado local
+            print('📞 Llamando callback onFirmaGuardada (error BD): $firmaUrl');
             widget.onFirmaGuardada(firmaUrl);
+            print('✅ Callback ejecutado a pesar del error');
             
             if (mounted) {
+              print('✅ Mostrando SnackBar y cerrando modal (error BD)');
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text('✅ Firma guardada (se sincronizará cuando haya conexión)'),
@@ -6419,6 +6580,7 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
                 ),
               );
 
+              print('✅ Cerrando modal con resultado: true (error BD)');
               Navigator.of(context).pop(true);
             }
           }
