@@ -525,9 +525,20 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                       final file = File(filePath);
                       if (await file.exists()) {
                         print('🔒 Restaurando foto local desde storage: $filePath');
+                        final fotoLocalUrl = 'local://$filePath';
                         if (mounted) {
                           setState(() {
-                            _fotoEntregaUrl = 'local://$filePath';
+                            _fotoEntregaUrl = fotoLocalUrl;
+                            
+                            // 🔒 CRÍTICO: Actualizar también _ordenActual
+                            try {
+                              final ordenJson = _ordenActual.toJson();
+                              ordenJson['foto_entrega'] = fotoLocalUrl;
+                              _ordenActual = Orden.fromJson(ordenJson);
+                              print('✅ _ordenActual actualizada con foto restaurada: $fotoLocalUrl');
+                            } catch (e) {
+                              print('⚠️ Error actualizando _ordenActual con foto restaurada: $e');
+                            }
                           });
                         }
                       }
@@ -3833,8 +3844,18 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           final file = File(filePath);
           if (await file.exists()) {
             print('🔒 Restaurando foto local desde storage después de recargar: $filePath');
-            _fotoEntregaUrl = 'local://$filePath';
-            // No modificar _ordenActual directamente (es inmutable)
+            final fotoLocalUrl = 'local://$filePath';
+            _fotoEntregaUrl = fotoLocalUrl;
+            
+            // 🔒 CRÍTICO: Actualizar también _ordenActual
+            try {
+              final ordenJson = _ordenActual.toJson();
+              ordenJson['foto_entrega'] = fotoLocalUrl;
+              _ordenActual = Orden.fromJson(ordenJson);
+              print('✅ _ordenActual actualizada con foto restaurada: $fotoLocalUrl');
+            } catch (e) {
+              print('⚠️ Error actualizando _ordenActual con foto restaurada: $e');
+            }
           }
         }
       } catch (e) {
@@ -3916,8 +3937,60 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     // PASO 3: Obtener FOTO (si es obligatoria) - PRIMERO LA FOTO, LUEGO LA FIRMA
     // 🔒 CRÍTICO: Verificar tanto _fotoEntregaUrl como _ordenActual.fotoEntrega
     // porque pueden estar desincronizados después de recargas
-    final tieneFoto = (_fotoEntregaUrl != null && _fotoEntregaUrl!.isNotEmpty) ||
+    // También verificar en caché y pending_photos si no está en estado local
+    bool tieneFoto = (_fotoEntregaUrl != null && _fotoEntregaUrl!.isNotEmpty) ||
                       (_ordenActual.fotoEntrega != null && _ordenActual.fotoEntrega!.isNotEmpty);
+    
+    // Si no tiene foto en estado local, verificar en caché y pending_photos
+    if (!tieneFoto) {
+      try {
+        // Verificar en caché
+        final ordenCache = await OrdenCacheService.getCachedOrderById(_ordenActual.id);
+        if (ordenCache != null && ordenCache.fotoEntrega != null && ordenCache.fotoEntrega!.isNotEmpty) {
+          // Sincronizar desde caché
+          _fotoEntregaUrl = ordenCache.fotoEntrega;
+          try {
+            final ordenJson = _ordenActual.toJson();
+            ordenJson['foto_entrega'] = ordenCache.fotoEntrega;
+            _ordenActual = Orden.fromJson(ordenJson);
+            tieneFoto = true;
+            print('✅ Foto encontrada en caché y sincronizada: ${ordenCache.fotoEntrega}');
+          } catch (e) {
+            print('⚠️ Error sincronizando foto desde caché: $e');
+          }
+        }
+        
+        // Si aún no tiene foto, verificar en pending_photos
+        if (!tieneFoto) {
+          final offlineStorage = OfflineStorageService();
+          final pendingPhotos = await offlineStorage.getPendingPhotos();
+          final fotoPendiente = pendingPhotos.firstWhere(
+            (photo) => photo['orden_id'] == _ordenActual.id,
+            orElse: () => <String, dynamic>{},
+          );
+          
+          if (fotoPendiente.isNotEmpty && fotoPendiente['file_path'] != null) {
+            final filePath = fotoPendiente['file_path'] as String;
+            final file = File(filePath);
+            if (await file.exists()) {
+              final fotoLocalUrl = 'local://$filePath';
+              _fotoEntregaUrl = fotoLocalUrl;
+              try {
+                final ordenJson = _ordenActual.toJson();
+                ordenJson['foto_entrega'] = fotoLocalUrl;
+                _ordenActual = Orden.fromJson(ordenJson);
+                tieneFoto = true;
+                print('✅ Foto encontrada en pending_photos y sincronizada: $fotoLocalUrl');
+              } catch (e) {
+                print('⚠️ Error sincronizando foto desde pending_photos: $e');
+              }
+            }
+          }
+        }
+      } catch (e) {
+        print('⚠️ Error verificando foto en caché/pending_photos: $e');
+      }
+    }
     
     if (_fotoEntregaObligatoria && !tieneFoto) {
       print('📷 PASO 3: Foto obligatoria pero no tomada, pidiendo foto directamente...');
@@ -3965,8 +4038,60 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     // PASO 4: Obtener FIRMA (si requiere) - DESPUÉS DE LA FOTO
     // 🔒 CRÍTICO: Verificar tanto _firmaUrl como _ordenActual.firmaUrl
     // porque pueden estar desincronizados después de recargas
-    final tieneFirma = (_firmaUrl != null && _firmaUrl!.isNotEmpty) ||
+    // También verificar en caché y pending_signatures si no está en estado local
+    bool tieneFirma = (_firmaUrl != null && _firmaUrl!.isNotEmpty) ||
                        (_ordenActual.firmaUrl != null && _ordenActual.firmaUrl!.isNotEmpty);
+    
+    // Si no tiene firma en estado local, verificar en caché y pending_signatures
+    if (!tieneFirma) {
+      try {
+        // Verificar en caché
+        final ordenCache = await OrdenCacheService.getCachedOrderById(_ordenActual.id);
+        if (ordenCache != null && ordenCache.firmaUrl != null && ordenCache.firmaUrl!.isNotEmpty) {
+          // Sincronizar desde caché
+          _firmaUrl = ordenCache.firmaUrl;
+          try {
+            final ordenJson = _ordenActual.toJson();
+            ordenJson['firma_url'] = ordenCache.firmaUrl;
+            _ordenActual = Orden.fromJson(ordenJson);
+            tieneFirma = true;
+            print('✅ Firma encontrada en caché y sincronizada: ${ordenCache.firmaUrl}');
+          } catch (e) {
+            print('⚠️ Error sincronizando firma desde caché: $e');
+          }
+        }
+        
+        // Si aún no tiene firma, verificar en pending_signatures
+        if (!tieneFirma) {
+          final offlineStorage = OfflineStorageService();
+          final pendingSignatures = await offlineStorage.getPendingSignatures();
+          final firmaPendiente = pendingSignatures.firstWhere(
+            (sig) => sig['orden_id'] == _ordenActual.id,
+            orElse: () => <String, dynamic>{},
+          );
+          
+          if (firmaPendiente.isNotEmpty && firmaPendiente['file_path'] != null) {
+            final filePath = firmaPendiente['file_path'] as String;
+            final file = File(filePath);
+            if (await file.exists()) {
+              final firmaLocalUrl = 'local://$filePath';
+              _firmaUrl = firmaLocalUrl;
+              try {
+                final ordenJson = _ordenActual.toJson();
+                ordenJson['firma_url'] = firmaLocalUrl;
+                _ordenActual = Orden.fromJson(ordenJson);
+                tieneFirma = true;
+                print('✅ Firma encontrada en pending_signatures y sincronizada: $firmaLocalUrl');
+              } catch (e) {
+                print('⚠️ Error sincronizando firma desde pending_signatures: $e');
+              }
+            }
+          }
+        }
+      } catch (e) {
+        print('⚠️ Error verificando firma en caché/pending_signatures: $e');
+      }
+    }
     
     if (_ordenActual.requiereFirma && !tieneFirma) {
       print('✍️ PASO 4: Firma requerida pero no obtenida, mostrando modal...');
@@ -5568,13 +5693,29 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               print('✅ Foto subida exitosamente (online)');
               
               if (mounted) {
-                setState(() {
-                  _fotoEntregaUrl = imageUrl;
-                  // No modificar _ordenActual directamente (es inmutable)
-                  _isLoading = false;
-                });
-                // NO recargar orden aquí - puede causar problemas con diálogos abiertos
-                // La recarga se hará cuando se presione el botón de entregar
+                // 🔒 CRÍTICO: Actualizar tanto _fotoEntregaUrl como _ordenActual
+                try {
+                  final ordenJson = _ordenActual.toJson();
+                  ordenJson['foto_entrega'] = imageUrl;
+                  final ordenActualizada = Orden.fromJson(ordenJson);
+                  
+                  setState(() {
+                    _fotoEntregaUrl = imageUrl;
+                    _ordenActual = ordenActualizada; // 🔒 Sincronizar _ordenActual
+                    _isLoading = false;
+                  });
+                  
+                  // Actualizar caché también
+                  await OrdenCacheService.updateCachedOrder(ordenActualizada);
+                  print('✅ _ordenActual y caché actualizados con foto: $imageUrl');
+                } catch (e) {
+                  print('⚠️ Error actualizando _ordenActual con foto: $e');
+                  setState(() {
+                    _fotoEntregaUrl = imageUrl;
+                    _isLoading = false;
+                  });
+                }
+                
                 _mostrarMensaje('✅ Foto subida exitosamente');
               }
             } catch (uploadError) {
@@ -5600,13 +5741,33 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                 print('⚠️ Error actualizando caché local con foto: $e');
               }
               
+              // 🔒 CRÍTICO: Actualizar _ordenActual también
+              final fotoLocalUrl = 'local://${image.path}';
+              try {
+                final ordenJson = _ordenActual.toJson();
+                ordenJson['foto_entrega'] = fotoLocalUrl;
+                final ordenActualizada = Orden.fromJson(ordenJson);
+                
+                if (mounted) {
+                  setState(() {
+                    _fotoEntregaUrl = fotoLocalUrl;
+                    _ordenActual = ordenActualizada; // 🔒 Sincronizar _ordenActual
+                    _isLoading = false;
+                  });
+                  print('✅ _ordenActual y _fotoEntregaUrl actualizados con foto local: $fotoLocalUrl');
+                }
+              } catch (e) {
+                print('⚠️ Error actualizando _ordenActual con foto: $e');
+                if (mounted) {
+                  setState(() {
+                    _fotoEntregaUrl = fotoLocalUrl;
+                    _isLoading = false;
+                  });
+                }
+              }
+              
               if (mounted) {
                 _mostrarMensaje('✅ Foto guardada (se sincronizará cuando haya conexión) - Puedes continuar con la entrega');
-                setState(() {
-                  _fotoEntregaUrl = 'local://${image.path}'; // URL temporal local
-                  // No modificar _ordenActual directamente (es inmutable)
-                  _isLoading = false;
-                });
               }
             }
           } else {
@@ -5632,13 +5793,33 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               print('⚠️ Error actualizando caché local con foto: $e');
             }
             
+            // 🔒 CRÍTICO: Actualizar _ordenActual también
+            final fotoLocalUrl = 'local://${image.path}';
+            try {
+              final ordenJson = _ordenActual.toJson();
+              ordenJson['foto_entrega'] = fotoLocalUrl;
+              final ordenActualizada = Orden.fromJson(ordenJson);
+              
+              if (mounted) {
+                setState(() {
+                  _fotoEntregaUrl = fotoLocalUrl;
+                  _ordenActual = ordenActualizada; // 🔒 Sincronizar _ordenActual
+                  _isLoading = false;
+                });
+                print('✅ _ordenActual y _fotoEntregaUrl actualizados con foto local (offline): $fotoLocalUrl');
+              }
+            } catch (e) {
+              print('⚠️ Error actualizando _ordenActual con foto: $e');
+              if (mounted) {
+                setState(() {
+                  _fotoEntregaUrl = fotoLocalUrl;
+                  _isLoading = false;
+                });
+              }
+            }
+            
             if (mounted) {
               _mostrarMensaje('✅ Foto guardada (modo offline) - Puedes continuar con la entrega');
-              setState(() {
-                _fotoEntregaUrl = 'local://${image.path}'; // URL temporal local
-                // No modificar _ordenActual directamente (es inmutable)
-                _isLoading = false;
-              });
             }
           }
         } catch (e) {
@@ -5835,13 +6016,29 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               print('✅ Foto subida exitosamente (online)');
               
               if (mounted) {
-                setState(() {
-                  _fotoEntregaUrl = imageUrl;
-                  // No modificar _ordenActual directamente (es inmutable)
-                  _isLoading = false;
-                });
-                // Recargar orden para actualizar la UI
-                _recargarOrden();
+                // 🔒 CRÍTICO: Actualizar tanto _fotoEntregaUrl como _ordenActual
+                try {
+                  final ordenJson = _ordenActual.toJson();
+                  ordenJson['foto_entrega'] = imageUrl;
+                  final ordenActualizada = Orden.fromJson(ordenJson);
+                  
+                  setState(() {
+                    _fotoEntregaUrl = imageUrl;
+                    _ordenActual = ordenActualizada; // 🔒 Sincronizar _ordenActual
+                    _isLoading = false;
+                  });
+                  
+                  // Actualizar caché también
+                  await OrdenCacheService.updateCachedOrder(ordenActualizada);
+                  print('✅ _ordenActual y caché actualizados con foto: $imageUrl');
+                } catch (e) {
+                  print('⚠️ Error actualizando _ordenActual con foto: $e');
+                  setState(() {
+                    _fotoEntregaUrl = imageUrl;
+                    _isLoading = false;
+                  });
+                }
+                
                 _mostrarMensaje('✅ Foto subida exitosamente');
               }
             } catch (uploadError) {
@@ -5867,13 +6064,33 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                 print('⚠️ Error actualizando caché local con foto: $e');
               }
               
+              // 🔒 CRÍTICO: Actualizar _ordenActual también
+              final fotoLocalUrl = 'local://${image.path}';
+              try {
+                final ordenJson = _ordenActual.toJson();
+                ordenJson['foto_entrega'] = fotoLocalUrl;
+                final ordenActualizada = Orden.fromJson(ordenJson);
+                
+                if (mounted) {
+                  setState(() {
+                    _fotoEntregaUrl = fotoLocalUrl;
+                    _ordenActual = ordenActualizada; // 🔒 Sincronizar _ordenActual
+                    _isLoading = false;
+                  });
+                  print('✅ _ordenActual y _fotoEntregaUrl actualizados con foto local: $fotoLocalUrl');
+                }
+              } catch (e) {
+                print('⚠️ Error actualizando _ordenActual con foto: $e');
+                if (mounted) {
+                  setState(() {
+                    _fotoEntregaUrl = fotoLocalUrl;
+                    _isLoading = false;
+                  });
+                }
+              }
+              
               if (mounted) {
                 _mostrarMensaje('✅ Foto guardada (se sincronizará cuando haya conexión) - Puedes continuar con la entrega');
-                setState(() {
-                  _fotoEntregaUrl = 'local://${image.path}'; // URL temporal local
-                  // No modificar _ordenActual directamente (es inmutable)
-                  _isLoading = false;
-                });
               }
             }
           } else {
@@ -5899,13 +6116,33 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               print('⚠️ Error actualizando caché local con foto: $e');
             }
             
+            // 🔒 CRÍTICO: Actualizar _ordenActual también
+            final fotoLocalUrl = 'local://${image.path}';
+            try {
+              final ordenJson = _ordenActual.toJson();
+              ordenJson['foto_entrega'] = fotoLocalUrl;
+              final ordenActualizada = Orden.fromJson(ordenJson);
+              
+              if (mounted) {
+                setState(() {
+                  _fotoEntregaUrl = fotoLocalUrl;
+                  _ordenActual = ordenActualizada; // 🔒 Sincronizar _ordenActual
+                  _isLoading = false;
+                });
+                print('✅ _ordenActual y _fotoEntregaUrl actualizados con foto local (offline): $fotoLocalUrl');
+              }
+            } catch (e) {
+              print('⚠️ Error actualizando _ordenActual con foto: $e');
+              if (mounted) {
+                setState(() {
+                  _fotoEntregaUrl = fotoLocalUrl;
+                  _isLoading = false;
+                });
+              }
+            }
+            
             if (mounted) {
               _mostrarMensaje('✅ Foto guardada (modo offline) - Puedes continuar con la entrega');
-              setState(() {
-                _fotoEntregaUrl = 'local://${image.path}'; // URL temporal local
-                // No modificar _ordenActual directamente (es inmutable)
-                _isLoading = false;
-              });
             }
           }
         } catch (e) {
