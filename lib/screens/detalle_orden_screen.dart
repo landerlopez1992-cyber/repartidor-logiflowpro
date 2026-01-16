@@ -1555,11 +1555,40 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       }
     }
     
-    // 🔒 PARA REMESAS: La foto es OPCIONAL (no bloqueante)
-    // No usar _fotoEntregaObligatoria (configuración general) para remesas
-    // Solo pedir foto si el usuario lo desea explícitamente (pero no hay campo en BD para esto)
-    // Por ahora, para remesas la foto es completamente opcional
-    // NO pedir foto para remesas (las remesas solo requieren firma si está activo, no foto)
+    // 🔒 PARA REMESAS: La foto se pide igual que en órdenes normales
+    // Si _fotoEntregaObligatoria está activo, pedir foto también para remesas
+    // Flujo: RMSA → ID → FIRMA → FOTO (si obligatoria) → Confirmación
+    if (_fotoEntregaObligatoria && (_fotoEntregaUrl == null || _fotoEntregaUrl!.isEmpty)) {
+      print('📷 PASO 4: Foto obligatoria pero no tomada para remesa');
+      
+      // Usar el método existente que maneja todo el flujo de foto
+      await _tomarFotoEntregaConSelector();
+      
+      // Verificar que la foto se capturó correctamente
+      if (_fotoEntregaUrl == null || _fotoEntregaUrl!.isEmpty) {
+        print('❌ Error: La foto no se capturó correctamente');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('❌ No se pudo obtener la foto. Intenta de nuevo.'),
+            backgroundColor: Color(0xFFDC2626),
+          ),
+        );
+        return;
+      }
+      
+      // 🔒 CRÍTICO: Actualizar _ordenActual con la foto capturada
+      // NO recargar desde BD porque puede sobrescribir la foto local
+      try {
+        final ordenJson = _ordenActual.toJson();
+        ordenJson['foto_entrega'] = _fotoEntregaUrl;
+        _ordenActual = Orden.fromJson(ordenJson);
+        print('✅ _ordenActual actualizada con foto: $_fotoEntregaUrl');
+      } catch (e) {
+        print('⚠️ Error actualizando _ordenActual con foto: $e');
+      }
+      
+      print('✅ Foto capturada exitosamente para remesa: $_fotoEntregaUrl');
+    }
     
     // Confirmación final
     final confirmado = await showDialog<bool>(
