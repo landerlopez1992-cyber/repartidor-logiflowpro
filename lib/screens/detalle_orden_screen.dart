@@ -871,6 +871,16 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             // Card de historial de estados
             _buildStatusHistoryCard(),
             const SizedBox(height: 12),
+
+            if (!_ordenActual.entregaPorVendedor &&
+                (_ordenActual.vendedorContactoNombre != null ||
+                    (_ordenActual.vendedorContactoTelefono != null &&
+                        _ordenActual.vendedorContactoTelefono!.trim().isNotEmpty) ||
+                    (_ordenActual.vendedorContactoEmail != null &&
+                        _ordenActual.vendedorContactoEmail!.trim().isNotEmpty))) ...[
+              _buildColaboradorRecogidaCard(),
+              const SizedBox(height: 12),
+            ],
             
             // 🔥 RECUADRO INFORMATIVO ESPECIAL: Proceso de recogida en sucursal (solo para órdenes normales de LogiFlow)
             if (_ordenActual.goodbarberOrderId == null && 
@@ -2218,6 +2228,62 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             child: const Text('Confirmar'),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Recogida con empresa: datos del colaborador para coordinar la recolección del pedido.
+  Widget _buildColaboradorRecogidaCard() {
+    final nombre = _ordenActual.vendedorContactoNombre?.trim();
+    final tel = _ordenActual.vendedorContactoTelefono?.trim();
+    final email = _ordenActual.vendedorContactoEmail?.trim();
+    return Card(
+      elevation: 3,
+      color: const Color(0xFFE8F5E9),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Color(0xFF4CAF50), width: 1.2),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.storefront, color: Color(0xFF2E7D32), size: 22),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Contacto del colaborador (recogida)',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: const Color(0xFF2C2C2C),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Coordina con el colaborador para recoger el pedido en el punto acordado.',
+              style: TextStyle(fontSize: 13, color: const Color(0xFF666666)),
+            ),
+            if (nombre != null && nombre.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _buildInfoRow(Icons.badge_outlined, 'Nombre', nombre),
+            ],
+            if (tel != null && tel.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _buildInfoRow(Icons.phone, 'Teléfono', tel),
+            ],
+            if (email != null && email.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _buildInfoRow(Icons.email_outlined, 'Correo', email),
+            ],
+          ],
+        ),
       ),
     );
   }

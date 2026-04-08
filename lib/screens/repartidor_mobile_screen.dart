@@ -1111,7 +1111,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                     rethrow;
                   }
                 })
-                .where((orden) => !orden.pagada) // Filtrar órdenes pagadas (se ocultan del repartidor)
+                .where((orden) =>
+                    !orden.pagada &&
+                    !orden.entregaPorVendedor) // Sin entrega por colaborador ni pagadas
                 .toList();
             
             print('📦 Órdenes cargadas (sin pagadas): ${ordenesCargadas.length}');
@@ -1266,6 +1268,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 return orden;
               })
               .where((orden) {
+                if (orden.entregaPorVendedor) {
+                  return false;
+                }
                 // Para repartidores master, excluir órdenes de RECOGIDA (mantener null y ENVIO)
                 if (_esRepartidorMaster && orden.tipoOrden == 'RECOGIDA') {
                   return false;
@@ -2707,7 +2712,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     }
     
     // Recalcular solo si es necesario
-    var filtradas = _ordenes;
+    // Nunca mostrar órdenes cuya entrega gestiona el colaborador (también si vienen de caché).
+    var filtradas =
+        _ordenes.where((orden) => !orden.entregaPorVendedor).toList();
 
     // Filtrar por estado (diferentes estados para recolectores vs repartidores)
     if (_esRecolector) {
@@ -4515,6 +4522,47 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 ),
               ),
 
+              // Tarjeta de contacto del vendedor: cuando la empresa entrega y hay datos de recogida
+              if (!orden.entregaPorVendedor &&
+                  orden.vendedorContactoNombre != null &&
+                  orden.vendedorContactoNombre!.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE3F2FD),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF1976D2), width: 1.5),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.storefront, color: const Color(0xFF1565C0), size: 16),
+                          const SizedBox(width: 6),
+                          const Text(
+                            'Recoger en el vendedor',
+                            style: TextStyle(
+                              color: Color(0xFF1565C0),
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      if (orden.vendedorContactoNombre != null && orden.vendedorContactoNombre!.isNotEmpty)
+                        _buildContactoVendedorRow(Icons.person, orden.vendedorContactoNombre!),
+                      if (orden.vendedorContactoTelefono != null && orden.vendedorContactoTelefono!.isNotEmpty)
+                        _buildContactoVendedorRow(Icons.phone, orden.vendedorContactoTelefono!),
+                      if (orden.vendedorContactoEmail != null && orden.vendedorContactoEmail!.isNotEmpty)
+                        _buildContactoVendedorRow(Icons.email, orden.vendedorContactoEmail!),
+                    ],
+                  ),
+                ),
+              ],
+
               // Mostrar botón de acción si no está en estado final
               if (_esRecolector) ...[
                 // Para recolectores: mostrar botón si no está RECOGIDO o CANCELADA
@@ -4567,6 +4615,28 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildContactoVendedorRow(IconData icon, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        children: [
+          Icon(icon, color: const Color(0xFF1565C0), size: 13),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                color: Color(0xFF1A237E),
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

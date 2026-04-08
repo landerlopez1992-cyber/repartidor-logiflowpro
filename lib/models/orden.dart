@@ -77,6 +77,12 @@ class Orden {
   final int? goodbarberOrderId; // ID de la orden en GoodBarber
   final int? goodbarberAppId; // App ID de GoodBarber
 
+  /// Tienda: el colaborador entrega (no lista del repartidor).
+  final bool entregaPorVendedor;
+  final String? vendedorContactoNombre;
+  final String? vendedorContactoTelefono;
+  final String? vendedorContactoEmail;
+
   Orden({
     required this.id,
     required this.numeroOrden,
@@ -131,6 +137,10 @@ class Orden {
     this.tiempoEstimadoDesdeAnterior,
     this.goodbarberOrderId,
     this.goodbarberAppId,
+    this.entregaPorVendedor = false,
+    this.vendedorContactoNombre,
+    this.vendedorContactoTelefono,
+    this.vendedorContactoEmail,
   });
 
   // Función auxiliar para parsear valores booleanos desde diferentes tipos
@@ -283,6 +293,10 @@ class Orden {
       tiempoEstimadoDesdeAnterior: json['tiempo_estimado_desde_anterior'] != null ? (json['tiempo_estimado_desde_anterior'] is int ? json['tiempo_estimado_desde_anterior'] : int.tryParse(json['tiempo_estimado_desde_anterior'].toString())) : null,
       goodbarberOrderId: json['goodbarber_order_id'] != null ? (json['goodbarber_order_id'] is int ? json['goodbarber_order_id'] : int.tryParse(json['goodbarber_order_id'].toString())) : null,
       goodbarberAppId: json['goodbarber_app_id'] != null ? (json['goodbarber_app_id'] is int ? json['goodbarber_app_id'] : int.tryParse(json['goodbarber_app_id'].toString())) : null,
+      entregaPorVendedor: _parseBool(json['entrega_por_vendedor']) ?? false,
+      vendedorContactoNombre: json['vendedor_contacto_nombre']?.toString(),
+      vendedorContactoTelefono: json['vendedor_contacto_telefono']?.toString(),
+      vendedorContactoEmail: json['vendedor_contacto_email']?.toString(),
     );
   }
 
@@ -370,6 +384,10 @@ class Orden {
       // GoodBarber
       'goodbarber_order_id': goodbarberOrderId, // ✅ CRÍTICO - Faltaba
       'goodbarber_app_id': goodbarberAppId, // ✅ Faltaba
+      'entrega_por_vendedor': entregaPorVendedor,
+      'vendedor_contacto_nombre': vendedorContactoNombre,
+      'vendedor_contacto_telefono': vendedorContactoTelefono,
+      'vendedor_contacto_email': vendedorContactoEmail,
     };
   }
 }
