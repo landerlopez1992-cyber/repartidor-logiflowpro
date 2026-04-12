@@ -761,6 +761,68 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     }
   }
 
+  String _textoListoEnColaborador(dynamic raw) {
+    if (raw == null) return '';
+    final s = raw.toString();
+    final d = DateTime.tryParse(s);
+    if (d != null) {
+      return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year} '
+          '${d.hour}:${d.minute.toString().padLeft(2, '0')}';
+    }
+    return s;
+  }
+
+  /// Avisos de colaboradores: parte lista para recogida (no implica cambio de estado de la orden).
+  Widget _buildAvisosRecogidaColaboradoresBanner() {
+    final list = _ordenActual.avisosRecogidaVendedor;
+    if (list == null || list.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE8F5E9),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFF4CAF50), width: 1.5),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.notifications_active, color: Colors.green[800], size: 22),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Avisos de recogida (colaboradores)',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green[900],
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ...list.map((a) {
+              final nombre = (a['nombre_vendedor'] ?? 'Colaborador').toString();
+              final cuando = _textoListoEnColaborador(a['listo_en']);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  '· $nombre: indica que su parte está lista para recogida${cuando.isNotEmpty ? ' ($cuando)' : ''}.',
+                  style: const TextStyle(fontSize: 13, color: Color(0xFF1B5E20), height: 1.35),
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
   // Detectar si es una remesa pura (no una orden con remesa)
   bool _esRemesaPura() {
     return _ordenActual.tieneRemesa && 
@@ -842,6 +904,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           children: [
             // Card principal con información básica
             _buildInfoCard(),
+            _buildAvisosRecogidaColaboradoresBanner(),
             const SizedBox(height: 12),
             
             // 🔥 REGLA: Para órdenes de GoodBarber con pickup, mostrar como orden normal (sin tarjeta especial)

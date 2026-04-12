@@ -38,6 +38,50 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
     return isMobile;
   }
 
+  static const String _kLogiflowProLogoUrl = 'https://www.logiflowpro.com/assets/logo.png?v=9';
+  static const double _kLoginBrandLogoSize = 220;
+
+  Widget _loginBrandLogo() {
+    return Image.asset(
+      'assets/www.logiflowpro.com.png',
+      width: _kLoginBrandLogoSize,
+      height: _kLoginBrandLogoSize,
+      fit: BoxFit.contain,
+      errorBuilder: (context, error, stackTrace) {
+        return Image.network(
+          _kLogiflowProLogoUrl,
+          width: _kLoginBrandLogoSize,
+          height: _kLoginBrandLogoSize,
+          fit: BoxFit.contain,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return SizedBox(
+              width: _kLoginBrandLogoSize,
+              height: _kLoginBrandLogoSize,
+              child: Center(
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  value: loadingProgress.expectedTotalBytes != null
+                      ? loadingProgress.cumulativeBytesLoaded /
+                          loadingProgress.expectedTotalBytes!
+                      : null,
+                  color: const Color(0xFF81C784),
+                ),
+              ),
+            );
+          },
+          errorBuilder: (context, error, stackTrace) {
+            return const Icon(
+              Icons.local_shipping,
+              size: 96,
+              color: Color(0xFF81C784),
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   void dispose() {
     _emailController.dispose();
@@ -445,41 +489,8 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          // Logo de la empresa con contenedor moderno
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  const Color(0xFF81C784).withOpacity(0.2),
-                                  const Color(0xFF81C784).withOpacity(0.1),
-                                ],
-                              ),
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: const Color(
-                                    0xFF81C784,
-                                  ).withOpacity(0.4),
-                                  blurRadius: 20,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                            child: Image.asset(
-                              'assets/logo_julio.png',
-                              width: 150,
-                              height: 150,
-                              fit: BoxFit.contain,
-                              errorBuilder: (context, error, stackTrace) {
-                                return const Icon(
-                                  Icons.local_shipping,
-                                  size: 80,
-                                  color: Color(0xFF81C784),
-                                );
-                              },
-                            ),
-                          ),
+                          // Logo oficial (sin halo circular detrás)
+                          _loginBrandLogo(),
                           const SizedBox(height: 16),
 
                           // Título con efecto gradiente

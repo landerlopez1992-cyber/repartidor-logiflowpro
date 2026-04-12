@@ -77,11 +77,23 @@ class Orden {
   final int? goodbarberOrderId; // ID de la orden en GoodBarber
   final int? goodbarberAppId; // App ID de GoodBarber
 
-  /// Tienda: el colaborador entrega (no lista del repartidor).
+  // Campo CUBATRANS: CI y/o Pasaporte del destinatario
+  // Requerido por el Reglamento de Mensajería Internacional de Cuba (punto 6.7.3)
+  final String? ciPasaporteDestinatario;
+
+  /// CUBATRANS: `MARITIMO` (HBL) o `AEREO` (HAWB); null si no aplica.
+  final String? cubatransModoTransporte;
+
+  /// Pedido tienda: el colaborador entrega al cliente (no asignar repartidor / no cambiar estado desde logística).
   final bool entregaPorVendedor;
+
+  /// Contacto del colaborador para que el repartidor coordine recogida (entrega empresa).
   final String? vendedorContactoNombre;
   final String? vendedorContactoTelefono;
   final String? vendedorContactoEmail;
+
+  /// Avisos «mi parte lista para recogida» por colaborador (no cambian el estado de la orden).
+  final List<Map<String, dynamic>>? avisosRecogidaVendedor;
 
   Orden({
     required this.id,
@@ -137,10 +149,13 @@ class Orden {
     this.tiempoEstimadoDesdeAnterior,
     this.goodbarberOrderId,
     this.goodbarberAppId,
+    this.ciPasaporteDestinatario,
+    this.cubatransModoTransporte,
     this.entregaPorVendedor = false,
     this.vendedorContactoNombre,
     this.vendedorContactoTelefono,
     this.vendedorContactoEmail,
+    this.avisosRecogidaVendedor,
   });
 
   // Función auxiliar para parsear valores booleanos desde diferentes tipos
@@ -205,32 +220,11 @@ class Orden {
         ? json['provincia_destino'] 
         : (provinciaDestinatario ?? json['provincia_destino']);
     
-    // ✅ FIX CRÍTICO: Obtener número de orden desde BD - SIEMPRE debe venir de la BD
-    // Soportar ambos formatos (snake_case y camelCase)
-    String numeroOrdenFinal = '';
-    if (json['numero_orden'] != null && json['numero_orden'].toString().trim().isNotEmpty) {
-      numeroOrdenFinal = json['numero_orden'].toString().trim();
-    } else if (json['numeroOrden'] != null && json['numeroOrden'].toString().trim().isNotEmpty) {
-      numeroOrdenFinal = json['numeroOrden'].toString().trim();
-    } else {
-      // Si no hay numero_orden en BD, usar ID como último recurso (pero debería haber numero_orden siempre)
-      // Usar solo los primeros 8 caracteres del ID para que sea más legible
-      final ordenId = json['id']?.toString() ?? '';
-      numeroOrdenFinal = ordenId.isNotEmpty && ordenId.length > 8 ? ordenId.substring(0, 8) : ordenId;
-    }
-    
-    // ✅ FIX CRÍTICO: Obtener emisor desde BD - SIEMPRE debe venir de la BD
-    String emisorFinal = '';
-    if (json['emisor_nombre'] != null && json['emisor_nombre'].toString().trim().isNotEmpty) {
-      emisorFinal = json['emisor_nombre'].toString().trim();
-    } else if (json['emisor'] != null && json['emisor'].toString().trim().isNotEmpty) {
-      emisorFinal = json['emisor'].toString().trim();
-    }
-    
     return Orden(
       id: json['id'].toString(),
-      numeroOrden: numeroOrdenFinal,
-      emisor: emisorFinal,
+      // ✅ FIX CRÍTICO OFFLINE: Soportar ambos formatos (snake_case y camelCase)
+      numeroOrden: json['numero_orden'] ?? json['numeroOrden'] ?? 'N/A',
+      emisor: json['emisor_nombre'] ?? json['emisor'] ?? 'Sin emisor',
       receptor: nombreDestinatarioFinal,
       descripcion: json['descripcion'] ?? '',
       direccionDestino: json['direccion_destino'] ?? json['direccionDestino'] ?? '',
@@ -293,11 +287,30 @@ class Orden {
       tiempoEstimadoDesdeAnterior: json['tiempo_estimado_desde_anterior'] != null ? (json['tiempo_estimado_desde_anterior'] is int ? json['tiempo_estimado_desde_anterior'] : int.tryParse(json['tiempo_estimado_desde_anterior'].toString())) : null,
       goodbarberOrderId: json['goodbarber_order_id'] != null ? (json['goodbarber_order_id'] is int ? json['goodbarber_order_id'] : int.tryParse(json['goodbarber_order_id'].toString())) : null,
       goodbarberAppId: json['goodbarber_app_id'] != null ? (json['goodbarber_app_id'] is int ? json['goodbarber_app_id'] : int.tryParse(json['goodbarber_app_id'].toString())) : null,
+      ciPasaporteDestinatario: json['ci_pasaporte_destinatario']?.toString(),
+      cubatransModoTransporte: json['cubatrans_modo_transporte']?.toString(),
       entregaPorVendedor: _parseBool(json['entrega_por_vendedor']) ?? false,
       vendedorContactoNombre: json['vendedor_contacto_nombre']?.toString(),
       vendedorContactoTelefono: json['vendedor_contacto_telefono']?.toString(),
       vendedorContactoEmail: json['vendedor_contacto_email']?.toString(),
+      avisosRecogidaVendedor: _parseAvisosRecogida(json['avisos_recogida_vendedor']),
     );
+  }
+
+  static List<Map<String, dynamic>>? _parseAvisosRecogida(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is List) {
+      final out = <Map<String, dynamic>>[];
+      for (final e in raw) {
+        if (e is Map<String, dynamic>) {
+          out.add(e);
+        } else if (e is Map) {
+          out.add(Map<String, dynamic>.from(e));
+        }
+      }
+      return out.isEmpty ? null : out;
+    }
+    return null;
   }
 
   // Convertir de Orden a JSON (útil para guardar en bases de datos)
@@ -384,10 +397,16 @@ class Orden {
       // GoodBarber
       'goodbarber_order_id': goodbarberOrderId, // ✅ CRÍTICO - Faltaba
       'goodbarber_app_id': goodbarberAppId, // ✅ Faltaba
+
+      // CUBATRANS
+      'ci_pasaporte_destinatario': ciPasaporteDestinatario,
+      'cubatrans_modo_transporte': cubatransModoTransporte,
+
       'entrega_por_vendedor': entregaPorVendedor,
       'vendedor_contacto_nombre': vendedorContactoNombre,
       'vendedor_contacto_telefono': vendedorContactoTelefono,
       'vendedor_contacto_email': vendedorContactoEmail,
+      'avisos_recogida_vendedor': avisosRecogidaVendedor,
     };
   }
 }
