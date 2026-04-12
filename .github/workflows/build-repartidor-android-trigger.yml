@@ -1,0 +1,118 @@
+name: '📱 Build Repartidor · Android (On-Demand)'
+
+# Repo destino: raíz del proyecto Flutter (ej. repartidor-logiflowpro), NO monorepo.
+# Copiar a: .github/workflows/build-repartidor-android-trigger.yml
+# Secrets en GitHub: SUPABASE_URL, SUPABASE_SERVICE_KEY (mismo nombre que en monorepo)
+#
+# Activado desde Super Admin → App móvil → Compilar (Edge Function logiflow-build-trigger)
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: 'UUID del job en logiflow_build_jobs (Supabase)'
+        required: true
+        type: string
+
+env:
+  SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SVC_KEY:  ${{ secrets.SUPABASE_SERVICE_KEY }}
+  STORAGE_BUCKET:    logiflow-descargas
+
+jobs:
+  build-android:
+    name: 'Compilar APK y subir a Supabase Storage'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout código (última versión de main)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configurar Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: 'Supabase: estado → construyendo'
+        run: |
+          curl -sfX PATCH \
+            "$SUPABASE_URL/rest/v1/logiflow_build_jobs?id=eq.${{ inputs.job_id }}" \
+            -H "apikey: $SUPABASE_SVC_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SVC_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"estado\":\"construyendo\",\"github_run_id\":\"${{ github.run_id }}\"}"
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: flutter build apk --release
+        run: flutter build apk --release
+
+      - name: 'Supabase: estado → subiendo'
+        run: |
+          curl -sfX PATCH \
+            "$SUPABASE_URL/rest/v1/logiflow_build_jobs?id=eq.${{ inputs.job_id }}" \
+            -H "apikey: $SUPABASE_SVC_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SVC_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"estado":"subiendo"}'
+
+      - name: Subir APK a Supabase Storage
+        id: upload
+        run: |
+          APK=$(find build/app/outputs/flutter-apk -name 'app-release.apk' | head -1)
+          echo "APK: $APK ($(du -sh "$APK" | cut -f1))"
+
+          curl -sfX POST \
+            "$SUPABASE_URL/storage/v1/object/$STORAGE_BUCKET/android/app_repartidor.apk" \
+            -H "apikey: $SUPABASE_SVC_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SVC_KEY" \
+            -H "Content-Type: application/vnd.android.package-archive" \
+            -H "x-upsert: true" \
+            --data-binary "@$APK"
+
+          PUBLIC_URL="$SUPABASE_URL/storage/v1/object/public/$STORAGE_BUCKET/android/app_repartidor.apk"
+          echo "PUBLIC_URL=$PUBLIC_URL" >> "$GITHUB_ENV"
+          echo "✅ Subido a: $PUBLIC_URL"
+
+      - name: 'Supabase: estado → listo + actualizar URL'
+        run: |
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          curl -sfX PATCH \
+            "$SUPABASE_URL/rest/v1/logiflow_build_jobs?id=eq.${{ inputs.job_id }}" \
+            -H "apikey: $SUPABASE_SVC_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SVC_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"estado\":\"listo\",\"artifact_url\":\"$PUBLIC_URL\",\"completado_at\":\"$NOW\"}"
+
+          curl -sfX PATCH \
+            "$SUPABASE_URL/rest/v1/logiflow_descargas_app?id=eq.1" \
+            -H "apikey: $SUPABASE_SVC_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SVC_KEY" \
+            -H "Prefer: return=minimal" \
+            -H "Content-Type: application/json" \
+            -d "{\"google_play_url\":\"$PUBLIC_URL\",\"mostrar_google_play\":true}"
+
+          echo "✅ Build completado. URL: $PUBLIC_URL"
+
+      - name: 'Supabase: estado → error (si falló)'
+        if: failure()
+        run: |
+          ERR_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -sfX PATCH \
+            "$SUPABASE_URL/rest/v1/logiflow_build_jobs?id=eq.${{ inputs.job_id }}" \
+            -H "apikey: $SUPABASE_SVC_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SVC_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"estado\":\"error\",\"error_mensaje\":\"Build fallido. Ver log: $ERR_URL\"}"

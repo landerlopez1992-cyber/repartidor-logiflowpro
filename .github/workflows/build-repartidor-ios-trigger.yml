@@ -1,0 +1,142 @@
+name: '🍎 Build Repartidor · iOS (On-Demand)'
+
+# Repo destino: raíz del proyecto Flutter (ej. repartidor-logiflowpro).
+# Copiar a: .github/workflows/build-repartidor-ios-trigger.yml
+#
+# Secrets: SUPABASE_URL, SUPABASE_SERVICE_KEY,
+#   IOS_CERTIFICATE_BASE64, IOS_CERTIFICATE_PASSWORD, IOS_PROVISIONING_BASE64
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: 'UUID del job en logiflow_build_jobs (Supabase)'
+        required: true
+        type: string
+
+env:
+  SUPABASE_URL:     ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SVC_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+  STORAGE_BUCKET:   logiflow-descargas
+
+jobs:
+  build-ios:
+    name: 'Compilar IPA y subir a Supabase Storage'
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout código (última versión de main)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Configurar Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Habilitar plataforma iOS
+        run: flutter config --enable-ios
+
+      - name: Instalar certificado de firma iOS
+        env:
+          IOS_CERTIFICATE_BASE64:   ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_BASE64:  ${{ secrets.IOS_PROVISIONING_BASE64 }}
+          KEYCHAIN_PASS:            logiflow-${{ github.run_id }}
+        working-directory: '.'
+        run: |
+          security create-keychain -p "$KEYCHAIN_PASS" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASS" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+
+          echo "$IOS_CERTIFICATE_BASE64" | base64 --decode > cert.p12
+          security import cert.p12 -k build.keychain \
+            -P "$IOS_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASS" build.keychain
+
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "$IOS_PROVISIONING_BASE64" | base64 --decode \
+            > ~/Library/MobileDevice/Provisioning\ Profiles/repartidor.mobileprovision
+
+          echo "✅ Certificado y perfil instalados"
+
+      - name: 'Supabase: estado → construyendo'
+        run: |
+          curl -sfX PATCH \
+            "$SUPABASE_URL/rest/v1/logiflow_build_jobs?id=eq.${{ inputs.job_id }}" \
+            -H "apikey: $SUPABASE_SVC_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SVC_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"estado\":\"construyendo\",\"github_run_id\":\"${{ github.run_id }}\"}"
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: flutter build ipa --release
+        run: flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
+
+      - name: 'Supabase: estado → subiendo'
+        run: |
+          curl -sfX PATCH \
+            "$SUPABASE_URL/rest/v1/logiflow_build_jobs?id=eq.${{ inputs.job_id }}" \
+            -H "apikey: $SUPABASE_SVC_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SVC_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"estado":"subiendo"}'
+
+      - name: Subir IPA a Supabase Storage
+        id: upload
+        run: |
+          IPA=$(find build/ios/ipa -name '*.ipa' | head -1)
+          echo "IPA: $IPA ($(du -sh "$IPA" | cut -f1))"
+
+          curl -sfX POST \
+            "$SUPABASE_URL/storage/v1/object/$STORAGE_BUCKET/ios/app_repartidor.ipa" \
+            -H "apikey: $SUPABASE_SVC_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SVC_KEY" \
+            -H "Content-Type: application/octet-stream" \
+            -H "x-upsert: true" \
+            --data-binary "@$IPA"
+
+          PUBLIC_URL="$SUPABASE_URL/storage/v1/object/public/$STORAGE_BUCKET/ios/app_repartidor.ipa"
+          echo "PUBLIC_URL=$PUBLIC_URL" >> "$GITHUB_ENV"
+          echo "✅ Subido a: $PUBLIC_URL"
+
+      - name: 'Supabase: estado → listo + actualizar URL'
+        run: |
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          curl -sfX PATCH \
+            "$SUPABASE_URL/rest/v1/logiflow_build_jobs?id=eq.${{ inputs.job_id }}" \
+            -H "apikey: $SUPABASE_SVC_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SVC_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"estado\":\"listo\",\"artifact_url\":\"$PUBLIC_URL\",\"completado_at\":\"$NOW\"}"
+
+          curl -sfX PATCH \
+            "$SUPABASE_URL/rest/v1/logiflow_descargas_app?id=eq.1" \
+            -H "apikey: $SUPABASE_SVC_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SVC_KEY" \
+            -H "Prefer: return=minimal" \
+            -H "Content-Type: application/json" \
+            -d "{\"apple_store_url\":\"$PUBLIC_URL\",\"mostrar_apple_store\":true}"
+
+          echo "✅ Build iOS completado. URL: $PUBLIC_URL"
+
+      - name: 'Supabase: estado → error (si falló)'
+        if: failure()
+        run: |
+          ERR_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -sfX PATCH \
+            "$SUPABASE_URL/rest/v1/logiflow_build_jobs?id=eq.${{ inputs.job_id }}" \
+            -H "apikey: $SUPABASE_SVC_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SVC_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"estado\":\"error\",\"error_mensaje\":\"Build iOS fallido. Ver log: $ERR_URL\"}"
