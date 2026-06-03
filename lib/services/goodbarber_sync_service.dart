@@ -178,7 +178,7 @@ class GoodBarberSyncService {
     }
   }
 
-  /// Sincroniza órdenes de GoodBarber a LogiFlow Pro
+  /// Sincroniza órdenes de GoodBarber a VolonexPro+
   /// [tenantId] ID del tenant
   /// [apiKey] API Key de GoodBarber
   /// [appId] App ID de GoodBarber
@@ -310,7 +310,7 @@ class GoodBarberSyncService {
           print('   📅 Fecha creación: ${ordenGoodBarber['created_at']}');
           print('   📦 Order Num: ${ordenGoodBarber['order_num']}');
 
-          // Verificar si la orden ya existe en LogiFlow Pro (incluyendo eliminadas)
+          // Verificar si la orden ya existe en VolonexPro+ (incluyendo eliminadas)
           // IMPORTANTE: Verificar por goodbarber_order_id Y goodbarber_app_id Y tenant_id
           // NO incluir filtro de estado para verificar también órdenes eliminadas
           final ordenExistente = await supabase
@@ -323,25 +323,25 @@ class GoodBarberSyncService {
           
           print('   🔍 Resultado búsqueda en BD: ${ordenExistente != null ? "EXISTE (ID: ${ordenExistente['id']}, Estado: ${ordenExistente['estado']})" : "NO EXISTE - SE CREARÁ NUEVA"}');
           
-          // IMPORTANTE: Si la orden está CANCELADA o ENTREGADA en LogiFlow, verificar si GoodBarber la reactivó
+          // IMPORTANTE: Si la orden está CANCELADA o ENTREGADA en VolonexPro+, verificar si GoodBarber la reactivó
           // Si GoodBarber cambió el estado a PENDING (POR ENVIAR), debemos reactivar la orden
           if (ordenExistente != null) {
             final estadoActualEnLogiFlow = ordenExistente['estado'] as String?;
             final estadoGoodBarber = ordenGoodBarber['status'] ?? 'pending';
             final estadoLogiFlowDesdeGoodBarber = GoodBarberService.mapearEstadoGoodBarberALogiFlow(estadoGoodBarber);
             
-            print('   🔄 Orden EXISTE en LogiFlow:');
-            print('      - Estado actual en LogiFlow: $estadoActualEnLogiFlow');
+            print('   🔄 Orden EXISTE en VolonexPro+:');
+            print('      - Estado actual en VolonexPro+: $estadoActualEnLogiFlow');
             print('      - Estado en GoodBarber: $estadoGoodBarber → $estadoLogiFlowDesdeGoodBarber');
             
-            // REGLA DE REACTIVACIÓN: Si está CANCELADA o ENTREGADA en LogiFlow, pero GoodBarber la reactivó a PENDING (POR ENVIAR)
-            // Esto significa que GoodBarber reactivó la orden manualmente, debemos reactivarla en LogiFlow también
+            // REGLA DE REACTIVACIÓN: Si está CANCELADA o ENTREGADA en VolonexPro+, pero GoodBarber la reactivó a PENDING (POR ENVIAR)
+            // Esto significa que GoodBarber reactivó la orden manualmente, debemos reactivarla en VolonexPro+ también
             if ((estadoActualEnLogiFlow == 'CANCELADA' || estadoActualEnLogiFlow == 'ENTREGADO') 
                 && estadoLogiFlowDesdeGoodBarber == 'POR ENVIAR') {
               print('🔄 🔄 🔄 REACTIVACIÓN DE ORDEN DETECTADA');
-              print('   Estado anterior en LogiFlow: $estadoActualEnLogiFlow');
+              print('   Estado anterior en VolonexPro+: $estadoActualEnLogiFlow');
               print('   Estado en GoodBarber: $estadoGoodBarber → POR ENVIAR');
-              print('   GoodBarber reactivó la orden manualmente, reactivando en LogiFlow...');
+              print('   GoodBarber reactivó la orden manualmente, reactivando en VolonexPro+...');
               
               // Forzar actualización del estado a POR ENVIAR (bypass de las reglas normales)
               await supabase
@@ -354,7 +354,7 @@ class GoodBarberSyncService {
               continue; // Continuar con la siguiente orden
             }
             
-            // Si está CANCELADA en LogiFlow y GoodBarber también la tiene como CANCELLED, sincronizar
+            // Si está CANCELADA en VolonexPro+ y GoodBarber también la tiene como CANCELLED, sincronizar
             if (estadoActualEnLogiFlow == 'CANCELADA' && estadoLogiFlowDesdeGoodBarber == 'CANCELADA') {
               print('✅ Orden cancelada en ambos sistemas, sincronizando estado');
               // El estado ya está correcto, solo continuar
@@ -362,19 +362,19 @@ class GoodBarberSyncService {
               continue;
             }
             
-            // Si está CANCELADA en LogiFlow pero GoodBarber NO la canceló y NO la reactivó
+            // Si está CANCELADA en VolonexPro+ pero GoodBarber NO la canceló y NO la reactivó
             // Esto puede indicar que GoodBarber rechazó la cancelación pero la orden sigue activa
             // En este caso, NO reactivamos automáticamente (solo si GoodBarber explícitamente la reactiva a PENDING)
             if (estadoActualEnLogiFlow == 'CANCELADA' && estadoLogiFlowDesdeGoodBarber != 'CANCELADA' && estadoLogiFlowDesdeGoodBarber != 'POR ENVIAR') {
-              print('⚠️ Orden CANCELADA en LogiFlow pero GoodBarber la tiene en "$estadoGoodBarber" (no PENDING)');
-              print('   La orden permanecerá CANCELADA en LogiFlow hasta que GoodBarber la reactive explícitamente a PENDING');
+              print('⚠️ Orden CANCELADA en VolonexPro+ pero GoodBarber la tiene en "$estadoGoodBarber" (no PENDING)');
+              print('   La orden permanecerá CANCELADA en VolonexPro+ hasta que GoodBarber la reactive explícitamente a PENDING');
               ordenesOmitidas++;
               continue;
             }
           } else {
-            // La orden NO existe en LogiFlow - DEBE crearse sin importar el estado en GoodBarber
+            // La orden NO existe en VolonexPro+ - DEBE crearse sin importar el estado en GoodBarber
             final estadoGoodBarber = ordenGoodBarber['status'] ?? 'pending';
-            print('   ➕ Orden NO EXISTE en LogiFlow - SE CREARÁ (estado en GoodBarber: $estadoGoodBarber)');
+            print('   ➕ Orden NO EXISTE en VolonexPro+ - SE CREARÁ (estado en GoodBarber: $estadoGoodBarber)');
           }
 
           if (ordenExistente != null) {
@@ -393,14 +393,14 @@ class GoodBarberSyncService {
             final estadoLogiFlowDesdeGoodBarber = GoodBarberService.mapearEstadoGoodBarberALogiFlow(estadoGoodBarber);
             final estadoActualEnLogiFlow = ordenExistente['estado'];
 
-            print('   Estado actual en LogiFlow: $estadoActualEnLogiFlow');
+            print('   Estado actual en VolonexPro+: $estadoActualEnLogiFlow');
             print('   Estado desde GoodBarber: $estadoGoodBarber → $estadoLogiFlowDesdeGoodBarber');
 
             // Verificar si debemos actualizar el estado
             // REGLAS ESPECIALES:
-            // 1. GoodBarber NO puede marcar como "ENTREGADO" (solo LogiFlow puede por políticas obligatorias)
+            // 1. GoodBarber NO puede marcar como "ENTREGADO" (solo VolonexPro+ puede por políticas obligatorias)
             // 2. GoodBarber SÍ puede cancelar (CANCELADA)
-            // 3. NO sobrescribir si el estado actual en LogiFlow es más avanzado que el de GoodBarber
+            // 3. NO sobrescribir si el estado actual en VolonexPro+ es más avanzado que el de GoodBarber
             
             final puedeActualizarDesdeGoodBarber = _puedeActualizarEstadoDesdeGoodBarber(
               estadoActualEnLogiFlow,
@@ -427,7 +427,7 @@ class GoodBarberSyncService {
               necesitaActualizacion = true;
               print('✅ Estado a actualizar: $estadoActualEnLogiFlow → $estadoLogiFlowDesdeGoodBarber');
             } else if (!puedeActualizarDesdeGoodBarber) {
-              print('⚠️ NO se actualiza estado desde GoodBarber: $estadoLogiFlowDesdeGoodBarber (política: solo LogiFlow puede marcar ENTREGADO)');
+              print('⚠️ NO se actualiza estado desde GoodBarber: $estadoLogiFlowDesdeGoodBarber (política: solo VolonexPro+ puede marcar ENTREGADO)');
             } else {
               print('ℹ️ Estado ya está actualizado: $estadoLogiFlowDesdeGoodBarber');
             }
@@ -484,7 +484,7 @@ class GoodBarberSyncService {
             print('   Order Num: ${ordenGoodBarber['order_num']}');
             print('');
 
-            // Mapear orden de GoodBarber a LogiFlow Pro
+            // Mapear orden de GoodBarber a VolonexPro+
             final ordenDataRaw = await GoodBarberService.mapearOrdenGoodBarberALogiFlow(
               ordenGoodBarber,
               emisorNombre,
@@ -555,7 +555,7 @@ class GoodBarberSyncService {
               continue;
             }
 
-            // Insertar orden en LogiFlow Pro
+            // Insertar orden en VolonexPro+
             // NOTA: Esta inserción disparará el callback de Realtime INSERT, pero ya no causará bucle
             // porque el callback ahora usa _recargarOrdenesSinSincronizar() en lugar de _cargarOrdenes()
             try {
@@ -576,7 +576,7 @@ class GoodBarberSyncService {
                 continue;
               }
               print('✅ ✅ ✅ ORDEN CREADA EXITOSAMENTE ✅ ✅ ✅');
-              print('   LogiFlow Order ID: ${resultadoInsert['id']}');
+              print('   VolonexPro+ Order ID: ${resultadoInsert['id']}');
               print('   Número de Orden: ${resultadoInsert['numero_orden']}');
               print('   GoodBarber Order ID: ${ordenData['goodbarber_order_id']}');
               ordenesCreadas++;
@@ -635,7 +635,7 @@ class GoodBarberSyncService {
     }
   }
 
-  /// Sincroniza el estado de una orden de LogiFlow Pro a GoodBarber
+  /// Sincroniza el estado de una orden de VolonexPro+ a GoodBarber
   /// Se llama automáticamente cuando cambia el estado de una orden
   static Future<Map<String, dynamic>> sincronizarEstadoAGoodBarber(
     SupabaseClient supabase,
@@ -690,7 +690,7 @@ class GoodBarberSyncService {
         };
       }
 
-      // Mapear estado de LogiFlow Pro a GoodBarber
+      // Mapear estado de VolonexPro+ a GoodBarber
       final estadoGoodBarber = GoodBarberService.mapearEstadoLogiFlowAGoodBarber(nuevoEstado);
 
       if (estadoGoodBarber == null) {
@@ -764,8 +764,8 @@ class GoodBarberSyncService {
     }
   }
 
-  /// Sincroniza estados de órdenes de LogiFlow Pro a GoodBarber periódicamente
-  /// Esto asegura que si GoodBarber cambia un estado en su tablero, se actualice con el estado real de LogiFlow
+  /// Sincroniza estados de órdenes de VolonexPro+ a GoodBarber periódicamente
+  /// Esto asegura que si GoodBarber cambia un estado en su tablero, se actualice con el estado real de VolonexPro+
   /// Se ejecuta periódicamente para mantener sincronización bidireccional
   static Future<Map<String, dynamic>> sincronizarEstadosALogiflowAGoodBarber(
     SupabaseClient supabase,
@@ -869,15 +869,15 @@ class GoodBarberSyncService {
   /// Determina si GoodBarber puede actualizar el estado de una orden
   /// REGLAS DE CONTROL:
   /// 1. GoodBarber puede controlar POR ENVIAR solo cuando crea la orden o cuando está en POR ENVIAR
-  /// 2. GoodBarber NO puede controlar EN TRANSITO, EN REPARTO, ENTREGADO (solo LogiFlow puede)
+  /// 2. GoodBarber NO puede controlar EN TRANSITO, EN REPARTO, ENTREGADO (solo VolonexPro+ puede)
   /// 3. GoodBarber puede cancelar (CANCELADA) solo si la orden está en POR ENVIAR
-  /// 4. Una vez que LogiFlow marca EN TRANSITO o más avanzado, GoodBarber pierde control (solo lectura)
+  /// 4. Una vez que VolonexPro+ marca EN TRANSITO o más avanzado, GoodBarber pierde control (solo lectura)
   static bool _puedeActualizarEstadoDesdeGoodBarber(String estadoActual, String estadoDesdeGoodBarber) {
     final estadoActualUpper = estadoActual.toUpperCase();
     final estadoDesdeGoodBarberUpper = estadoDesdeGoodBarber.toUpperCase();
 
     print('   🔍 Verificando si GoodBarber puede actualizar estado:');
-    print('      Estado actual en LogiFlow: $estadoActual');
+    print('      Estado actual en VolonexPro+: $estadoActual');
     print('      Estado desde GoodBarber: $estadoDesdeGoodBarber');
 
     // REGLA 1: Si la orden ya está en EN TRANSITO o EN REPARTO,
@@ -901,16 +901,16 @@ class GoodBarberSyncService {
     }
 
     // REGLA 2: GoodBarber NO puede marcar como ENTREGADO
-    // Solo LogiFlow puede marcar como ENTREGADO porque tiene políticas obligatorias (foto, firma, etc.)
+    // Solo VolonexPro+ puede marcar como ENTREGADO porque tiene políticas obligatorias (foto, firma, etc.)
     if (estadoDesdeGoodBarberUpper == 'ENTREGADO') {
-      print('      ❌ NO permitido: GoodBarber NO puede marcar como ENTREGADO (solo LogiFlow puede)');
+      print('      ❌ NO permitido: GoodBarber NO puede marcar como ENTREGADO (solo VolonexPro+ puede)');
       return false;
     }
 
     // REGLA 3: GoodBarber NO puede marcar como EN TRANSITO
-    // Solo LogiFlow puede marcar como EN TRANSITO (es la empresa logística que decide cuándo enviar)
+    // Solo VolonexPro+ puede marcar como EN TRANSITO (es la empresa logística que decide cuándo enviar)
     if (estadoDesdeGoodBarberUpper == 'EN TRANSITO') {
-      print('      ❌ NO permitido: GoodBarber NO puede marcar como EN TRANSITO (solo LogiFlow puede)');
+      print('      ❌ NO permitido: GoodBarber NO puede marcar como EN TRANSITO (solo VolonexPro+ puede)');
       return false;
     }
 

@@ -541,14 +541,14 @@ class GoodBarberService {
   // FUNCIONES DE SINCRONIZACIÓN BIDIRECCIONAL
   // ============================================
 
-  /// Mapea estados de GoodBarber a LogiFlow Pro
+  /// Mapea estados de GoodBarber a VolonexPro+
   /// GoodBarber puede enviar: PENDING, PROCESSED, FULFILLED, DELIVERED, CANCELLED
   /// En la interfaz de GoodBarber se muestran como: Pendiente, Procesado, Terminado, Cancelado
   static String mapearEstadoGoodBarberALogiFlow(String estadoGoodBarber) {
     final estado = estadoGoodBarber.trim();
     final estadoLower = estado.toLowerCase();
     
-    print('🔍 Mapeando estado de GoodBarber a LogiFlow Pro: "$estadoGoodBarber" (normalizado: "$estadoLower")');
+    print('🔍 Mapeando estado de GoodBarber a VolonexPro+: "$estadoGoodBarber" (normalizado: "$estadoLower")');
     
     switch (estadoLower) {
       case 'pending':
@@ -581,7 +581,7 @@ class GoodBarberService {
     }
   }
 
-  /// Mapea estados de LogiFlow Pro a GoodBarber
+  /// Mapea estados de VolonexPro+ a GoodBarber
   /// IMPORTANTE: GoodBarber permite actualizar a FULFILLED, DELIVERED o CANCELLED vía API
   /// PENDING no se puede actualizar (error 3999), pero intentaremos mapear POR ENVIAR a FULFILLED
   /// FULFILLED se muestra como "Procesado" en la interfaz de GoodBarber
@@ -589,7 +589,7 @@ class GoodBarberService {
   /// CANCELLED se muestra como "Cancelado" en la interfaz de GoodBarber
   static String? mapearEstadoLogiFlowAGoodBarber(String estadoLogiFlow) {
     final estado = estadoLogiFlow.trim().toUpperCase();
-    print('🔍 Mapeando estado de LogiFlow Pro a GoodBarber: "$estadoLogiFlow" (normalizado: "$estado")');
+    print('🔍 Mapeando estado de VolonexPro+ a GoodBarber: "$estadoLogiFlow" (normalizado: "$estado")');
     
     switch (estado) {
       case 'POR ENVIAR':
@@ -604,7 +604,7 @@ class GoodBarberService {
         return 'FULFILLED';
       case 'EN REPARTO':
         // Mapear a FULFILLED (se muestra como "Procesado" en GoodBarber)
-        // EN REPARTO es un estado intermedio de LogiFlow que no existe en GoodBarber
+        // EN REPARTO es un estado intermedio de VolonexPro+ que no existe en GoodBarber
         print('   → Mapeado a: FULFILLED (se muestra como "Procesado" en GoodBarber)');
         return 'FULFILLED';
       case 'ENTREGADO':
@@ -621,7 +621,7 @@ class GoodBarberService {
         print('   → No se sincroniza (ATRASADO no existe en GoodBarber)');
         return null;
       default:
-        print('⚠️ Estado desconocido de LogiFlow Pro: $estadoLogiFlow');
+        print('⚠️ Estado desconocido de VolonexPro+: $estadoLogiFlow');
         return null;
     }
   }
@@ -780,10 +780,10 @@ class GoodBarberService {
     }
   }
 
-  /// Mapea una orden de GoodBarber al formato de LogiFlow Pro
+  /// Mapea una orden de GoodBarber al formato de VolonexPro+
   /// [goodbarberOrder] Orden de GoodBarber (JSON)
   /// [emisorNombre] Nombre del emisor (tienda GoodBarber)
-  /// [tenantId] ID del tenant en LogiFlow Pro
+  /// [tenantId] ID del tenant en VolonexPro+
   /// [ajustes] Ajustes de GoodBarber (opcional, si no se proporciona se cargarán)
   static Future<Map<String, dynamic>> mapearOrdenGoodBarberALogiFlow(
     Map<String, dynamic> goodbarberOrder,
@@ -1158,7 +1158,7 @@ class GoodBarberService {
       
       if (customerPhoneFinal.isEmpty) {
         print('⚠️ ADVERTENCIA: No se encontró teléfono del destinatario');
-        print('   LogiFlow Pro requiere teléfono, pero GoodBarber no lo proporcionó');
+        print('   VolonexPro+ requiere teléfono, pero GoodBarber no lo proporcionó');
       }
       
       if (direccionCompleta.isEmpty) {
@@ -1167,18 +1167,18 @@ class GoodBarberService {
 
       // Extraer número de orden de GoodBarber (order_num)
       // Este es el número de orden que muestra GoodBarber al cliente y la empresa
-      // Lo usaremos como numero_orden en LogiFlow para mantener consistencia
+      // Lo usaremos como numero_orden en VolonexPro+ para mantener consistencia
       final orderNum = goodbarberOrder['order_num'];
       String? numeroOrdenGoodBarber;
       if (orderNum != null) {
         numeroOrdenGoodBarber = orderNum.toString();
         print('📋 Número de orden de GoodBarber encontrado: $numeroOrdenGoodBarber');
       } else {
-        print('ℹ️ No se encontró order_num en GoodBarber, se generará automáticamente en LogiFlow');
+        print('ℹ️ No se encontró order_num en GoodBarber, se generará automáticamente en VolonexPro+');
       }
 
       // Detectar método de envío de GoodBarber
-      // Si es "pickup", "store_pickup", "recoger en almacén", "en el almacén recoger", etc., activar recoger_en_sucursal en LogiFlow
+      // Si es "pickup", "store_pickup", "recoger en almacén", "en el almacén recoger", etc., activar recoger_en_sucursal en VolonexPro+
       final shippingType = (goodbarberOrder['shipping_type'] ?? '').toString().toLowerCase();
       final shippingMethod = (goodbarberOrder['shipping_method'] ?? '').toString().toLowerCase();
       
@@ -1456,7 +1456,7 @@ class GoodBarberService {
         // Los logs confirman que shipping_address tiene first_name/last_name del cliente (Javier Alejo)
         // Por lo tanto, NO debemos usar shipping_address cuando es pickup
         // 
-        // Buscar dirección de tienda en otros campos de GoodBarber o usar sucursal de LogiFlow
+        // Buscar dirección de tienda en otros campos de GoodBarber o usar sucursal de VolonexPro+
         String direccionTiendaFinal = '';
         
         // Primero buscar en campos específicos de GoodBarber (si existen)
@@ -1466,9 +1466,9 @@ class GoodBarberService {
         } else {
           print('   ⚠️ ADVERTENCIA: No se encontró dirección de tienda en campos específicos de GoodBarber');
           print('   ⚠️ shipping_address contiene la dirección del CLIENTE (Javier Alejo), NO de la tienda');
-          print('   🔄 Usando OPCIÓN 2: Sucursal principal de LogiFlow como fallback...');
+          print('   🔄 Usando OPCIÓN 2: Sucursal principal de VolonexPro+ como fallback...');
           
-          // OPCIÓN 2: Usar sucursal principal de LogiFlow cuando no encontramos dirección en GoodBarber
+          // OPCIÓN 2: Usar sucursal principal de VolonexPro+ cuando no encontramos dirección en GoodBarber
           try {
             final supabase = Supabase.instance.client;
             final sucursalPrincipal = await supabase
@@ -1480,10 +1480,10 @@ class GoodBarberService {
             
             if (sucursalPrincipal != null && sucursalPrincipal['direccion'] != null) {
               direccionTiendaFinal = sucursalPrincipal['direccion'].toString();
-              print('   ✅ Usando sucursal principal de LogiFlow: $direccionTiendaFinal');
-              print('   ℹ️ NOTA: Esta es la sucursal registrada en LogiFlow para este tenant');
+              print('   ✅ Usando sucursal principal de VolonexPro+: $direccionTiendaFinal');
+              print('   ℹ️ NOTA: Esta es la sucursal registrada en VolonexPro+ para este tenant');
             } else {
-              print('   ⚠️ No se encontró sucursal principal en LogiFlow');
+              print('   ⚠️ No se encontró sucursal principal en VolonexPro+');
               // Intentar buscar cualquier sucursal del tenant
               final cualquierSucursal = await supabase
                   .from('sucursales')
@@ -1494,14 +1494,14 @@ class GoodBarberService {
               
               if (cualquierSucursal != null && cualquierSucursal['direccion'] != null) {
                 direccionTiendaFinal = cualquierSucursal['direccion'].toString();
-                print('   ✅ Usando primera sucursal encontrada de LogiFlow: $direccionTiendaFinal');
+                print('   ✅ Usando primera sucursal encontrada de VolonexPro+: $direccionTiendaFinal');
               } else {
-                print('   ❌ No se encontró ninguna sucursal en LogiFlow para este tenant');
-                direccionTiendaFinal = '⚠️ Dirección de tienda no disponible - Configurar sucursal en LogiFlow o verificar en GoodBarber';
+                print('   ❌ No se encontró ninguna sucursal en VolonexPro+ para este tenant');
+                direccionTiendaFinal = '⚠️ Dirección de tienda no disponible - Configurar sucursal en VolonexPro+ o verificar en GoodBarber';
               }
             }
           } catch (e) {
-            print('   ❌ Error buscando sucursal en LogiFlow: $e');
+            print('   ❌ Error buscando sucursal en VolonexPro+: $e');
             direccionTiendaFinal = '⚠️ Dirección de tienda no disponible - Error al buscar sucursal';
           }
         }
@@ -1511,7 +1511,7 @@ class GoodBarberService {
           direccionSucursalGoodBarber = direccionTiendaFinal;
           print('   ✅ ✅ ✅ Dirección de tienda FINAL asignada: $direccionSucursalGoodBarber');
         } else {
-          direccionSucursalGoodBarber = '⚠️ Dirección de tienda no disponible - Configurar sucursal en LogiFlow';
+          direccionSucursalGoodBarber = '⚠️ Dirección de tienda no disponible - Configurar sucursal en VolonexPro+';
           print('   ❌ No se pudo obtener dirección de tienda de ninguna fuente');
         }
       } else {
@@ -1537,7 +1537,7 @@ class GoodBarberService {
       print('==========================================');
       print('');
 
-      // Construir datos de la orden para LogiFlow Pro
+      // Construir datos de la orden para VolonexPro+
       // IMPORTANTE: Emisor es la empresa (tienda GoodBarber), Destinatario es el cliente
       final ordenData = {
         'emisor_nombre': emisorNombre, // ✅ Nombre de la empresa (tienda GoodBarber)

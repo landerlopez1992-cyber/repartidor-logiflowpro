@@ -1,4 +1,4 @@
-# Resumen de Archivos - App Repartidor LogiFlow Pro
+# Resumen de Archivos - App Repartidor VolonexPro+
 
 ## ✅ Archivos Copiados del Proyecto Original
 

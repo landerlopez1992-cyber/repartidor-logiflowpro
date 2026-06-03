@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Asistente Automático de LogiFlow Pro
+/// Asistente Automático de VolonexPro+
 /// Notifica al usuario sobre cambios de conectividad
 class ConnectivityAssistantService {
   static bool _isShowingModal = false;
@@ -67,7 +67,7 @@ class ConnectivityAssistantService {
                 
                 // Título
                 const Text(
-                  'Asistente LogiFlow Pro',
+                  'Asistente VolonexPro+',
                   style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.bold,
@@ -351,7 +351,7 @@ class _OnlineModalWidgetState extends State<_OnlineModalWidget> {
               
               // Título
               const Text(
-                'Asistente LogiFlow Pro',
+                'Asistente VolonexPro+',
                 style: TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.bold,

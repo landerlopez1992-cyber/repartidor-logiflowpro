@@ -63,7 +63,7 @@ class RepartidorApp extends StatelessWidget {
     };
 
     return MaterialApp(
-      title: 'LogiFlow Pro',
+      title: 'VolonexPro+',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,

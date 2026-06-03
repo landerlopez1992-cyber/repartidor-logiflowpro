@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-/// Colores oficiales de LogiFlow Pro
+/// Colores oficiales de VolonexPro+
 /// NUNCA usar Theme.of(context).colorScheme - SIEMPRE usar estos colores específicos
 class AppColors {
-  // COLORES OFICIALES LOGIFLOW PRO
+  // COLORES OFICIALES VOLONEXPRO+
   
   /// Header/AppBar: Azul gris oscuro del header "Información de Envío"
   static const Color header = Color(0xFF37474F);

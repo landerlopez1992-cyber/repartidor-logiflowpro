@@ -167,7 +167,7 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
             print('⚠️ Error guardando caché de usuario: $e');
           }
           // Obtener información de la empresa para el modal
-          String? empresaNombre = 'LogiFlow Pro';
+          String? empresaNombre = 'VolonexPro+';
           String? empresaLogoUrl;
 
           String? tenantId = userResponse['tenant_id'];
@@ -180,7 +180,7 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
                   .maybeSingle();
 
               if (tenantData != null) {
-                empresaNombre = tenantData['nombre'] ?? 'LogiFlow Pro';
+                empresaNombre = tenantData['nombre'] ?? 'VolonexPro+';
                 empresaLogoUrl = tenantData['logo_url'];
               }
             } catch (e) {
@@ -191,7 +191,7 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
           // Mostrar modal de carga
           if (mounted) {
             await _mostrarModalInicioSistema(
-              empresaNombre ?? 'LogiFlow Pro',
+              empresaNombre ?? 'VolonexPro+',
               empresaLogoUrl,
             );
           }
@@ -499,7 +499,7 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
                               colors: [Colors.white, Color(0xFF81C784)],
                             ).createShader(bounds),
                             child: const Text(
-                              'LogiFlow Pro',
+                              'VolonexPro+',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 24,

@@ -67,7 +67,7 @@ class _AvisoUbicacionDestacadoScreenState extends State<AvisoUbicacionDestacadoS
               
               // Subtítulo - Formato recomendado por Google Play
               const Text(
-                'LogiFlow Pro recopila datos de ubicación para habilitar el rastreo de entregas en tiempo real durante tu jornada laboral.',
+                'VolonexPro+ recopila datos de ubicación para habilitar el rastreo de entregas en tiempo real durante tu jornada laboral.',
                 style: TextStyle(
                   fontSize: 16,
                   color: Color(0xFF666666),

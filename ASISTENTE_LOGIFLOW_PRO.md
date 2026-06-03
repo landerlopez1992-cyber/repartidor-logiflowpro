@@ -1,8 +1,8 @@
-# Asistente Automático LogiFlow Pro
+# Asistente Automático VolonexPro+
 
 ## ✅ Implementado
 
-El **Asistente Automático de LogiFlow Pro** es un sistema inteligente que notifica al usuario sobre cambios en la conectividad de internet de forma amigable y profesional.
+El **Asistente Automático de VolonexPro+** es un sistema inteligente que notifica al usuario sobre cambios en la conectividad de internet de forma amigable y profesional.
 
 ## 🤖 Características
 
@@ -11,7 +11,7 @@ Cuando la app detecta que no hay conexión a internet:
 
 **Muestra:**
 - ✅ Icono de WiFi desconectado
-- ✅ Título "Asistente LogiFlow Pro"
+- ✅ Título "Asistente VolonexPro+"
 - ✅ Mensaje tranquilizador: "¡No te preocupes!"
 - ✅ Explicación: "Puedes seguir trabajando normalmente"
 - ✅ Información: "Todos tus cambios se guardarán localmente"
@@ -19,7 +19,7 @@ Cuando la app detecta que no hay conexión a internet:
 - ✅ Botón "Aceptar"
 
 **Diseño:**
-- Gradiente naranja (Color LogiFlow Pro)
+- Gradiente naranja (Color VolonexPro+)
 - Icono circular con fondo semitransparente
 - Mensaje en tarjeta blanca con iconos
 - Botón blanco con texto naranja
@@ -29,7 +29,7 @@ Cuando la app detecta que regresó la conexión a internet:
 
 **Muestra:**
 - ✅ Icono de WiFi conectado
-- ✅ Título "Asistente LogiFlow Pro"
+- ✅ Título "Asistente VolonexPro+"
 - ✅ Mensaje: "¡Conexión Restaurada!"
 - ✅ Información: "Se ha restablecido la conexión a internet"
 - ✅ Si hay operaciones pendientes: "Sincronizando X operaciones pendientes..."
@@ -55,7 +55,7 @@ Notifica a los listeners
     ↓
 RepartidorMobileScreen recibe notificación
     ↓
-Muestra modal del Asistente LogiFlow Pro
+Muestra modal del Asistente VolonexPro+
     ↓
 Usuario presiona "Aceptar"
     ↓
@@ -150,7 +150,7 @@ void _inicializarEstadoConexion() {
 │                                     │
 │     [🔴 WiFi Off Icon]             │
 │                                     │
-│   Asistente LogiFlow Pro           │
+│   Asistente VolonexPro+           │
 │   [Sin Conexión a Internet]        │
 │                                     │
 │  ┌───────────────────────────────┐ │
@@ -175,7 +175,7 @@ void _inicializarEstadoConexion() {
 │                                     │
 │     [✅ WiFi Icon]                  │
 │                                     │
-│   Asistente LogiFlow Pro           │
+│   Asistente VolonexPro+           │
 │   [Conexión Restaurada]            │
 │                                     │
 │  ┌───────────────────────────────┐ │
@@ -255,7 +255,7 @@ builder: (context) => WillPopScope(
    - Puede trabajar sin preocupaciones
 
 4. **Profesionalismo**
-   - Asistente con nombre de marca (LogiFlow Pro)
+   - Asistente con nombre de marca (VolonexPro+)
    - Diseño pulido y moderno
    - Mensajes bien redactados
 

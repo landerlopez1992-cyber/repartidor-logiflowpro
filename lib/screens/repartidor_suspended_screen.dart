@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'login_supabase_screen.dart';
+import 'login_repartidor_screen.dart';
 import '../main.dart';
 import 'chat_repartidor_lista_screen.dart';
 import 'repartidor_mobile_screen.dart';
@@ -283,7 +283,7 @@ class _RepartidorSuspendedScreenState extends State<RepartidorSuspendedScreen> {
                           } else {
                             supabase.auth.signOut().then((_) {
                               Navigator.of(context).pushAndRemoveUntil(
-                                MaterialPageRoute(builder: (_) => const LoginSupabaseScreen()),
+                                MaterialPageRoute(builder: (_) => const LoginRepartidorScreen()),
                                 (route) => false,
                               );
                             });

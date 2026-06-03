@@ -1,6 +1,6 @@
-# Repartidor LogiFlow Pro
+# Repartidor VolonexPro+
 
-App exclusiva para repartidores de LogiFlow Pro. Esta aplicación está diseñada solo para dispositivos móviles (Android e iOS) y se conecta a la misma base de datos Supabase que la aplicación principal.
+App exclusiva para repartidores de VolonexPro+. Esta aplicación está diseñada solo para dispositivos móviles (Android e iOS) y se conecta a la misma base de datos Supabase que la aplicación principal.
 
 ## Características
 
@@ -95,5 +95,5 @@ flutter build ios --release
 
 ## Licencia
 
-Propietario - LogiFlow Pro
+Propietario - VolonexPro+
 

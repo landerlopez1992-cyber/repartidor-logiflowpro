@@ -272,11 +272,11 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       return;
     }
     
-    // IMPORTANTE: En LogiFlow normal, cuando recoger_en_sucursal = true, SIEMPRE hay sucursal_id
+    // IMPORTANTE: En VolonexPro+ normal, cuando recoger_en_sucursal = true, SIEMPRE hay sucursal_id
     // Solo GoodBarber puede tener recoger_en_sucursal = true con sucursal_id = null
-    // Para órdenes normales de LogiFlow con recoger_en_sucursal pero sin sucursal_id, crear sucursal virtual
+    // Para órdenes normales de VolonexPro+ con recoger_en_sucursal pero sin sucursal_id, crear sucursal virtual
     if (_ordenActual.recogerEnSucursal && _ordenActual.sucursalId == null) {
-      print('ℹ️ Orden normal de LogiFlow con recoger_en_sucursal pero sin sucursal_id');
+      print('ℹ️ Orden normal de VolonexPro+ con recoger_en_sucursal pero sin sucursal_id');
       print('   Usando dirección desde direccion_destino: ${_ordenActual.direccionDestino}');
       print('   Municipio: ${_ordenActual.municipioDestino}');
       print('   Provincia: ${_ordenActual.provinciaDestino}');
@@ -301,7 +301,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
         }
       }
       
-      // Crear la sucursal virtual para órdenes normales de LogiFlow
+      // Crear la sucursal virtual para órdenes normales de VolonexPro+
       if (mounted) {
         setState(() {
           _sucursalInfo = {
@@ -315,7 +315,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             'es_principal': false,
           };
         });
-        print('✅ ✅ ✅ Información de sucursal creada para orden normal de LogiFlow:');
+        print('✅ ✅ ✅ Información de sucursal creada para orden normal de VolonexPro+:');
         print('   - Nombre: ${_sucursalInfo!['nombre']}');
         print('   - Dirección: ${_sucursalInfo!['direccion']}');
         print('   - FIN _cargarSucursalInfo (virtual)');
@@ -570,11 +570,11 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             print('   - direccionDestino length: ${_ordenActual.direccionDestino.length}');
             
             // 🔥 CRÍTICO: Cargar información de sucursal INMEDIATAMENTE después de setState
-            // IMPORTANTE: En LogiFlow normal, cuando recoger_en_sucursal = true, SIEMPRE hay sucursal_id
+            // IMPORTANTE: En VolonexPro+ normal, cuando recoger_en_sucursal = true, SIEMPRE hay sucursal_id
             // Solo GoodBarber puede tener recoger_en_sucursal = true con sucursal_id = null
             // 🔥 NO cargar _sucursalInfo para órdenes de GoodBarber (no es necesario)
             if (ordenRecargada.recogerEnSucursal && ordenRecargada.goodbarberOrderId == null) {
-              print('✅ [DETALLE ORDEN] Llamando _cargarSucursalInfo() después de actualizar orden (orden normal de LogiFlow)');
+              print('✅ [DETALLE ORDEN] Llamando _cargarSucursalInfo() después de actualizar orden (orden normal de VolonexPro+)');
               print('   - recogerEnSucursal: ${ordenRecargada.recogerEnSucursal}');
               print('   - sucursalId: ${ordenRecargada.sucursalId}');
               print('   - goodbarberOrderId: ${ordenRecargada.goodbarberOrderId} (debe ser null)');
@@ -608,7 +608,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           }
           // Si falla, cargar desde caché
           await _cargarDesdeCache();
-          // Asegurar que se carga info de sucursal incluso si hay error (solo para órdenes normales de LogiFlow)
+          // Asegurar que se carga info de sucursal incluso si hay error (solo para órdenes normales de VolonexPro+)
           if (mounted && _ordenActual.recogerEnSucursal && _ordenActual.goodbarberOrderId == null) {
             print('⚠️ [ERROR] Llamando _cargarSucursalInfo() después de error en _recargarOrden()');
             _cargarSucursalInfo();
@@ -618,7 +618,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
         // Sin conexión, cargar desde caché
         print('📴 Sin conexión - Cargando orden desde caché local');
         await _cargarDesdeCache();
-        // Asegurar que se carga info de sucursal incluso sin conexión (solo para órdenes normales de LogiFlow)
+        // Asegurar que se carga info de sucursal incluso sin conexión (solo para órdenes normales de VolonexPro+)
         if (mounted && _ordenActual.recogerEnSucursal && _ordenActual.goodbarberOrderId == null) {
           print('📴 [OFFLINE] Llamando _cargarSucursalInfo() después de cargar desde caché (offline)');
           _cargarSucursalInfo();
@@ -637,7 +637,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       }
       // Intentar cargar desde caché como último recurso
       await _cargarDesdeCache();
-      // Asegurar que se carga info de sucursal incluso si todo falla (solo para órdenes normales de LogiFlow)
+      // Asegurar que se carga info de sucursal incluso si todo falla (solo para órdenes normales de VolonexPro+)
       if (mounted && _ordenActual.recogerEnSucursal && _ordenActual.goodbarberOrderId == null) {
         print('❌ [ERROR CRÍTICO] Llamando _cargarSucursalInfo() después de error crítico en _recargarOrden()');
         _cargarSucursalInfo();
@@ -679,11 +679,11 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               _firmaUrl = ordenCache.firmaUrl;
             }
           });
-          // IMPORTANTE: En LogiFlow normal, cuando recoger_en_sucursal = true, SIEMPRE hay sucursal_id
+          // IMPORTANTE: En VolonexPro+ normal, cuando recoger_en_sucursal = true, SIEMPRE hay sucursal_id
           // Solo GoodBarber puede tener recoger_en_sucursal = true con sucursal_id = null
           // 🔥 NO cargar _sucursalInfo para órdenes de GoodBarber (no es necesario)
           if (_ordenActual.recogerEnSucursal && _ordenActual.goodbarberOrderId == null) {
-            print('✅ [CACHÉ] Llamando _cargarSucursalInfo() después de cargar desde caché (orden normal de LogiFlow)');
+            print('✅ [CACHÉ] Llamando _cargarSucursalInfo() después de cargar desde caché (orden normal de VolonexPro+)');
             print('   - recogerEnSucursal: ${_ordenActual.recogerEnSucursal}');
             print('   - sucursalId: ${_ordenActual.sucursalId}');
             print('   - goodbarberOrderId: ${_ordenActual.goodbarberOrderId} (debe ser null)');
@@ -844,7 +844,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     print('🧭 [BUILD DETALLE] goodbarberOrderId=${_ordenActual.goodbarberOrderId}');
 
     // 🔥 REGLA: Para órdenes de GoodBarber con pickup, NO cargar _sucursalInfo (se muestran como órdenes normales)
-    // Para órdenes normales de LogiFlow con recoger_en_sucursal, SÍ cargar _sucursalInfo (para mostrar tarjeta verde)
+    // Para órdenes normales de VolonexPro+ con recoger_en_sucursal, SÍ cargar _sucursalInfo (para mostrar tarjeta verde)
     final esPickupGoodBarber = _ordenActual.recogerEnSucursal == true && 
                                 _ordenActual.goodbarberOrderId != null;
     
@@ -865,7 +865,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                _ordenActual.sucursalId == null && 
                _sucursalInfo == null &&
                _ordenActual.goodbarberOrderId == null) { // 🔥 SOLO si NO es GoodBarber
-      print('⚠️ [BUILD] Detectado recoger_en_sucursal sin sucursalInfo (orden normal de LogiFlow), cargando...');
+      print('⚠️ [BUILD] Detectado recoger_en_sucursal sin sucursalInfo (orden normal de VolonexPro+), cargando...');
       print('   - recogerEnSucursal: ${_ordenActual.recogerEnSucursal}');
       print('   - sucursalId: ${_ordenActual.sucursalId}');
       print('   - goodbarberOrderId: ${_ordenActual.goodbarberOrderId} (debe ser null)');
@@ -908,8 +908,8 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             const SizedBox(height: 12),
             
             // 🔥 REGLA: Para órdenes de GoodBarber con pickup, mostrar como orden normal (sin tarjeta especial)
-            // Para órdenes normales de LogiFlow con recoger_en_sucursal, mostrar tarjeta verde de recogida
-            // SIEMPRE mostrar _buildContactCard() - este método maneja internamente si es pickup de LogiFlow normal
+            // Para órdenes normales de VolonexPro+ con recoger_en_sucursal, mostrar tarjeta verde de recogida
+            // SIEMPRE mostrar _buildContactCard() - este método maneja internamente si es pickup de VolonexPro+ normal
             _buildContactCard(),
             const SizedBox(height: 12),
             
@@ -945,7 +945,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               const SizedBox(height: 12),
             ],
             
-            // 🔥 RECUADRO INFORMATIVO ESPECIAL: Proceso de recogida en sucursal (solo para órdenes normales de LogiFlow)
+            // 🔥 RECUADRO INFORMATIVO ESPECIAL: Proceso de recogida en sucursal (solo para órdenes normales de VolonexPro+)
             if (_ordenActual.goodbarberOrderId == null && 
                 _ordenActual.recogerEnSucursal && 
                 _sucursalInfo != null) ...[
@@ -2420,7 +2420,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                                     _ordenActual.goodbarberOrderId != null;
     
     // 🔥 REGLA: Para órdenes de GoodBarber con pickup, mostrar como orden normal (sin tarjeta especial)
-    // Para órdenes normales de LogiFlow con recoger_en_sucursal, mostrar tarjeta verde de recogida
+    // Para órdenes normales de VolonexPro+ con recoger_en_sucursal, mostrar tarjeta verde de recogida
     print('✅✅✅ [DETALLE ORDEN] _buildContactCard() - Mostrando información del Destinatario ✅✅✅');
     print('   - recogerEnSucursal: ${_ordenActual.recogerEnSucursal}');
     print('   - recogerEnSucursal (tipo): ${_ordenActual.recogerEnSucursal.runtimeType}');
@@ -2639,7 +2639,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               },
             ),
             
-            // 🔥 TARJETA VERDE DE RECOGIDA EN SUCURSAL: Solo para órdenes NORMALES de LogiFlow (sin GoodBarber)
+            // 🔥 TARJETA VERDE DE RECOGIDA EN SUCURSAL: Solo para órdenes NORMALES de VolonexPro+ (sin GoodBarber)
             // Para órdenes de GoodBarber con pickup, NO se muestra esta tarjeta - se muestran como órdenes normales
             // 🔥 VERIFICACIÓN ABSOLUTA: Si es GoodBarber, NUNCA mostrar esta sección, sin importar el estado
             if (_ordenActual.goodbarberOrderId == null && 

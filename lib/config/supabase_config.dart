@@ -1,4 +1,4 @@
-// Configuración de Supabase para LogiFlow Pro
+// Configuración de Supabase para VolonexPro+
 class SupabaseConfig {
   // Project URL
   static const String supabaseUrl = 'https://fbbvfzeyhhopdwzsooew.supabase.co';

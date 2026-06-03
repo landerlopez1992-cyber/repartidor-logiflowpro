@@ -161,7 +161,7 @@ class _AvisoUbicacionSegundoPlanoDialogState extends State<AvisoUbicacionSegundo
               
               // Descripción principal - Formato recomendado por Google Play
               const Text(
-                'LogiFlow Pro recopila datos de ubicación para habilitar el rastreo de entregas en tiempo real, incluso cuando la app está cerrada o no está en uso.',
+                'VolonexPro+ recopila datos de ubicación para habilitar el rastreo de entregas en tiempo real, incluso cuando la app está cerrada o no está en uso.',
                 style: TextStyle(
                   fontSize: 14,
                   color: Color(0xFF666666),
