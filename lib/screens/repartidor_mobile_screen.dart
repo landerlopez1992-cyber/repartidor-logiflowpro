@@ -32,6 +32,9 @@ import 'aviso_ubicacion_segundo_plano_screen.dart';
 import 'aviso_ubicacion_destacado_screen.dart';
 import 'ruta_optimizada_repartidor_screen.dart';
 import '../config/app_colors.dart';
+import '../constants/repartidor_notificacion_tipos.dart';
+import '../services/repartidor_notificacion_service.dart';
+import '../utils/repartidor_nombre_util.dart';
 
 class RepartidorMobileScreen extends StatefulWidget {
   const RepartidorMobileScreen({super.key});
@@ -538,7 +541,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           }
           
           setState(() {
-            _repartidorNombre = nombre;
+            _repartidorNombre = RepartidorNombreUtil.normalizar(nombre);
             _fotoPerfilUrl = foto;
             _esRepartidorMaster = esMaster;
             _tipoRepartidor = tipoRepartidor;
@@ -1719,8 +1722,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               // 1. La orden fue asignada a este repartidor (antes no estaba asignada o estaba asignada a otro)
               // 2. La orden NO está ENTREGADA ni CANCELADA
               // 3. El cambio de estado es relevante (no todos los cambios requieren notificación)
-              if (repartidorNuevo == _repartidorNombre && 
-                  repartidorAnterior != _repartidorNombre &&
+              if (RepartidorNombreUtil.coincide(repartidorNuevo, _repartidorNombre) &&
+                  !RepartidorNombreUtil.coincide(repartidorAnterior, _repartidorNombre) &&
                   estado != 'ENTREGADO' && 
                   estado != 'CANCELADA') {
                 print('📦 Orden reasignada a este repartidor (antes: $repartidorAnterior, ahora: $repartidorNuevo)');
@@ -1735,8 +1738,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               // También notificar cuando cambia el estado de una orden asignada (solo estados relevantes)
               // pero NO si ya está ENTREGADA o CANCELADA
               // NOTA: Solo notificar cambios de estado si la orden ya estaba asignada a este repartidor
-              if (repartidorNuevo == _repartidorNombre && 
-                  repartidorAnterior == _repartidorNombre &&
+              if (RepartidorNombreUtil.coincide(repartidorNuevo, _repartidorNombre) &&
+                  RepartidorNombreUtil.coincide(repartidorAnterior, _repartidorNombre) &&
                   estado != estadoAnterior &&
                   estado != 'ENTREGADO' && 
                   estado != 'CANCELADA' &&
@@ -1818,8 +1821,13 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 final simbolo = moneda == 'USD' ? '\$' : 'CUP';
                 final pagoId = pago['id']?.toString() ?? '';
                 
-                // Crear notificación
-                _crearNotificacionPagoAceptado(pagoId, monto, moneda, simbolo);
+                _procesarAvisoPagoDesdePanel(
+                  pagoId: pagoId,
+                  tipo: RepartidorNotificacionTipos.pagoAceptado,
+                  tituloFallback: 'Pago Aceptado',
+                  mensajeFallback:
+                      'Tu solicitud de pago de $simbolo${monto.toStringAsFixed(2)} ha sido aceptada',
+                );
               }
               
               // Si el estado cambió a CANCELADA
@@ -1831,8 +1839,15 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 final pagoId = pago['id']?.toString() ?? '';
                 final motivoCancelacion = pago['motivo_cancelacion']?.toString() ?? '';
                 
-                // Crear notificación
-                _crearNotificacionPagoCancelado(pagoId, monto, moneda, simbolo, motivoCancelacion);
+                final msgCancel = motivoCancelacion.isNotEmpty
+                    ? 'Tu solicitud de pago de $simbolo${monto.toStringAsFixed(2)} ha sido cancelada. Motivo: $motivoCancelacion'
+                    : 'Tu solicitud de pago de $simbolo${monto.toStringAsFixed(2)} ha sido cancelada';
+                _procesarAvisoPagoDesdePanel(
+                  pagoId: pagoId,
+                  tipo: RepartidorNotificacionTipos.pagoCancelado,
+                  tituloFallback: 'Pago Cancelado',
+                  mensajeFallback: msgCancel,
+                );
               }
               
               // Si el estado cambió a RECHAZADO
@@ -1844,8 +1859,15 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 final pagoId = pago['id']?.toString() ?? '';
                 final motivoRechazo = pago['motivo_rechazo']?.toString() ?? '';
                 
-                // Crear notificación
-                _crearNotificacionPagoRechazado(pagoId, monto, moneda, simbolo, motivoRechazo);
+                final msgRech = motivoRechazo.isNotEmpty
+                    ? 'Tu solicitud de pago de $simbolo${monto.toStringAsFixed(2)} ha sido rechazada. Motivo: $motivoRechazo'
+                    : 'Tu solicitud de pago de $simbolo${monto.toStringAsFixed(2)} ha sido rechazada';
+                _procesarAvisoPagoDesdePanel(
+                  pagoId: pagoId,
+                  tipo: RepartidorNotificacionTipos.pagoRechazado,
+                  tituloFallback: 'Pago Rechazado',
+                  mensajeFallback: msgRech,
+                );
               }
             },
           )
@@ -1877,233 +1899,77 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     }
   }
 
-  // Crear notificación para orden nueva
+  /// VolonexPro+ inserta la fila en BD; la app solo la lee y muestra push local.
   Future<void> _crearNotificacionOrdenNueva(String ordenId, String numeroOrden) async {
-    if (!mounted) {
-      print('⚠️ No se puede crear notificación: widget no está montado');
-      return;
-    }
-    
-    if (_repartidorId == null || _repartidorId!.isEmpty) {
-      print('⚠️ No se puede crear notificación: repartidor_id es null o vacío');
-      return;
-    }
+    if (!mounted || _repartidorId == null || _repartidorId!.isEmpty) return;
 
     try {
-      // CRÍTICO: Verificar el estado de la orden ANTES de crear la notificación
       final ordenData = await supabase
           .from('ordenes')
-          .select('estado')
+          .select('estado, entrega_por_vendedor')
           .eq('id', ordenId)
           .maybeSingle();
 
-      if (ordenData == null) {
-        print('⚠️ No se puede crear notificación: orden no encontrada (ID: $ordenId)');
+      if (ordenData == null) return;
+
+      if (ordenData['entrega_por_vendedor'] == true) {
+        print('📦 Orden #$numeroOrden: entrega por colaborador — sin aviso repartidor');
         return;
       }
 
-      final estadoOrden = (ordenData['estado']?.toString() ?? '').trim().toUpperCase();
-      
-      // NO crear notificaciones para órdenes ENTREGADAS o CANCELADAS
-      if (estadoOrden == 'ENTREGADO' || estadoOrden == 'CANCELADA') {
-        print('📦 Orden #$numeroOrden en estado "$estadoOrden" - No se crea notificación (orden finalizada)');
-        return;
-      }
+      final estadoOrden =
+          (ordenData['estado']?.toString() ?? '').trim().toUpperCase();
+      if (estadoOrden == 'ENTREGADO' || estadoOrden == 'CANCELADA') return;
 
-      // Verificar si ya existe una notificación (leída o no leída) para esta orden
-      // Esto evita duplicados incluso si el usuario leyó y cerró la app
-      // CRÍTICO: Usar .limit(1) antes de .maybeSingle() para evitar error cuando hay múltiples filas
-      // El error "multiple rows returned" ocurre cuando hay múltiples notificaciones con los mismos criterios
-      Map<String, dynamic>? notificacionExistente;
-      try {
-        final notificacionExistenteResponse = await supabase
-            .from('notificaciones_repartidores')
-            .select('id, leida')
-            .eq('repartidor_id', _repartidorId!)
-            .eq('numero_orden', numeroOrden)
-            .inFilter('tipo', ['ORDEN_NUEVA', 'nueva_orden'])
-            .limit(1)
-            .maybeSingle();
-        
-        notificacionExistente = notificacionExistenteResponse;
-      } catch (e) {
-        // Si hay múltiples filas, obtener solo la primera
-        print('⚠️ Múltiples notificaciones encontradas, obteniendo la primera: $e');
-        try {
-          final notificacionesList = await supabase
-              .from('notificaciones_repartidores')
-              .select('id, leida')
-              .eq('repartidor_id', _repartidorId!)
-              .eq('numero_orden', numeroOrden)
-              .inFilter('tipo', ['ORDEN_NUEVA', 'nueva_orden'])
-              .limit(1);
-          
-          if (notificacionesList.isNotEmpty) {
-            notificacionExistente = notificacionesList[0];
-          }
-        } catch (e2) {
-          print('⚠️ Error al obtener notificación existente: $e2');
-          notificacionExistente = null;
-        }
-      }
+      final fila = await RepartidorNotificacionService.buscarNotificacionOrdenEnBd(
+        repartidorId: _repartidorId!,
+        numeroOrden: numeroOrden,
+        ordenId: ordenId,
+      );
 
-      if (notificacionExistente != null) {
-        print('📦 Notificación ya existe para orden #$numeroOrden (ID: ${notificacionExistente['id']}, Leída: ${notificacionExistente['leida']})');
-        return;
-      }
+      final titulo = fila?['titulo']?.toString() ?? 'Nueva Orden Asignada';
+      final mensaje = fila?['mensaje']?.toString() ??
+          'Tienes una nueva orden asignada: #$numeroOrden';
+      final tipo = fila?['tipo']?.toString() ??
+          RepartidorNotificacionTipos.nuevaOrden;
 
-      // Crear nueva notificación solo si la orden está activa
-      await supabase.from('notificaciones_repartidores').insert({
-        'repartidor_id': _repartidorId!,
-        'tipo': 'ORDEN_NUEVA',
-        'titulo': 'Nueva Orden Asignada',
-        'mensaje': 'Tienes una nueva orden asignada: #$numeroOrden',
-        'numero_orden': numeroOrden,
-        'orden_id': ordenId,
-        'leida': false,
-      });
+      await _verificarYMostrarNotificacion(
+        tipo,
+        titulo,
+        mensaje,
+        numeroOrden,
+      );
 
-      print('✅ Notificación creada para orden #$numeroOrden (estado: $estadoOrden)');
-      
-      // Actualizar contador solo si el widget está montado
-      if (mounted) {
-        await _cargarNotificacionesNoLeidas();
-      }
+      if (mounted) await _cargarOrdenes();
     } catch (e) {
-      // Manejar específicamente errores de permisos de seguridad
-      if (e.toString().contains('row-level security policy') || 
-          e.toString().contains('42501') ||
-          e.toString().contains('Forbidden')) {
-        print('⚠️ Error de permisos al crear notificación (RLS): $e');
-        print('⚠️ Esto puede ocurrir si el repartidor no tiene permisos para crear notificaciones');
-        print('⚠️ Verificar políticas RLS en Supabase para la tabla notificaciones_repartidores');
-      } else {
-        print('❌ Error creando notificación de orden nueva: $e');
-      }
+      print('❌ Error procesando aviso de orden nueva: $e');
     }
   }
 
-  // Crear notificación para pago aceptado
-  Future<void> _crearNotificacionPagoAceptado(String pagoId, double monto, String moneda, String simbolo) async {
+  Future<void> _procesarAvisoPagoDesdePanel({
+    required String pagoId,
+    required String tipo,
+    required String tituloFallback,
+    required String mensajeFallback,
+  }) async {
+    if (_repartidorId == null) return;
+
     try {
-      if (_repartidorId == null) return;
+      final fila = await RepartidorNotificacionService.buscarNotificacionPagoEnBd(
+        repartidorId: _repartidorId!,
+        pagoId: pagoId,
+        tipo: tipo,
+      );
 
-      // Verificar si ya existe una notificación no leída para este pago
-      final notificacionExistente = await supabase
-          .from('notificaciones_repartidores')
-          .select('id')
-          .eq('repartidor_id', _repartidorId!)
-          .eq('pago_id', pagoId)
-          .eq('leida', false)
-          .maybeSingle();
-
-      if (notificacionExistente != null) {
-        print('💰 Notificación ya existe para pago $pagoId');
-        return;
-      }
-
-      // Crear nueva notificación
-      await supabase.from('notificaciones_repartidores').insert({
-        'repartidor_id': _repartidorId!,
-        'tipo': 'PAGO_ACEPTADO',
-        'titulo': 'Pago Aceptado',
-        'mensaje': 'Tu solicitud de pago de $simbolo${monto.toStringAsFixed(2)} ha sido aceptada',
-        'pago_id': pagoId,
-        'leida': false,
-      });
-
-      print('✅ Notificación creada para pago aceptado: $simbolo${monto.toStringAsFixed(2)}');
-      
-      // Actualizar contador
-      await _cargarNotificacionesNoLeidas();
+      await _verificarYMostrarNotificacion(
+        fila?['tipo']?.toString() ?? tipo,
+        fila?['titulo']?.toString() ?? tituloFallback,
+        fila?['mensaje']?.toString() ?? mensajeFallback,
+        '',
+      );
+      await _cargarSaldo();
     } catch (e) {
-      print('❌ Error creando notificación de pago aceptado: $e');
-    }
-  }
-
-  // Crear notificación para pago cancelado
-  Future<void> _crearNotificacionPagoCancelado(String pagoId, double monto, String moneda, String simbolo, String motivo) async {
-    try {
-      if (_repartidorId == null) return;
-
-      // Verificar si ya existe una notificación no leída para este pago
-      final notificacionExistente = await supabase
-          .from('notificaciones_repartidores')
-          .select('id')
-          .eq('repartidor_id', _repartidorId!)
-          .eq('pago_id', pagoId)
-          .eq('tipo', 'PAGO_CANCELADO')
-          .eq('leida', false)
-          .maybeSingle();
-
-      if (notificacionExistente != null) {
-        print('🚫 Notificación ya existe para pago cancelado $pagoId');
-        return;
-      }
-
-      // Crear nueva notificación
-      final mensaje = motivo.isNotEmpty 
-          ? 'Tu solicitud de pago de $simbolo${monto.toStringAsFixed(2)} ha sido cancelada. Motivo: $motivo'
-          : 'Tu solicitud de pago de $simbolo${monto.toStringAsFixed(2)} ha sido cancelada';
-      
-      await supabase.from('notificaciones_repartidores').insert({
-        'repartidor_id': _repartidorId!,
-        'tipo': 'PAGO_CANCELADO',
-        'titulo': 'Pago Cancelado',
-        'mensaje': mensaje,
-        'pago_id': pagoId,
-        'leida': false,
-      });
-
-      print('✅ Notificación creada para pago cancelado: $simbolo${monto.toStringAsFixed(2)}');
-      
-      // Actualizar contador
-      await _cargarNotificacionesNoLeidas();
-    } catch (e) {
-      print('❌ Error creando notificación de pago cancelado: $e');
-    }
-  }
-
-  // Crear notificación para pago rechazado
-  Future<void> _crearNotificacionPagoRechazado(String pagoId, double monto, String moneda, String simbolo, String motivo) async {
-    try {
-      if (_repartidorId == null) return;
-
-      // Verificar si ya existe una notificación no leída para este pago
-      final notificacionExistente = await supabase
-          .from('notificaciones_repartidores')
-          .select('id')
-          .eq('repartidor_id', _repartidorId!)
-          .eq('pago_id', pagoId)
-          .eq('tipo', 'PAGO_RECHAZADO')
-          .eq('leida', false)
-          .maybeSingle();
-
-      if (notificacionExistente != null) {
-        print('❌ Notificación ya existe para pago rechazado $pagoId');
-        return;
-      }
-
-      // Crear nueva notificación
-      final mensaje = motivo.isNotEmpty 
-          ? 'Tu solicitud de pago de $simbolo${monto.toStringAsFixed(2)} ha sido rechazada. Motivo: $motivo'
-          : 'Tu solicitud de pago de $simbolo${monto.toStringAsFixed(2)} ha sido rechazada';
-      
-      await supabase.from('notificaciones_repartidores').insert({
-        'repartidor_id': _repartidorId!,
-        'tipo': 'PAGO_RECHAZADO',
-        'titulo': 'Pago Rechazado',
-        'mensaje': mensaje,
-        'pago_id': pagoId,
-        'leida': false,
-      });
-
-      print('✅ Notificación creada para pago rechazado: $simbolo${monto.toStringAsFixed(2)}');
-      
-      // Actualizar contador
-      await _cargarNotificacionesNoLeidas();
-    } catch (e) {
-      print('❌ Error creando notificación de pago rechazado: $e');
+      print('❌ Error procesando aviso de pago: $e');
     }
   }
 
@@ -2555,7 +2421,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         // - PAGO_CANCELADO: pagos cancelados (ya verificados al crearse)
         // - PAGO_RECHAZADO: pagos rechazados (ya verificados al crearse)
         // - general: notificaciones push desde Super Admin
-        if (tipo == 'ORDEN_NUEVA' || tipo == 'nueva_orden') {
+        if (RepartidorNotificacionTipos.tiposOrdenNueva.contains(tipo)) {
           contadorValido++;
           contadorOrdenes++;
         } else if (tipo == 'PAGO_ACEPTADO' || 
@@ -5300,7 +5166,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             .select('id')
             .eq('repartidor_id', _repartidorId!)
             .eq('numero_orden', orden.numeroOrden!)
-            .inFilter('tipo', ['nueva_orden', 'ORDEN_NUEVA'])
+            .inFilter('tipo', RepartidorNotificacionTipos.tiposOrdenNueva)
             .eq('leida', false)
             .maybeSingle();
         

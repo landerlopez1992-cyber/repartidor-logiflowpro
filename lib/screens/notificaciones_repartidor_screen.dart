@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../main.dart';
 import '../models/orden.dart';
+import '../constants/repartidor_notificacion_tipos.dart';
 import 'detalle_orden_screen.dart';
 
 class NotificacionesRepartidorScreen extends StatefulWidget {
@@ -158,7 +159,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
       final campoId = _esRecolector ? 'recolector_id' : 'repartidor_id';
       
       // Cargar notificaciones de órdenes desde la tabla correspondiente
-      // Tipos: 'nueva_orden', 'ORDEN_NUEVA'
+      // Tipos alineados con VolonexPro+ (canónico: nueva_orden)
       // CRÍTICO: Solo cargar NOTIFICACIONES NO LEÍDAS
       // Las leídas se QUITAN de la pantalla para evitar que se lean de nuevo
       print('🔍 Cargando notificaciones de órdenes (solo no leídas)...');
@@ -170,7 +171,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
           .from(tablaNotificaciones)
           .select('id, tipo, titulo, mensaje, created_at, leida, orden_id, numero_orden')
           .eq(campoId, _repartidorId!)
-          .inFilter('tipo', ['nueva_orden', 'ORDEN_NUEVA'])
+          .inFilter('tipo', RepartidorNotificacionTipos.tiposOrdenNueva)
           .eq('leida', false) // CRÍTICO: Solo no leídas
           .order('created_at', ascending: false) // Más recientes primero
           .limit(100); // Aumentar límite para mostrar más notificaciones

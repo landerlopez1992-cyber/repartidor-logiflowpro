@@ -60,6 +60,12 @@ Implementación en `_cargarOrdenes` en `repartidor_mobile_screen.dart`:
 - Si la orden se crea sin repartidor y luego se actualiza `repartidor_nombre`, el **UPDATE** puede disparar la suscripción cuando el nombre coincide.
 - Un **INSERT** inicial sin `repartidor_nombre` correcto **no** notifica al canal del repartidor hasta que el nombre coincida.
 
+## Notificaciones (alineación con VolonexPro+)
+
+- El **panel** inserta en `notificaciones_repartidores` con tipo **`nueva_orden`** y **`tenant_id`**.
+- La **app repartidor no inserta** filas (evita RLS y duplicados): escucha Realtime en esa tabla y, si hace falta, lee la fila que creó el panel tras un cambio en `ordenes`.
+- Tipos de pago (`PAGO_ACEPTADO`, etc.) los crea el panel en **Pagos repartidor**; la app solo muestra push local al detectar el cambio.
+
 ## Pedidos con entrega por vendedor
 
 En `orden.dart`, `entrega_por_vendedor` se mapea a `entregaPorVendedor`. También existen `vendedor_contacto_*` y `avisos_recogida_vendedor`. En detalle, parte de la UI condiciona acciones cuando **no** es entrega por vendedor (ver `detalle_orden_screen.dart`).
