@@ -789,6 +789,68 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     if (mounted) setState(() {});
   }
 
+  bool _puedeGestionarFotoEntrega() {
+    if (_esRemesaPura()) return false;
+    final estado = _ordenActual.estado.trim().toUpperCase();
+    if (estado == 'ENTREGADO' || estado == 'CANCELADA') return false;
+    return estado == 'EN REPARTO' ||
+        (estado == 'LISTO PARA RECOGER' && _ordenActual.recogerEnSucursal);
+  }
+
+  Future<void> _eliminarFotoEntrega() async {
+    if (!_tieneFotoEntregaResuelta()) return;
+
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFFFFFFFF),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: const Text(
+          'Quitar foto de entrega',
+          style: TextStyle(
+            color: Color(0xFF2C2C2C),
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: const Text(
+          '¿Eliminar la foto actual? Podrás tomar o subir otra antes de marcar como entregada.',
+          style: TextStyle(color: Color(0xFF666666), fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Quitar foto',
+              style: TextStyle(color: Color(0xFFDC2626)),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar != true || !mounted) return;
+
+    try {
+      _ordenActual = await EntregaFotoUtil.eliminarFotoDeOrden(_ordenActual);
+      _fotoEntregaUrl = null;
+      if (mounted) {
+        setState(() {});
+        _mostrarMensaje(
+          SyncService().isOnline
+              ? 'Foto eliminada. Puedes tomar o subir otra.'
+              : 'Foto eliminada en el dispositivo. Se actualizará en el servidor al reconectar.',
+        );
+      }
+    } catch (e) {
+      _mostrarMensaje('No se pudo eliminar la foto: $e');
+    }
+  }
+
   Future<void> _resolverFotoEntregaDesdeCache() async {
     final url = await EntregaFotoUtil.resolverUrlFoto(_ordenActual);
     if (EntregaFotoUtil.urlTieneFoto(url)) {
@@ -957,12 +1019,48 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   child: Padding(
                     padding: const EdgeInsets.all(12),
-                    child: FotoEntregaPreview(
-                      fotoUrl: _fotoEntregaUrl ?? _ordenActual.fotoEntrega,
-                      ancho: 88,
-                      alto: 88,
-                      mostrarEtiqueta: true,
-                      alineacion: Alignment.center,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        FotoEntregaPreview(
+                          fotoUrl: _fotoEntregaUrl ?? _ordenActual.fotoEntrega,
+                          ancho: 88,
+                          alto: 88,
+                          mostrarEtiqueta: true,
+                          alineacion: Alignment.center,
+                        ),
+                        if (_puedeGestionarFotoEntrega()) ...[
+                          const SizedBox(height: 12),
+                          Wrap(
+                            alignment: WrapAlignment.center,
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              OutlinedButton.icon(
+                                onPressed: _eliminarFotoEntrega,
+                                icon: const Icon(Icons.delete_outline, size: 18),
+                                label: const Text('Quitar foto'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFFDC2626),
+                                  side: const BorderSide(color: Color(0xFFDC2626)),
+                                ),
+                              ),
+                              ElevatedButton.icon(
+                                onPressed: () async {
+                                  await _tomarFotoEntregaConSelector();
+                                  await _resolverFotoEntregaDesdeCache();
+                                },
+                                icon: const Icon(Icons.camera_alt, size: 18),
+                                label: const Text('Cambiar foto'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFFF9800),
+                                  foregroundColor: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ),

@@ -238,6 +238,16 @@ class OfflineStorageService {
     );
   }
 
+  /// Quitar todas las fotos pendientes de una orden (al eliminar foto antes de entregar).
+  Future<void> deletePendingPhotosByOrdenId(String ordenId) async {
+    await initialize();
+    await _database!.delete(
+      'pending_photos',
+      where: 'orden_id = ?',
+      whereArgs: [ordenId],
+    );
+  }
+
   /// Guardar firma pendiente
   Future<void> savePendingSignature({
     required String ordenId,

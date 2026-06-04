@@ -66,12 +66,17 @@ class RepartidorPerfilCacheService {
   }
 
   /// Guardar saldo en caché
-  static Future<void> cacheSaldo(double saldo, String moneda) async {
+  static Future<void> cacheSaldo(
+    double saldo,
+    String moneda, {
+    bool solicitudPendiente = false,
+  }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_saldoKey, jsonEncode({
         'saldo': saldo,
         'moneda': moneda,
+        'solicitud_pendiente': solicitudPendiente,
       }));
       print('💾 Saldo guardado en caché: \$$saldo $moneda');
     } catch (e) {

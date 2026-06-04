@@ -24,11 +24,12 @@ class RepartidorChatMensajeSonidoService {
   static DateTime? _ultimaAlertaUtc;
 
   static AudioContext _crearContextoAlarma() {
+    // iOS: defaultToSpeaker solo es válido con playAndRecord (assert en audioplayers).
+    // playback + mixWithOthers basta para alertas de chat sin crashear al iniciar.
     return AudioContext(
       iOS: AudioContextIOS(
         category: AVAudioSessionCategory.playback,
         options: {
-          AVAudioSessionOptions.defaultToSpeaker,
           AVAudioSessionOptions.mixWithOthers,
         },
       ),

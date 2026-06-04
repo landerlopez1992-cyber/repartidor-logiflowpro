@@ -48,6 +48,7 @@ import '../widgets/volonex_dialog.dart';
 import '../utils/entrega_foto_util.dart';
 import '../widgets/foto_entrega_preview.dart';
 import '../utils/repartidor_nombre_util.dart';
+import '../services/repartidor_saldo_service.dart';
 
 class RepartidorMobileScreen extends StatefulWidget {
   const RepartidorMobileScreen({super.key});
@@ -1610,68 +1611,19 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     }
   }
 
-  // Cargar saldo del repartidor (último pago aceptado, o 0 si hay solicitud pendiente)
   Future<void> _cargarSaldo() async {
     if (_repartidorId == null) return;
 
     try {
-      // Verificar si hay una solicitud pendiente
-      final solicitudPendiente = await supabase
-          .from('solicitudes_pago_repartidores')
-          .select('id')
-          .eq('repartidor_id', _repartidorId!)
-          .eq('estado', 'PENDIENTE')
-          .maybeSingle();
-
-      // Si hay solicitud pendiente, resetear saldo a 0
-      if (solicitudPendiente != null) {
-        print('💰 Solicitud pendiente encontrada - Reseteando saldo a 0');
-        if (mounted) {
-          setState(() {
-            _saldo = 0.0;
-            _monedaSaldo = 'CUP';
-          });
-        }
-        return;
-      }
-
-      // Si no hay solicitud pendiente, obtener el último pago aceptado
-      final ultimoPagoAceptado = await supabase
-          .from('solicitudes_pago_repartidores')
-          .select('monto, moneda')
-          .eq('repartidor_id', _repartidorId!)
-          .eq('estado', 'ACEPTADO')
-          .order('fecha_aceptacion', ascending: false)
-          .limit(1)
-          .maybeSingle();
-
-      if (ultimoPagoAceptado != null) {
-        final monto = (ultimoPagoAceptado['monto'] ?? 0.0).toDouble();
-        final moneda = ultimoPagoAceptado['moneda']?.toString() ?? 'CUP';
-        print('💰 Saldo cargado: $monto $moneda');
-        if (mounted) {
-          setState(() {
-            _saldo = monto;
-            _monedaSaldo = moneda;
-          });
-        }
-      } else {
-        print('💰 No hay pagos aceptados - Saldo: 0.00');
-        if (mounted) {
-          setState(() {
-            _saldo = 0.0;
-            _monedaSaldo = 'CUP';
-          });
-        }
+      final r = await RepartidorSaldoService.cargarSaldo(_repartidorId!);
+      if (mounted) {
+        setState(() {
+          _saldo = r.saldo;
+          _monedaSaldo = r.moneda;
+        });
       }
     } catch (e) {
       print('❌ Error cargando saldo: $e');
-      if (mounted) {
-        setState(() {
-          _saldo = 0.0;
-          _monedaSaldo = 'CUP';
-        });
-      }
     }
   }
 
@@ -5333,10 +5285,30 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         ),
       ),
     );
-    
-    // Si se actualizó la orden, recargar la lista
+
+    // Siempre reflejar caché local (p. ej. quitar/cambiar foto sin marcar entregado)
+    await _aplicarOrdenDesdeCacheTrasDetalle(orden.id);
+
     if (resultado == true) {
-      _cargarOrdenes();
+      await _cargarOrdenes();
+    }
+  }
+
+  /// Actualiza la orden en la lista principal desde caché (foto eliminada/cambiada offline).
+  Future<void> _aplicarOrdenDesdeCacheTrasDetalle(String ordenId) async {
+    try {
+      final cached = await OrdenCacheService.getCachedOrderById(ordenId);
+      if (cached == null || !mounted) return;
+      setState(() {
+        final index = _ordenes.indexWhere((o) => o.id == ordenId);
+        if (index != -1) {
+          _ordenes[index] = cached;
+        }
+        _ordenesFiltradasCache = null;
+        _cacheKeyFiltradas = null;
+      });
+    } catch (e) {
+      print('⚠️ No se pudo refrescar orden $ordenId desde caché: $e');
     }
   }
 

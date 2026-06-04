@@ -8,6 +8,7 @@ import '../services/repartidor_pantallas_offline_service.dart';
 import '../services/sync_service.dart';
 import '../services/network_timeout.dart';
 import '../services/repartidor_chat_mensaje_sonido_service.dart';
+import '../utils/entrega_foto_util.dart';
 
 /// Pantalla de chat filtrado que muestra solo mensajes de un remitente específico
 class ChatSoporteFiltradoScreen extends StatefulWidget {
@@ -64,38 +65,55 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
 
   Future<void> _inicializarChat() async {
     final user = supabase.auth.currentUser;
-    if (user == null) return;
+    if (user == null) {
+      if (mounted) setState(() => _cargando = false);
+      return;
+    }
+
+    _nombreRepartidor =
+        await RepartidorPantallasOfflineService.cargarNombreRepartidor(user.id) ??
+            'Repartidor';
+
+    await RepartidorPantallasOfflineService.upsertConversacionEnCache(
+      user.id,
+      conversacionId: widget.conversacionId,
+      remitenteAuthId: widget.remitenteAuthId,
+      remitenteNombre: widget.nombreRemitente,
+      remitenteRol: widget.rolRemitente,
+      remitenteFoto: widget.fotoRemitente,
+    );
+
+    await _fusionarMensajesLocales();
+
+    if (mounted) {
+      setState(() => _cargando = false);
+      Future.delayed(const Duration(milliseconds: 300), _scrollToBottom);
+    }
+
+    if (!SyncService().isOnline) return;
 
     try {
-      // Obtener nombre del repartidor
-      final userData = await supabase
-          .from('usuarios')
-          .select('nombre')
-          .eq('auth_id', user.id)
-          .single();
-      
-      setState(() {
-        _nombreRepartidor = userData['nombre'] ?? 'Repartidor';
-      });
+      final userData = await ejecutarConTimeout(
+        supabase
+            .from('usuarios')
+            .select('nombre')
+            .eq('auth_id', user.id)
+            .maybeSingle(),
+        timeout: const Duration(seconds: 8),
+      );
+      if (userData != null) {
+        final nombre = userData['nombre']?.toString();
+        if (nombre != null && nombre.isNotEmpty) {
+          _nombreRepartidor = nombre;
+          if (mounted) setState(() {});
+        }
+      }
 
-      // Cargar mensajes filtrados
       await _cargarMensajes();
-
-      // Suscribirse a nuevos mensajes
       _suscribirseAMensajes();
-
-      setState(() {
-        _cargando = false;
-      });
-
-      Future.delayed(const Duration(milliseconds: 300), () {
-        _scrollToBottom();
-      });
     } catch (e) {
-      print('❌ Error al inicializar chat: $e');
-      setState(() {
-        _cargando = false;
-      });
+      print('❌ Error al inicializar chat (red): $e');
+      await _fusionarMensajesLocales();
     }
   }
 
@@ -153,13 +171,85 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     });
   }
 
-  Future<void> _cargarMensajes() async {
-    final cached = await RepartidorPantallasOfflineService.cargarMensajesChat(widget.conversacionId);
-    if (cached != null && cached.isNotEmpty && mounted) {
-      setState(() => _mensajes = cached);
+  Future<void> _fusionarMensajesLocales() async {
+    final user = supabase.auth.currentUser;
+    var lista = <Map<String, dynamic>>[];
+
+    final cached =
+        await RepartidorPantallasOfflineService.cargarMensajesChat(widget.conversacionId);
+    if (cached != null) {
+      lista = List<Map<String, dynamic>>.from(cached);
     }
 
-    if (!SyncService().isOnline) return;
+    if (user != null) {
+      final pendientes =
+          await RepartidorPantallasOfflineService.mensajesPendientesParaConversacion(
+        conversacionId: widget.conversacionId,
+        repartidorAuthId: user.id,
+        nombreRepartidor: _nombreRepartidor,
+      );
+      for (final p in pendientes) {
+        if (!_listaYaTieneMensaje(p)) {
+          lista.add(_enriquecerMensaje(p));
+        }
+      }
+    }
+
+    lista.sort((a, b) {
+      final fa = DateTime.tryParse(a['created_at']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      final fb = DateTime.tryParse(b['created_at']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      return fa.compareTo(fb);
+    });
+
+    if (mounted) {
+      setState(() => _mensajes = lista);
+    }
+  }
+
+  Future<void> _persistirMensajesEnCache() async {
+    await RepartidorPantallasOfflineService.guardarMensajesChat(
+      widget.conversacionId,
+      _mensajes,
+    );
+    final user = supabase.auth.currentUser;
+    if (user == null || _mensajes.isEmpty) return;
+
+    Map<String, dynamic>? ultimo;
+    for (var i = _mensajes.length - 1; i >= 0; i--) {
+      final m = _mensajes[i];
+      final texto = m['mensaje']?.toString().trim() ?? '';
+      final foto = m['foto_url']?.toString().trim() ?? '';
+      if (texto.isNotEmpty || foto.isNotEmpty) {
+        ultimo = m;
+        break;
+      }
+    }
+    if (ultimo == null) return;
+
+    final textoUltimo = ultimo['mensaje']?.toString().trim() ?? '';
+    final preview = textoUltimo.isNotEmpty ? textoUltimo : '📷 Foto';
+
+    await RepartidorPantallasOfflineService.upsertConversacionEnCache(
+      user.id,
+      conversacionId: widget.conversacionId,
+      remitenteAuthId: widget.remitenteAuthId,
+      remitenteNombre: widget.nombreRemitente,
+      remitenteRol: widget.rolRemitente,
+      remitenteFoto: widget.fotoRemitente,
+      ultimoMensaje: preview,
+      ultimoMensajeFecha: ultimo['created_at']?.toString(),
+    );
+  }
+
+  Future<void> _cargarMensajes() async {
+    await _fusionarMensajesLocales();
+
+    if (!SyncService().isOnline) {
+      if (mounted) setState(() => _cargando = false);
+      return;
+    }
 
     try {
       final todosMensajesRaw = await ejecutarConTimeout(
@@ -202,18 +292,29 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
         _mensajes = mensajesEnriquecidos;
       });
 
-      await RepartidorPantallasOfflineService.guardarMensajesChat(
-        widget.conversacionId,
-        mensajesEnriquecidos,
-      );
+      if (user != null) {
+        final pendientes =
+            await RepartidorPantallasOfflineService.mensajesPendientesParaConversacion(
+          conversacionId: widget.conversacionId,
+          repartidorAuthId: user.id,
+          nombreRepartidor: _nombreRepartidor,
+        );
+        for (final p in pendientes) {
+          _agregarMensajeSiNoExiste(_enriquecerMensaje(p));
+        }
+      }
 
+      await _persistirMensajesEnCache();
       await _marcarComoLeidos();
     } catch (e) {
       print('❌ Error al cargar mensajes: $e');
+      await _fusionarMensajesLocales();
     }
   }
 
   void _suscribirseAMensajes() {
+    if (!SyncService().isOnline) return;
+
     _channel = supabase
         .channel('mensajes_soporte_filtrado_${widget.conversacionId}')
         .onPostgresChanges(
@@ -260,7 +361,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
 
   Future<void> _marcarComoLeidos() async {
     final user = supabase.auth.currentUser;
-    if (user == null) return;
+    if (user == null || !SyncService().isOnline) return;
 
     try {
       print('✅ Marcando mensajes como leídos para conversación: ${widget.conversacionId}, remitente: ${widget.remitenteAuthId}');
@@ -345,6 +446,46 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     }
   }
 
+  Future<void> _enviarFotoOfflineEncolada({
+    required Map<String, dynamic> datosMensaje,
+    required String pathPersistido,
+    required String textoMensaje,
+  }) async {
+    await RepartidorPantallasOfflineService.encolarMensajeSoporte({
+      ...datosMensaje,
+      'foto_local_path': pathPersistido,
+    });
+
+    final localId = DateTime.now().millisecondsSinceEpoch.toString();
+    final localMsg = {
+      ...datosMensaje,
+      'local_id': localId,
+      'foto_url': 'local://$pathPersistido',
+      'remitente_nombre': _nombreRepartidor,
+      'remitente_rol': 'REPARTIDOR',
+      'mensaje': textoMensaje,
+      'created_at': DateTime.now().toIso8601String(),
+      'pending_local': true,
+    };
+
+    if (mounted) {
+      _agregarMensajeSiNoExiste(localMsg);
+      await _persistirMensajesEnCache();
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      setState(() => _fotoSeleccionada = null);
+      _mensajeController.clear();
+      _scrollToBottom();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Foto guardada. Se enviará cuando vuelva la conexión.',
+          ),
+          backgroundColor: Color(0xFFFF9800),
+        ),
+      );
+    }
+  }
+
   Future<void> _enviarFoto(XFile imagen) async {
     final user = supabase.auth.currentUser;
     if (user == null) return;
@@ -357,8 +498,39 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     _enviandoFoto = true;
     if (mounted) setState(() {});
 
+    final textoMensaje = _mensajeController.text.trim().isNotEmpty
+        ? _mensajeController.text.trim()
+        : '📷 Foto';
+
+    String? tenantId =
+        await RepartidorPantallasOfflineService.cargarTenantIdRepartidor(user.id);
+
+    final datosMensaje = <String, dynamic>{
+      'conversacion_id': widget.conversacionId,
+      'remitente_auth_id': user.id,
+      'mensaje': textoMensaje,
+      'leido': false,
+    };
+    if (tenantId != null) {
+      datosMensaje['tenant_id'] = tenantId;
+    }
+
     try {
-      // Mostrar indicador de carga
+      if (!SyncService().isOnline) {
+        final path = await RepartidorPantallasOfflineService.persistirFotoChatPendiente(
+          imagen.path,
+        );
+        if (path == null) {
+          throw Exception('No se pudo guardar la foto en el dispositivo');
+        }
+        await _enviarFotoOfflineEncolada(
+          datosMensaje: datosMensaje,
+          pathPersistido: path,
+          textoMensaje: textoMensaje,
+        );
+        return;
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -381,83 +553,79 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
         );
       }
 
-      // Subir imagen a Supabase Storage
-      final file = File(imagen.path);
-      final fileName = 'chat_${DateTime.now().millisecondsSinceEpoch}_${user.id}.jpg';
-      final bucket = 'fotos-perfil'; // Usar bucket existente que ya está configurado
-
-      await supabase.storage.from(bucket).upload(fileName, file);
-
-      // Obtener URL pública
-      final publicUrl = supabase.storage.from(bucket).getPublicUrl(fileName);
-
-      // Obtener tenant_id
-      String? tenantId;
-      try {
-        final conversacion = await supabase
-            .from('conversaciones_soporte')
-            .select('tenant_id')
-            .eq('id', widget.conversacionId)
-            .single();
-        tenantId = conversacion['tenant_id'];
-      } catch (e) {
-        try {
-          final userData = await supabase
-              .from('usuarios')
+      if (tenantId == null) {
+        final conversacion = await ejecutarConTimeout(
+          supabase
+              .from('conversaciones_soporte')
               .select('tenant_id')
-              .eq('auth_id', user.id)
-              .single();
-          tenantId = userData['tenant_id'];
-        } catch (e2) {
-          print('⚠️ No se pudo obtener tenant_id: $e2');
+              .eq('id', widget.conversacionId)
+              .maybeSingle(),
+          timeout: const Duration(seconds: 6),
+        );
+        tenantId = conversacion?['tenant_id']?.toString();
+        if (tenantId != null) {
+          datosMensaje['tenant_id'] = tenantId;
         }
       }
 
-      // Enviar mensaje con la foto (incluir texto si hay)
-      final textoMensaje = _mensajeController.text.trim().isNotEmpty 
-          ? _mensajeController.text.trim() 
-          : '📷 Foto';
-      
-      final datosMensaje = {
-        'conversacion_id': widget.conversacionId,
-        'remitente_auth_id': user.id,
-        'mensaje': textoMensaje,
-        'foto_url': publicUrl, // Campo para la URL de la foto
-        'leido': false,
-      };
+      final file = File(imagen.path);
+      final fileName =
+          'chat_${DateTime.now().millisecondsSinceEpoch}_${user.id}.jpg';
+      const bucket = 'fotos-perfil';
 
-      if (tenantId != null) {
-        datosMensaje['tenant_id'] = tenantId;
+      final subidaOk = await ejecutarConTimeout(
+        supabase.storage.from(bucket).upload(fileName, file),
+        timeout: const Duration(seconds: 25),
+      );
+      if (subidaOk == null) {
+        throw const SocketException('Timeout subiendo foto');
       }
 
-      await supabase.from('mensajes_soporte').insert(datosMensaje);
+      final publicUrl = supabase.storage.from(bucket).getPublicUrl(fileName);
+      datosMensaje['foto_url'] = publicUrl;
+
+      await ejecutarConTimeout(
+        supabase.from('mensajes_soporte').insert(datosMensaje),
+        timeout: const Duration(seconds: 12),
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        setState(() {
-          _fotoSeleccionada = null;
-        });
+        setState(() => _fotoSeleccionada = null);
         _mensajeController.clear();
         await _cargarMensajes();
         _scrollToBottom();
       }
     } catch (e) {
       print('❌ Error al enviar foto: $e');
+      if (RepartidorPantallasOfflineService.esErrorDeRed(e) ||
+          !SyncService().isOnline) {
+        final path = await RepartidorPantallasOfflineService.persistirFotoChatPendiente(
+          imagen.path,
+        );
+        if (path != null) {
+          await _enviarFotoOfflineEncolada(
+            datosMensaje: datosMensaje,
+            pathPersistido: path,
+            textoMensaje: textoMensaje,
+          );
+          return;
+        }
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al enviar foto: ${e.toString()}'),
-            backgroundColor: Colors.red,
+          const SnackBar(
+            content: Text(
+              'No se pudo enviar la foto. Comprueba la conexión o inténtalo de nuevo.',
+            ),
+            backgroundColor: Color(0xFFDC2626),
           ),
         );
       }
     } finally {
-      // Resetear flag de envío
       if (mounted) {
-        setState(() {
-          _enviandoFoto = false;
-        });
+        setState(() => _enviandoFoto = false);
       }
     }
   }
@@ -483,25 +651,22 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     if (mounted) setState(() {});
 
     try {
-      // Obtener tenant_id
-      String? tenantId;
-      try {
-        final conversacion = await supabase
-            .from('conversaciones_soporte')
-            .select('tenant_id')
-            .eq('id', widget.conversacionId)
-            .single();
-        tenantId = conversacion['tenant_id'];
-      } catch (e) {
+      String? tenantId =
+          await RepartidorPantallasOfflineService.cargarTenantIdRepartidor(user.id);
+
+      if (SyncService().isOnline && tenantId == null) {
         try {
-          final userData = await supabase
-              .from('usuarios')
-              .select('tenant_id')
-              .eq('auth_id', user.id)
-              .single();
-          tenantId = userData['tenant_id'];
-        } catch (e2) {
-          print('⚠️ No se pudo obtener tenant_id: $e2');
+          final conversacion = await ejecutarConTimeout(
+            supabase
+                .from('conversaciones_soporte')
+                .select('tenant_id')
+                .eq('id', widget.conversacionId)
+                .maybeSingle(),
+            timeout: const Duration(seconds: 6),
+          );
+          tenantId = conversacion?['tenant_id']?.toString();
+        } catch (e) {
+          print('⚠️ tenant_id conversación: $e');
         }
       }
 
@@ -530,6 +695,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
         await RepartidorPantallasOfflineService.encolarMensajeSoporte(datosMensaje);
         if (mounted) {
           _agregarMensajeSiNoExiste(localMsg);
+          await _persistirMensajesEnCache();
           _scrollToBottom();
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -548,6 +714,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
           await RepartidorPantallasOfflineService.encolarMensajeSoporte(datosMensaje);
           if (mounted) {
             _agregarMensajeSiNoExiste(localMsg);
+            await _persistirMensajesEnCache();
             _scrollToBottom();
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -719,6 +886,13 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                             final fotoRemitente = mensaje['remitente_foto'];
                             final fotoUrl = mensaje['foto_url'];
 
+                            final fechaMsg = DateTime.tryParse(
+                                  mensaje['created_at']?.toString() ?? '',
+                                ) ??
+                                DateTime.now();
+                            final pendienteEnvio =
+                                mensaje['pending_local'] == true;
+
                             return KeyedSubtree(
                               key: ValueKey('msg_$msgKey'),
                               child: _buildMensajeBurbuja(
@@ -728,8 +902,9 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                                 esAdminMsg,
                                 esEmpleadoMsg,
                                 fotoRemitente,
-                                DateTime.parse(mensaje['created_at']),
+                                fechaMsg,
                                 fotoUrl,
+                                pendienteEnvio: pendienteEnvio,
                               ),
                             );
                           },
@@ -900,6 +1075,65 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     );
   }
 
+  Widget _imagenMensajeChat(String fotoUrl, {bool pendienteEnvio = false}) {
+    final rutaLocal = EntregaFotoUtil.rutaArchivoLocal(fotoUrl);
+    if (rutaLocal != null) {
+      final file = File(rutaLocal);
+      return Image.file(
+        file,
+        width: 200,
+        height: 200,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _placeholderImagenChat(
+          pendienteEnvio: pendienteEnvio,
+          error: true,
+        ),
+      );
+    }
+
+    if (fotoUrl.startsWith('http')) {
+      return Image.network(
+        fotoUrl,
+        width: 200,
+        height: 200,
+        fit: BoxFit.cover,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return _placeholderImagenChat(cargando: true);
+        },
+        errorBuilder: (_, __, ___) =>
+            _placeholderImagenChat(pendienteEnvio: pendienteEnvio, error: true),
+      );
+    }
+
+    return _placeholderImagenChat(pendienteEnvio: pendienteEnvio);
+  }
+
+  Widget _placeholderImagenChat({
+    bool cargando = false,
+    bool error = false,
+    bool pendienteEnvio = false,
+  }) {
+    return Container(
+      width: 200,
+      height: 200,
+      color: Colors.grey[300],
+      child: Center(
+        child: cargando
+            ? const CircularProgressIndicator(strokeWidth: 2)
+            : Icon(
+                error
+                    ? Icons.broken_image_outlined
+                    : (pendienteEnvio ? Icons.schedule : Icons.image),
+                color: error
+                    ? const Color(0xFFDC2626)
+                    : const Color(0xFFFF9800),
+                size: 40,
+              ),
+      ),
+    );
+  }
+
   Widget _buildMensajeBurbuja(
     String mensaje,
     bool esMio,
@@ -908,8 +1142,9 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     bool esEmpleado,
     String? fotoRemitente,
     DateTime fecha,
-    String? fotoUrl,
-  ) {
+    String? fotoUrl, {
+    bool pendienteEnvio = false,
+  }) {
     Color colorAvatar;
     IconData iconoAvatar;
     String etiquetaRemitente;
@@ -1026,39 +1261,12 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Mostrar foto si existe
                       if (fotoUrl != null && fotoUrl.isNotEmpty) ...[
                         ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: Image.network(
+                          child: _imagenMensajeChat(
                             fotoUrl,
-                            width: 200,
-                            height: 200,
-                            fit: BoxFit.cover,
-                            loadingBuilder: (context, child, loadingProgress) {
-                              if (loadingProgress == null) return child;
-                              return Container(
-                                width: 200,
-                                height: 200,
-                                color: Colors.grey[300],
-                                child: Center(
-                                  child: CircularProgressIndicator(
-                                    value: loadingProgress.expectedTotalBytes != null
-                                        ? loadingProgress.cumulativeBytesLoaded /
-                                            loadingProgress.expectedTotalBytes!
-                                        : null,
-                                  ),
-                                ),
-                              );
-                            },
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                width: 200,
-                                height: 200,
-                                color: Colors.grey[300],
-                                child: const Icon(Icons.error, color: Colors.red),
-                              );
-                            },
+                            pendienteEnvio: pendienteEnvio,
                           ),
                         ),
                         const SizedBox(height: 8),
@@ -1082,10 +1290,16 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                 Padding(
                   padding: const EdgeInsets.only(top: 4, left: 12, right: 12),
                   child: Text(
-                    _formatearHora(fecha),
-                    style: const TextStyle(
+                    pendienteEnvio
+                        ? '${_formatearHora(fecha)} · Pendiente de envío'
+                        : _formatearHora(fecha),
+                    style: TextStyle(
                       fontSize: 11,
-                      color: AppColors.textoSecundario,
+                      color: pendienteEnvio
+                          ? const Color(0xFFFF9800)
+                          : AppColors.textoSecundario,
+                      fontWeight:
+                          pendienteEnvio ? FontWeight.w600 : FontWeight.normal,
                     ),
                   ),
                 ),

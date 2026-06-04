@@ -21,7 +21,7 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
   String? _conversacionId;
   String? _tenantId;
   RealtimeChannel? _channelMensajes;
-  Map<String, bool> _nuevosMensajes = {}; // Trackear conversaciones con nuevos mensajes
+  final Map<String, bool> _nuevosMensajes = {};
 
   bool _esMensajeNoLeidoConContenido(
     Map<String, dynamic> m,
@@ -50,6 +50,34 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
     return n;
   }
 
+  Future<void> _aplicarConversacionesLocales(String authId) async {
+    var lista =
+        await RepartidorPantallasOfflineService.cargarConversacionesChat(authId);
+
+    if ((lista == null || lista.isEmpty) &&
+        _conversacionId != null &&
+        _conversacionId!.isNotEmpty) {
+      lista = await RepartidorPantallasOfflineService
+          .conversacionesDesdeMensajesCache(
+        conversacionId: _conversacionId!,
+        repartidorAuthId: authId,
+      );
+      if (lista.isNotEmpty) {
+        await RepartidorPantallasOfflineService.guardarConversacionesChat(
+          authId,
+          lista,
+        );
+      }
+    }
+
+    if (lista != null && lista!.isNotEmpty && mounted) {
+      setState(() {
+        _conversaciones = List<Map<String, dynamic>>.from(lista!);
+        _cargando = false;
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -69,39 +97,76 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
       return;
     }
 
+    final meta = await RepartidorPantallasOfflineService.cargarMetaChat(user.id);
+    if (meta != null) {
+      _conversacionId = meta.conversacionId;
+      _tenantId = meta.tenantId;
+    }
+
+    _tenantId ??=
+        await RepartidorPantallasOfflineService.cargarTenantIdRepartidor(user.id);
+
+    await _aplicarConversacionesLocales(user.id);
+
+    if (_conversacionId != null && SyncService().isOnline) {
+      _suscribirseAMensajes();
+    }
+
+    if (!SyncService().isOnline) {
+      if (mounted) setState(() => _cargando = false);
+      return;
+    }
+
     try {
-      // Obtener tenant_id del repartidor
-      final userData = await supabase
-          .from('usuarios')
-          .select('tenant_id')
-          .eq('auth_id', user.id)
-          .single();
-      
-      _tenantId = userData['tenant_id'];
-      
-      // Buscar conversación del repartidor
+      _tenantId ??= await RepartidorPantallasOfflineService.cargarTenantIdRepartidor(
+        user.id,
+      );
+
+      if (_tenantId == null) {
+        final userData = await ejecutarConTimeout(
+          supabase
+              .from('usuarios')
+              .select('tenant_id')
+              .eq('auth_id', user.id)
+              .maybeSingle(),
+          timeout: const Duration(seconds: 8),
+        );
+        _tenantId = userData?['tenant_id']?.toString();
+      }
+
       var query = supabase
           .from('conversaciones_soporte')
           .select('id')
           .eq('repartidor_auth_id', user.id)
           .eq('estado', 'ABIERTA');
-      
-      if (_tenantId != null) {
+
+      if (_tenantId != null && _tenantId!.isNotEmpty) {
         query = query.eq('tenant_id', _tenantId!);
       }
-      
-      final conversaciones = await query.limit(1);
-      
-      if (conversaciones.isNotEmpty) {
-        _conversacionId = conversaciones[0]['id'];
+
+      final conversaciones = await ejecutarConTimeout(
+        query.limit(1),
+        timeout: const Duration(seconds: 10),
+      );
+
+      if (conversaciones != null && conversaciones.isNotEmpty) {
+        _conversacionId = conversaciones[0]['id']?.toString();
+        await RepartidorPantallasOfflineService.guardarMetaChat(
+          user.id,
+          conversacionId: _conversacionId,
+          tenantId: _tenantId,
+        );
         await _cargarConversaciones();
-        _suscribirseAMensajes();
-      } else {
+        if (_channelMensajes == null && SyncService().isOnline) {
+          _suscribirseAMensajes();
+        }
+      } else if (mounted) {
         setState(() => _cargando = false);
       }
     } catch (e) {
       print('❌ Error cargando datos: $e');
-      setState(() => _cargando = false);
+      await _aplicarConversacionesLocales(user.id);
+      if (mounted) setState(() => _cargando = false);
     }
   }
 
@@ -113,19 +178,16 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
 
     final user = supabase.auth.currentUser;
     if (user != null) {
-      final cachedConv = await RepartidorPantallasOfflineService.cargarConversacionesChat(user.id);
-      if (cachedConv != null && cachedConv.isNotEmpty && mounted) {
-        setState(() {
-          _conversaciones = cachedConv;
-          _cargando = false;
-        });
-      }
+      await _aplicarConversacionesLocales(user.id);
     }
 
     if (!SyncService().isOnline) {
       if (mounted) setState(() => _cargando = false);
       return;
     }
+
+    final conversacionesAnteriores = List<Map<String, dynamic>>.from(_conversaciones);
+    final authId = user?.id;
 
     try {
       final mensajesRaw = await ejecutarConTimeout(
@@ -141,61 +203,80 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
       }
       final mensajes = mensajesRaw as List;
 
-      // Agrupar mensajes por remitente (admin o empleado)
       final Map<String, Map<String, dynamic>> conversacionesMap = {};
       final user = supabase.auth.currentUser;
 
       for (var mensaje in mensajes) {
         final remitenteId = mensaje['remitente_auth_id'];
-        
-        // Saltar mensajes del propio repartidor
+
         if (remitenteId == user?.id) continue;
 
-        // Si ya tenemos esta conversación, actualizar último mensaje si es más reciente
         if (conversacionesMap.containsKey(remitenteId)) {
-          final fechaActual = DateTime.parse(conversacionesMap[remitenteId]!['ultimo_mensaje_fecha']);
+          final fechaActual =
+              DateTime.parse(conversacionesMap[remitenteId]!['ultimo_mensaje_fecha']);
           final fechaNueva = DateTime.parse(mensaje['created_at']);
           if (fechaNueva.isAfter(fechaActual)) {
             conversacionesMap[remitenteId]!['ultimo_mensaje'] =
                 RepartidorChatSoporteService.textoPreview(mensaje);
-            conversacionesMap[remitenteId]!['ultimo_mensaje_fecha'] = mensaje['created_at'];
+            conversacionesMap[remitenteId]!['ultimo_mensaje_fecha'] =
+                mensaje['created_at'];
           }
           conversacionesMap[remitenteId]!['mensajes_no_leidos'] =
               _contarNoLeidosRemitente(mensajes, remitenteId);
         } else {
-          // Obtener información del remitente
-          try {
-            final remitenteData = await supabase
-                .from('usuarios')
-                .select('nombre, rol, foto_perfil, email')
-                .eq('auth_id', remitenteId)
-                .maybeSingle();
+          Map<String, dynamic>? remitenteData =
+              await RepartidorPantallasOfflineService.cargarRemitenteChat(
+            remitenteId.toString(),
+          );
 
-            if (remitenteData != null) {
-              final preview =
-                  RepartidorChatSoporteService.textoPreview(mensaje);
-              if (preview.isEmpty) continue;
-
-              conversacionesMap[remitenteId] = {
-                'remitente_auth_id': remitenteId,
-                'remitente_nombre': remitenteData['nombre'] ?? 'Usuario',
-                'remitente_rol': remitenteData['rol'] ?? 'EMPLEADO',
-                'remitente_foto': remitenteData['foto_perfil'],
-                'remitente_email': remitenteData['email'],
-                'ultimo_mensaje': preview,
-                'ultimo_mensaje_fecha': mensaje['created_at'],
-                'mensajes_no_leidos':
-                    _contarNoLeidosRemitente(mensajes, remitenteId),
-                'conversacion_id': _conversacionId,
-              };
+          if (remitenteData == null && SyncService().isOnline) {
+            try {
+              final data = await ejecutarConTimeout(
+                supabase
+                    .from('usuarios')
+                    .select('nombre, rol, foto_perfil, email')
+                    .eq('auth_id', remitenteId)
+                    .maybeSingle(),
+                timeout: const Duration(seconds: 6),
+              );
+              if (data != null) {
+                remitenteData = data;
+                await RepartidorPantallasOfflineService.guardarRemitenteChat(
+                  remitenteId.toString(),
+                  nombre: data['nombre']?.toString() ?? 'Usuario',
+                  rol: data['rol']?.toString() ?? 'EMPLEADO',
+                  foto: data['foto_perfil']?.toString(),
+                  email: data['email']?.toString(),
+                );
+              }
+            } catch (e) {
+              print('⚠️ Error obteniendo datos del remitente $remitenteId: $e');
             }
-          } catch (e) {
-            print('⚠️ Error obteniendo datos del remitente $remitenteId: $e');
           }
+
+          remitenteData ??= {
+            'nombre': 'Soporte',
+            'rol': 'EMPLEADO',
+          };
+
+          final preview = RepartidorChatSoporteService.textoPreview(mensaje);
+          if (preview.isEmpty) continue;
+
+          conversacionesMap[remitenteId] = {
+            'remitente_auth_id': remitenteId,
+            'remitente_nombre': remitenteData['nombre'] ?? 'Usuario',
+            'remitente_rol': remitenteData['rol'] ?? 'EMPLEADO',
+            'remitente_foto': remitenteData['foto_perfil'],
+            'remitente_email': remitenteData['email'],
+            'ultimo_mensaje': preview,
+            'ultimo_mensaje_fecha': mensaje['created_at'],
+            'mensajes_no_leidos':
+                _contarNoLeidosRemitente(mensajes, remitenteId),
+            'conversacion_id': _conversacionId,
+          };
         }
       }
 
-      // Convertir a lista y ordenar por fecha
       final conversacionesList = conversacionesMap.values.toList();
       conversacionesList.sort((a, b) {
         final fechaA = DateTime.parse(a['ultimo_mensaje_fecha']);
@@ -203,27 +284,50 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
         return fechaB.compareTo(fechaA);
       });
 
-      setState(() {
-        _conversaciones = conversacionesList;
-        _cargando = false;
-      });
-      if (user != null) {
-        await RepartidorPantallasOfflineService.guardarConversacionesChat(
-          user.id,
-          conversacionesList,
-        );
+      if (conversacionesList.isNotEmpty) {
+        setState(() {
+          _conversaciones = conversacionesList;
+          _cargando = false;
+        });
+        if (user != null) {
+          await RepartidorPantallasOfflineService.guardarMensajesChat(
+            _conversacionId!,
+            mensajes.map((e) => Map<String, dynamic>.from(e as Map)).toList(),
+          );
+          await RepartidorPantallasOfflineService.guardarConversacionesChat(
+            user.id,
+            conversacionesList,
+          );
+        }
+      } else if (conversacionesAnteriores.isNotEmpty) {
+        if (mounted) setState(() => _cargando = false);
+      } else {
+        setState(() {
+          _conversaciones = [];
+          _cargando = false;
+        });
       }
     } catch (e) {
       print('❌ Error cargando conversaciones: $e');
-      setState(() => _cargando = false);
+      if (conversacionesAnteriores.isNotEmpty && mounted) {
+        setState(() {
+          _conversaciones = conversacionesAnteriores;
+          _cargando = false;
+        });
+      } else if (authId != null) {
+        await _aplicarConversacionesLocales(authId);
+        if (mounted) setState(() => _cargando = false);
+      } else if (mounted) {
+        setState(() => _cargando = false);
+      }
     }
   }
 
   void _suscribirseAMensajes() {
-    if (_conversacionId == null) return;
+    if (_conversacionId == null || !SyncService().isOnline) return;
 
     print('🔔 Suscribiéndose a mensajes en tiempo real para lista de conversaciones...');
-    
+
     _channelMensajes = supabase
         .channel('mensajes_lista_conversaciones_$_conversacionId')
         .onPostgresChanges(
@@ -239,19 +343,18 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
             print('🔔 Nuevo mensaje recibido en lista de conversaciones!');
             final nuevoMensaje = payload.newRecord;
             final user = supabase.auth.currentUser;
-            
-            // Solo procesar si el mensaje NO es del repartidor
+
             if (nuevoMensaje['remitente_auth_id'] != user?.id) {
               final record = Map<String, dynamic>.from(nuevoMensaje);
               if (!RepartidorChatSoporteService.tieneContenidoVisible(record)) {
                 return;
               }
               final remitenteId = nuevoMensaje['remitente_auth_id'];
-              
+
               setState(() {
                 _nuevosMensajes[remitenteId] = true;
               });
-              
+
               await _actualizarConversacionConNuevoMensaje(remitenteId, record);
               _mostrarNotificacionNuevoMensaje(remitenteId);
             }
@@ -267,13 +370,14 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
             value: _conversacionId,
           ),
           callback: (payload) {
-            // Si se marca como leído, actualizar contador
-            _cargarConversaciones();
+            if (SyncService().isOnline) {
+              _cargarConversaciones();
+            }
           },
         )
         .subscribe((status, error) {
       print('📡 Estado de suscripción lista conversaciones: $status');
-      if (error != null) {
+      if (error != null && SyncService().isOnline) {
         print('❌ Error en suscripción: $error');
       }
       if (status == RealtimeSubscribeStatus.subscribed) {
@@ -287,7 +391,6 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
     Map<String, dynamic> nuevoMensaje,
   ) async {
     try {
-      // Obtener información del remitente si no la tenemos
       Map<String, dynamic>? remitenteData;
       final conversacionExistente = _conversaciones.firstWhere(
         (c) => c['remitente_auth_id'] == remitenteId,
@@ -295,43 +398,62 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
       );
 
       if (conversacionExistente.isEmpty) {
-        // Es un nuevo remitente, obtener sus datos
-        try {
-          final data = await supabase
-              .from('usuarios')
-              .select('nombre, rol, foto_perfil, email')
-              .eq('auth_id', remitenteId)
-              .maybeSingle();
-          
-          if (data != null) {
-            remitenteData = {
-              'remitente_auth_id': remitenteId,
-              'remitente_nombre': data['nombre'] ?? 'Usuario',
-              'remitente_rol': data['rol'] ?? 'EMPLEADO',
-              'remitente_foto': data['foto_perfil'],
-              'remitente_email': data['email'],
-            };
+        remitenteData =
+            await RepartidorPantallasOfflineService.cargarRemitenteChat(remitenteId);
+        if (remitenteData == null && SyncService().isOnline) {
+          try {
+            final data = await ejecutarConTimeout(
+              supabase
+                  .from('usuarios')
+                  .select('nombre, rol, foto_perfil, email')
+                  .eq('auth_id', remitenteId)
+                  .maybeSingle(),
+              timeout: const Duration(seconds: 6),
+            );
+
+            if (data != null) {
+              remitenteData = {
+                'remitente_auth_id': remitenteId,
+                'remitente_nombre': data['nombre'] ?? 'Usuario',
+                'remitente_rol': data['rol'] ?? 'EMPLEADO',
+                'remitente_foto': data['foto_perfil'],
+                'remitente_email': data['email'],
+              };
+              await RepartidorPantallasOfflineService.guardarRemitenteChat(
+                remitenteId,
+                nombre: data['nombre']?.toString() ?? 'Usuario',
+                rol: data['rol']?.toString() ?? 'EMPLEADO',
+                foto: data['foto_perfil']?.toString(),
+                email: data['email']?.toString(),
+              );
+            }
+          } catch (e) {
+            print('⚠️ Error obteniendo datos del remitente: $e');
           }
-        } catch (e) {
-          print('⚠️ Error obteniendo datos del remitente: $e');
+        } else if (remitenteData != null) {
+          remitenteData = {
+            'remitente_auth_id': remitenteId,
+            'remitente_nombre': remitenteData['nombre'] ?? 'Usuario',
+            'remitente_rol': remitenteData['rol'] ?? 'EMPLEADO',
+            'remitente_foto': remitenteData['foto_perfil'],
+            'remitente_email': remitenteData['email'],
+          };
         }
       }
 
       setState(() {
-        // Buscar si ya existe la conversación
         final index = _conversaciones.indexWhere(
           (c) => c['remitente_auth_id'] == remitenteId,
         );
 
         if (index != -1) {
-          // Actualizar conversación existente
           _conversaciones[index]['ultimo_mensaje'] =
               RepartidorChatSoporteService.textoPreview(nuevoMensaje);
-          _conversaciones[index]['ultimo_mensaje_fecha'] = nuevoMensaje['created_at'];
-          _conversaciones[index]['mensajes_no_leidos'] = 
+          _conversaciones[index]['ultimo_mensaje_fecha'] =
+              nuevoMensaje['created_at'];
+          _conversaciones[index]['mensajes_no_leidos'] =
               (_conversaciones[index]['mensajes_no_leidos'] as int? ?? 0) + 1;
         } else if (remitenteData != null) {
-          // Agregar nueva conversación
           _conversaciones.insert(0, {
             ...remitenteData,
             'ultimo_mensaje':
@@ -342,37 +464,43 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
           });
         }
 
-        // Reordenar por fecha (más reciente primero)
         _conversaciones.sort((a, b) {
           final fechaA = DateTime.parse(a['ultimo_mensaje_fecha']);
           final fechaB = DateTime.parse(b['ultimo_mensaje_fecha']);
           return fechaB.compareTo(fechaA);
         });
       });
+
+      final user = supabase.auth.currentUser;
+      if (user != null) {
+        await RepartidorPantallasOfflineService.guardarConversacionesChat(
+          user.id,
+          _conversaciones,
+        );
+      }
     } catch (e) {
       print('❌ Error actualizando conversación: $e');
-      // Recargar todas las conversaciones como fallback
-      _cargarConversaciones();
+      if (SyncService().isOnline) {
+        _cargarConversaciones();
+      }
     }
   }
 
   void _mostrarNotificacionNuevoMensaje(String remitenteId) {
-    // Buscar el nombre del remitente
     final conversacion = _conversaciones.firstWhere(
       (c) => c['remitente_auth_id'] == remitenteId,
       orElse: () => {'remitente_nombre': 'Alguien', 'remitente_rol': 'EMPLEADO'},
     );
-    
+
     final nombreRemitente = conversacion['remitente_rol'] == 'ADMINISTRADOR'
         ? 'Administrador'
         : conversacion['remitente_nombre'] ?? 'Alguien';
-    
-    // Mostrar snackbar con notificación
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
           children: [
-            Icon(
+            const Icon(
               Icons.chat_bubble,
               color: Colors.white,
               size: 20,
@@ -442,9 +570,11 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      const Text(
-                        'Cuando recibas mensajes de soporte,\naparecerán aquí',
-                        style: TextStyle(
+                      Text(
+                        SyncService().isOnline
+                            ? 'Cuando recibas mensajes de soporte,\naparecerán aquí'
+                            : 'Sin conexión: abre el chat con internet al menos una vez\npara guardar conversaciones en el teléfono.',
+                        style: const TextStyle(
                           fontSize: 14,
                           color: AppColors.textoSecundario,
                         ),
@@ -457,15 +587,46 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                   onRefresh: _cargarConversaciones,
                   child: ListView.builder(
                     padding: const EdgeInsets.all(16),
-                    itemCount: _conversaciones.length,
+                    itemCount: _conversaciones.length +
+                        (SyncService().isOnline ? 0 : 1),
                     itemBuilder: (context, index) {
-                      final conversacion = _conversaciones[index];
+                      if (!SyncService().isOnline && index == 0) {
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF3E0),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFFF9800)),
+                          ),
+                          child: const Row(
+                            children: [
+                              Icon(Icons.wifi_off, color: Color(0xFFFF9800), size: 20),
+                              SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  'Modo sin conexión: conversaciones y mensajes guardados en el dispositivo. Los envíos nuevos se sincronizan al reconectar.',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFF2C2C2C),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+                      final convIndex =
+                          SyncService().isOnline ? index : index - 1;
+                      final conversacion = _conversaciones[convIndex];
                       final esAdmin = conversacion['remitente_rol'] == 'ADMINISTRADOR';
                       final esEmpleado = conversacion['remitente_rol'] == 'EMPLEADO';
-                      final mensajesNoLeidos = conversacion['mensajes_no_leidos'] as int? ?? 0;
-                      
-                      final tieneNuevoMensaje = _nuevosMensajes[conversacion['remitente_auth_id']] == true;
-                      
+                      final mensajesNoLeidos =
+                          conversacion['mensajes_no_leidos'] as int? ?? 0;
+
+                      final tieneNuevoMensaje =
+                          _nuevosMensajes[conversacion['remitente_auth_id']] == true;
+
                       return Card(
                         margin: const EdgeInsets.only(bottom: 12),
                         elevation: tieneNuevoMensaje ? 4 : 2,
@@ -483,12 +644,10 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                             : Colors.white,
                         child: InkWell(
                           onTap: () {
-                            // Limpiar indicador de nuevo mensaje
                             setState(() {
                               _nuevosMensajes.remove(conversacion['remitente_auth_id']);
                             });
-                            
-                            // Navegar a la pantalla de chat con filtro por remitente
+
                             Navigator.push(
                               context,
                               MaterialPageRoute(
@@ -501,7 +660,6 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                                 ),
                               ),
                             ).then((_) {
-                              // Recargar conversaciones al volver para actualizar contadores
                               _cargarConversaciones();
                             });
                           },
@@ -510,7 +668,6 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                             padding: const EdgeInsets.all(16),
                             child: Row(
                               children: [
-                                // Avatar
                                 Stack(
                                   clipBehavior: Clip.none,
                                   children: [
@@ -522,11 +679,15 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                                               ? const Color(0xFFFF9800)
                                               : AppColors.primary,
                                       backgroundImage: conversacion['remitente_foto'] != null &&
-                                              conversacion['remitente_foto'].toString().isNotEmpty
+                                              conversacion['remitente_foto']
+                                                  .toString()
+                                                  .isNotEmpty
                                           ? NetworkImage(conversacion['remitente_foto'])
                                           : null,
                                       child: conversacion['remitente_foto'] == null ||
-                                              conversacion['remitente_foto'].toString().isEmpty
+                                              conversacion['remitente_foto']
+                                                  .toString()
+                                                  .isEmpty
                                           ? Icon(
                                               esAdmin
                                                   ? Icons.admin_panel_settings
@@ -553,8 +714,8 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                                           ),
                                         ),
                                       ),
-                                    // Indicador de nuevo mensaje (punto naranja)
-                                    if (_nuevosMensajes[conversacion['remitente_auth_id']] == true)
+                                    if (_nuevosMensajes[conversacion['remitente_auth_id']] ==
+                                        true)
                                       Positioned(
                                         right: -2,
                                         top: -2,
@@ -586,7 +747,6 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                                   ],
                                 ),
                                 const SizedBox(width: 16),
-                                // Información
                                 Expanded(
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -620,7 +780,9 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                                                 borderRadius: BorderRadius.circular(12),
                                               ),
                                               child: Text(
-                                                mensajesNoLeidos > 99 ? '99+' : '$mensajesNoLeidos',
+                                                mensajesNoLeidos > 99
+                                                    ? '99+'
+                                                    : '$mensajesNoLeidos',
                                                 style: const TextStyle(
                                                   color: Colors.white,
                                                   fontSize: 12,
@@ -692,4 +854,3 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
     }
   }
 }
-

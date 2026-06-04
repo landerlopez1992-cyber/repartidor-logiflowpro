@@ -76,40 +76,40 @@ class SyncService {
     print('📡 Operaciones pendientes: ${_pendingOperations.length}');
     print('📡 Sincronización en progreso: $_isSyncing');
     
-    // Si volvió la conexión, verificar conexión REAL a Supabase e intentar sincronizar
-    if (_isOnline && _pendingOperations.isNotEmpty && !_isSyncing) {
+    if (_isOnline && !_isSyncing) {
       print('🔄 Conexión restaurada - Verificando conexión a Supabase...');
-      print('📊 Operaciones pendientes a sincronizar:');
-      for (var i = 0; i < _pendingOperations.length; i++) {
-        final op = _pendingOperations[i];
-        print('   ${i + 1}. Tipo: ${op['type']}, Orden: ${op['orden_id']}, Reintentos: ${op['retries'] ?? 0}');
+      if (_pendingOperations.isNotEmpty) {
+        print('📊 Operaciones pendientes a sincronizar:');
+        for (var i = 0; i < _pendingOperations.length; i++) {
+          final op = _pendingOperations[i];
+          print(
+            '   ${i + 1}. Tipo: ${op['type']}, Orden: ${op['orden_id']}, Reintentos: ${op['retries'] ?? 0}',
+          );
+        }
       }
-      
-      // Cancelar timer de reintentos anterior
+
       _cancelRetryTimer();
-      _retryAttempts = 0; // Resetear contador
-      
-      // Esperar un momento para que la conexión se estabilice
+      _retryAttempts = 0;
+
       print('⏱️ Esperando 2 segundos para que la conexión se estabilice...');
       await Future.delayed(const Duration(seconds: 2));
-      
-      // Verificar conexión real a Supabase
+
       final hasRealConnection = await _verifySupabaseConnection();
-      
+
       if (hasRealConnection) {
-        print('✅ Conexión a Supabase verificada - Iniciando sincronización automática...');
-        syncPendingOperations();
+        print('✅ Conexión a Supabase verificada - Sincronizando colas...');
+        await RepartidorPantallasOfflineService.sincronizarMensajesSoporte();
+        if (_pendingOperations.isNotEmpty) {
+          await syncPendingOperations();
+        }
       } else {
         print('⚠️ No hay conexión real a Supabase - Iniciando reintentos automáticos...');
-        _startRetryTimer(); // Usar el nuevo sistema de reintentos
+        _startRetryTimer();
       }
     } else {
       if (!_isOnline) {
         print('📴 Sin conexión - No se puede sincronizar');
-        _cancelRetryTimer(); // Cancelar reintentos si no hay conexión
-      } else if (_pendingOperations.isEmpty) {
-        print('✅ No hay operaciones pendientes para sincronizar');
-        _cancelRetryTimer(); // Cancelar reintentos si no hay operaciones
+        _cancelRetryTimer();
       } else if (_isSyncing) {
         print('⚠️ Ya hay una sincronización en progreso');
       }
@@ -266,6 +266,28 @@ class SyncService {
     }
     print('📝 ========================================');
     print('');
+  }
+
+  /// Indica si hay una operación pendiente de un tipo para una orden.
+  bool hasPendingOperation(String type, String ordenId) {
+    return _pendingOperations.any(
+      (op) => op['type'] == type && op['orden_id']?.toString() == ordenId,
+    );
+  }
+
+  /// Elimina operaciones en cola de un tipo y orden (p. ej. quitar foto antes de entregar).
+  Future<void> removePendingOperationsForOrden({
+    required String type,
+    required String ordenId,
+  }) async {
+    final antes = _pendingOperations.length;
+    _pendingOperations.removeWhere(
+      (op) => op['type'] == type && op['orden_id'] == ordenId,
+    );
+    if (_pendingOperations.length != antes) {
+      await _savePendingOperations();
+      print('🗑️ Cola sync: eliminadas operaciones $type para orden $ordenId');
+    }
   }
   
   /// Iniciar timer de reintentos para sincronización
@@ -476,14 +498,16 @@ class SyncService {
         switch (t) {
           case 'upload_photo':
             return 0;
-          case 'upload_firma':
+          case 'delete_foto_entrega':
             return 1;
-          case 'update_orden_estado':
+          case 'upload_firma':
             return 2;
-          case 'mark_delivered':
+          case 'update_orden_estado':
             return 3;
-          default:
+          case 'mark_delivered':
             return 4;
+          default:
+            return 5;
         }
       }
       return prio(a['type']?.toString() ?? '').compareTo(prio(b['type']?.toString() ?? ''));
@@ -661,6 +685,15 @@ class SyncService {
             }
           }
           
+          return true;
+
+        case 'delete_foto_entrega':
+          if (!_isOnline) return false;
+          await supabase
+              .from('ordenes')
+              .update({'foto_entrega': null})
+              .eq('id', ordenId);
+          print('✅ Foto de entrega eliminada en BD para orden $ordenId');
           return true;
           
         case 'upload_firma':

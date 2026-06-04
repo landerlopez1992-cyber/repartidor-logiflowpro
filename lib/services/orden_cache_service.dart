@@ -9,6 +9,9 @@ class OrdenCacheService {
   static const String _cacheKey = 'cached_orders';
   static const String _lastSyncKey = 'last_sync_timestamp';
 
+  static bool _urlTieneFoto(String? url) =>
+      url != null && url.trim().isNotEmpty;
+
   /// Guardar órdenes en caché local
   /// ✅ FIX CRÍTICO: Asegurar que TODOS los datos se guarden correctamente
   /// 🔒 OFFLINE-FIRST: NO sobrescribir órdenes con cambios de estado locales hasta que se sincronicen
@@ -61,6 +64,7 @@ class OrdenCacheService {
         final ordenesConCambiosPendientes = <String>{};
         final ordenesConFirmaPendiente = <String>{};
         final ordenesConFotoPendiente = <String>{};
+        final ordenesConFotoEliminadaPendiente = <String>{};
         for (var op in pendingOps) {
           if (op['type'] == 'update_orden_estado' || op['type'] == 'mark_delivered') {
             final ordenId = op['orden_id'] as String? ?? op['orden_id']?.toString();
@@ -76,6 +80,11 @@ class OrdenCacheService {
             final ordenId = op['orden_id'] as String? ?? op['orden_id']?.toString();
             if (ordenId != null) {
               ordenesConFotoPendiente.add(ordenId);
+            }
+          } else if (op['type'] == 'delete_foto_entrega') {
+            final ordenId = op['orden_id'] as String? ?? op['orden_id']?.toString();
+            if (ordenId != null) {
+              ordenesConFotoEliminadaPendiente.add(ordenId);
             }
           }
         }
@@ -141,14 +150,21 @@ class OrdenCacheService {
               ordenLocal.fotoEntrega!.startsWith('local://');
           final preservarFirma = tieneFirmaLocal && ordenesConFirmaPendiente.contains(ordenSupabase.id);
           final preservarFoto = tieneFotoLocal && ordenesConFotoPendiente.contains(ordenSupabase.id);
+          final quitarFoto = ordenesConFotoEliminadaPendiente.contains(ordenSupabase.id) ||
+              (ordenLocal != null &&
+                  !_urlTieneFoto(ordenLocal.fotoEntrega) &&
+                  _urlTieneFoto(ordenSupabase.fotoEntrega));
           
-          if (preservarFirma || preservarFoto) {
+          if (preservarFirma || preservarFoto || quitarFoto) {
             final ordenJson = ordenSupabase.toJson();
-            if (preservarFirma) {
+            if (preservarFirma && ordenLocal != null) {
               ordenJson['firma_url'] = ordenLocal.firmaUrl;
             }
-            if (preservarFoto) {
+            if (preservarFoto && ordenLocal != null) {
               ordenJson['foto_entrega'] = ordenLocal.fotoEntrega;
+            }
+            if (quitarFoto && !preservarFoto) {
+              ordenJson['foto_entrega'] = null;
             }
             final ordenFusionada = Orden.fromJson(ordenJson);
             print('🔒 Preservando firma/foto local para orden #${ordenFusionada.numeroOrden}');

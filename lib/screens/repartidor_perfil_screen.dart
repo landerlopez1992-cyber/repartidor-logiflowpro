@@ -14,6 +14,7 @@ import '../services/repartidor_perfil_cache_service.dart';
 import '../services/sesion_offline_cleanup.dart';
 import '../services/auth_error_handler.dart';
 import '../services/repartidor_notificaciones_push_service.dart';
+import '../services/repartidor_saldo_service.dart';
 
 class RepartidorPerfilScreen extends StatefulWidget {
   const RepartidorPerfilScreen({super.key});
@@ -1599,9 +1600,11 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   }
 
   Future<void> _mostrarModalSolicitarPago() async {
-    final montoController = TextEditingController();
+    final montoController = TextEditingController(
+      text: _saldo > 0 ? _saldo.toStringAsFixed(2) : '',
+    );
     final kilometrosController = TextEditingController();
-    String monedaSeleccionada = 'CUP';
+    String monedaSeleccionada = _monedaSaldo;
     
     // Obtener órdenes entregadas NO pagadas en tiempo real
     List<Map<String, dynamic>> ordenesEntregadas = [];
@@ -1736,6 +1739,31 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE8F5E9),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF4CAF50)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.account_balance_wallet, color: Color(0xFF4CAF50), size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Saldo disponible: \$${_saldo.toStringAsFixed(2)} $_monedaSaldo',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF2E7D32),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -1993,11 +2021,21 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                 final monto = double.tryParse(montoController.text.trim());
                 final kilometros = double.tryParse(kilometrosController.text.trim());
                 
-                // Validar monto
                 if (monto == null || monto <= 0) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('Por favor ingresa un monto válido'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+                if (monto > _saldo + 0.001) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'El monto no puede superar tu saldo (\$${_saldo.toStringAsFixed(2)} $_monedaSaldo)',
+                      ),
                       backgroundColor: Colors.red,
                     ),
                   );
@@ -2179,9 +2217,46 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         'kilometros_recorridos': kilometros, // Kilómetros son obligatorios
       };
 
-      await supabase.from('solicitudes_pago_repartidores').insert(insertData);
+      if (monto > _saldo + 0.001) {
+        _mostrarMensaje(
+          'El monto no puede ser mayor que tu saldo (\$${_saldo.toStringAsFixed(2)} $_monedaSaldo)',
+          Colors.red,
+        );
+        return;
+      }
+
+      final rpc = await supabase.rpc(
+        'repartidor_crear_solicitud_pago',
+        params: {
+          'p_repartidor_id': _repartidorId,
+          'p_monto': monto,
+          'p_moneda': moneda,
+          'p_total_ordenes': ordenesIds.length,
+          'p_ordenes_incluidas': ordenesIds,
+          'p_kilometros_recorridos': kilometros,
+          'p_repartidor_nombre': nombreRepartidor,
+          'p_tenant_id': _tenantId,
+        },
+      );
+
+      final map = rpc is Map ? Map<String, dynamic>.from(rpc) : <String, dynamic>{};
+      if (map['ok'] != true) {
+        final err = map['error']?.toString() ?? 'error';
+        if (err == 'saldo_insuficiente') {
+          final disp = map['saldo'];
+          final s = disp is num ? disp.toDouble() : _saldo;
+          _mostrarMensaje(
+            'Saldo insuficiente. Disponible: \$${s.toStringAsFixed(2)} $moneda',
+            Colors.red,
+          );
+        } else {
+          _mostrarMensaje('No se pudo crear la solicitud ($err)', Colors.red);
+        }
+        return;
+      }
 
       _mostrarMensaje('Solicitud de pago enviada correctamente por ${ordenesIds.length} órdenes', Colors.green);
+      await _cargarSaldo();
       await _cargarHistorialPagos();
       
       // No cerrar la pantalla, solo mostrar mensaje
@@ -2418,95 +2493,22 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     return '${fecha.day}/${fecha.month}/${fecha.year} ${fecha.hour.toString().padLeft(2, '0')}:${fecha.minute.toString().padLeft(2, '0')}';
   }
 
-  // Cargar saldo del repartidor (último pago aceptado, o 0 si hay solicitud pendiente)
   Future<void> _cargarSaldo() async {
     if (_repartidorId == null) {
-      print('⚠️ No se puede cargar saldo: repartidor_id es null');
-      // Intentar cargar desde caché
-      await _cargarSaldoDesdeCache();
-      return;
-    }
-
-    // Verificar conexión
-    final syncService = SyncService();
-    final isOnline = syncService.isOnline;
-
-    if (!isOnline) {
-      // Sin conexión, cargar desde caché
-      print('📴 Sin conexión - Cargando saldo desde caché');
       await _cargarSaldoDesdeCache();
       return;
     }
 
     try {
-      print('💰 Cargando saldo para repartidor: $_repartidorId');
-      
-      // 1) Si hay solicitud PENDIENTE -> saldo = 0
-      final solicitudPendiente = await supabase
-          .from('solicitudes_pago_repartidores')
-          .select('id, fecha_solicitud')
-          .eq('repartidor_id', _repartidorId!)
-          .eq('estado', 'PENDIENTE')
-          .order('fecha_solicitud', ascending: false)
-          .limit(1)
-          .maybeSingle();
-
-      if (solicitudPendiente != null) {
-        print('💰 Hay una solicitud PENDIENTE - Saldo: 0.00');
-        
-        // Guardar en caché
-        await RepartidorPerfilCacheService.cacheSaldo(0.0, 'CUP');
-        
-        if (mounted) {
-          setState(() {
-            _saldo = 0.0;
-            _monedaSaldo = 'CUP';
-          });
-        }
-        return;
-      }
-
-      // 2) Tomar el ÚLTIMO pago ACEPTADO (dinero_enviado=false)
-      final ultimoPagoAceptado = await supabase
-          .from('solicitudes_pago_repartidores')
-          .select('monto, moneda, fecha_aceptacion')
-          .eq('repartidor_id', _repartidorId!)
-          .eq('estado', 'ACEPTADO')
-          .eq('dinero_enviado', false)
-          .order('fecha_aceptacion', ascending: false)
-          .limit(1)
-          .maybeSingle();
-
-      if (ultimoPagoAceptado != null) {
-        final monto = (ultimoPagoAceptado['monto'] ?? 0.0).toDouble();
-        final moneda = ultimoPagoAceptado['moneda']?.toString() ?? 'CUP';
-        print('💰 Último pago aceptado: \$${monto.toStringAsFixed(2)} $moneda');
-        
-        // Guardar en caché
-        await RepartidorPerfilCacheService.cacheSaldo(monto, moneda);
-        
-        if (mounted) {
-          setState(() {
-            _saldo = monto;
-            _monedaSaldo = moneda;
-          });
-        }
-      } else {
-        print('💰 No hay pagos aceptados (no enviados) - Saldo: 0.00');
-        
-        // Guardar en caché
-        await RepartidorPerfilCacheService.cacheSaldo(0.0, 'CUP');
-        
-        if (mounted) {
-          setState(() {
-            _saldo = 0.0;
-            _monedaSaldo = 'CUP';
-          });
-        }
+      final r = await RepartidorSaldoService.cargarSaldo(_repartidorId!);
+      if (mounted) {
+        setState(() {
+          _saldo = r.saldo;
+          _monedaSaldo = r.moneda;
+        });
       }
     } catch (e) {
       print('❌ Error cargando saldo: $e');
-      // Intentar cargar desde caché si falla
       await _cargarSaldoDesdeCache();
     }
   }
@@ -2519,7 +2521,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
       print('💰 Suscribiéndose a cambios en solicitudes de pago para repartidor: $_repartidorId');
       
       _channelPagos = supabase
-          .channel('solicitudes_pago_repartidor_$_repartidorId')
+          .channel('saldo_repartidor_$_repartidorId')
           .onPostgresChanges(
             event: PostgresChangeEvent.all,
             schema: 'public',
@@ -2530,8 +2532,22 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
               value: _repartidorId!,
             ),
             callback: (payload) {
-              print('💰 Cambio detectado en solicitud de pago: ${payload.eventType}');
-              _cargarSaldo(); // Recargar saldo cuando hay cambios
+              print('💰 Cambio en solicitud de pago: ${payload.eventType}');
+              _cargarSaldo();
+            },
+          )
+          .onPostgresChanges(
+            event: PostgresChangeEvent.update,
+            schema: 'public',
+            table: 'usuarios',
+            filter: PostgresChangeFilter(
+              type: PostgresChangeFilterType.eq,
+              column: 'id',
+              value: _repartidorId!,
+            ),
+            callback: (payload) {
+              print('💰 Saldo actualizado en usuarios (entrega/acreditación)');
+              _cargarSaldo();
             },
           )
           .subscribe();
