@@ -8,9 +8,11 @@ import 'package:geocoding/geocoding.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/orden.dart';
 import '../services/paises_service.dart';
-import '../services/goodbarber_sync_service.dart';
+import '../services/orden_estado_sync_helper.dart';
 import '../main.dart';
 import 'detalle_orden_screen.dart';
+import '../config/app_colors.dart';
+import '../widgets/volonex_dialog.dart';
 
 /// Pantalla que muestra la ruta optimizada con todas las órdenes numeradas en el mapa
 /// Similar a Uber cuando tiene múltiples pedidos
@@ -157,24 +159,21 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
     final nombreEmpresa = _nombreEmpresa ?? 'la empresa';
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.info_outline, color: Color(0xFFFF9800), size: 24),
-            SizedBox(width: 8),
-            Text('Orden No Disponible'),
-          ],
-        ),
-        content: Text(
+      builder: (ctx) => VolonexDialog(
+        title: 'Orden No Disponible',
+        leading: const Icon(Icons.info_outline, color: AppColors.botonPrincipal, size: 24),
+        child: Text(
           'No se puede comenzar la entrega porque la orden aún no ha sido recibida desde la bodega.\n\n'
           'Por favor, espere a que las órdenes se envíen desde la bodega de $nombreEmpresa. '
           'Una vez recibida, podrá comenzar a repartirla.',
-          style: const TextStyle(fontSize: 14),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Entendido'),
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text(
+              'Entendido',
+              style: TextStyle(color: AppColors.botonPrincipal, fontWeight: FontWeight.w600),
+            ),
           ),
         ],
       ),
@@ -993,25 +992,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
   Future<void> _marcarOrdenComoEnReparto(Orden orden) async {
     try {
       print('🔄 Marcando orden #${orden.numeroOrden} como EN REPARTO...');
-      
-      // Actualizar en la base de datos
-      await supabase
-          .from('ordenes')
-          .update({'estado': 'EN REPARTO'})
-          .eq('id', orden.id);
-      
-      // Sincronizar con GoodBarber si la orden está vinculada
-      try {
-        await GoodBarberSyncService.sincronizarEstadoAGoodBarber(
-          supabase,
-          orden.id,
-          'EN REPARTO',
-        );
-      } catch (e) {
-        print('⚠️ Error sincronizando estado con GoodBarber: $e');
-      }
-      
-      // Actualizar en la lista local
+
       final ordenActualizada = Orden(
         id: orden.id,
         numeroOrden: orden.numeroOrden,
@@ -1057,7 +1038,13 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
         distanciaDesdeAnterior: orden.distanciaDesdeAnterior,
         tiempoEstimadoDesdeAnterior: orden.tiempoEstimadoDesdeAnterior,
       );
-      
+
+      await OrdenEstadoSyncHelper.persistirCambioEstado(
+        ordenId: orden.id,
+        ordenEnCache: ordenActualizada,
+        updateData: const {'estado': 'EN REPARTO'},
+      );
+
       // Actualizar en la lista
       final index = _ordenesActualizadas.indexWhere((o) => o.id == orden.id);
       if (index != -1) {
@@ -1296,102 +1283,62 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
     if (orden.estado == 'EN TRANSITO' || orden.estado == 'ATRASADO') {
       final resultado = await showDialog<String>(
         context: context,
-        builder: (context) => AlertDialog(
-          title: Row(
-            children: [
-              const Icon(Icons.navigation, color: Color(0xFF1976D2), size: 28),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Text(
-                  '¿Iniciar entrega?',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF2C2C2C),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          content: Column(
+        builder: (ctx) => VolonexDialog(
+          title: '¿Iniciar entrega?',
+          leading: const Icon(Icons.navigation, color: AppColors.info, size: 26),
+          child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 'Orden #${orden.numeroOrden}',
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF2C2C2C),
-                ),
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-              const SizedBox(height: 12),
-              const Text(
-                '¿Vas a iniciar la entrega de este pedido ahora?',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Color(0xFF666666),
-                ),
-              ),
+              const SizedBox(height: 10),
+              const Text('¿Vas a iniciar la entrega de este pedido ahora?'),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 'Si solo deseas ver la ubicación sin iniciar la entrega, selecciona "Solo ver ubicación".',
                 style: TextStyle(
                   fontSize: 12,
-                  color: Color(0xFF999999),
+                  color: AppColors.darkTextMuted,
                   fontStyle: FontStyle.italic,
                 ),
               ),
             ],
           ),
           actions: [
-            // Botones en Row horizontal (uno al lado del otro)
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Botón "Solo ver ubicación"
-                OutlinedButton(
-                  onPressed: () => Navigator.of(context).pop('solo_ver'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFF666666),
-                    side: const BorderSide(color: Color(0xFF666666)),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.location_on, size: 18),
-                      SizedBox(width: 8),
-                      Text('Solo ver ubicación'),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                // Botón "Sí, iniciar entrega"
-                Flexible(
-                  child: ElevatedButton(
-                  onPressed: () => Navigator.of(context).pop('iniciar'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4CAF50),
-                    foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.play_arrow, size: 18),
-                        SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            'Sí, iniciar entrega',
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                    ],
-                    ),
-                  ),
-                ),
-              ],
+            OutlinedButton(
+              onPressed: () => Navigator.of(ctx).pop('solo_ver'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.darkTextMuted,
+                side: const BorderSide(color: AppColors.darkBorder),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.location_on, size: 18),
+                  SizedBox(width: 6),
+                  Text('Solo ver ubicación'),
+                ],
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop('iniciar'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.exito,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.play_arrow, size: 18),
+                  SizedBox(width: 6),
+                  Text('Sí, iniciar entrega'),
+                ],
+              ),
             ),
           ],
         ),

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../config/app_colors.dart';
+import '../widgets/volonex_dialog.dart';
 
 /// Pantalla de carga que muestra progreso mientras se cargan datos reales
 /// Esta pantalla ejecuta tareas en segundo plano y muestra el progreso
@@ -121,14 +123,14 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
+      backgroundColor: AppColors.fondoGeneral,
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Color(0xFF37474F),
+              AppColors.header,
               Color(0xFF263238),
             ],
           ),
@@ -136,7 +138,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
         child: SafeArea(
           child: Center(
             child: Container(
-              constraints: const BoxConstraints(maxWidth: 500),
+              constraints: const BoxConstraints(maxWidth: AppLayout.formMaxWidth),
               padding: const EdgeInsets.all(32),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -148,7 +150,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
                       height: 120,
                       margin: const EdgeInsets.only(bottom: 32),
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: AppColors.cardFondo,
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
                           BoxShadow(
@@ -165,7 +167,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
                           fit: BoxFit.contain,
                           errorBuilder: (context, error, stackTrace) {
                             return Container(
-                              color: Colors.white,
+                              color: AppColors.cardFondo,
                               child: Center(
                                 child: Text(
                                   widget.empresaNombre?.isNotEmpty == true
@@ -174,7 +176,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
                                   style: const TextStyle(
                                     fontSize: 48,
                                     fontWeight: FontWeight.bold,
-                                    color: Color(0xFF37474F),
+                                    color: AppColors.header,
                                   ),
                                 ),
                               ),
@@ -189,7 +191,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
                       height: 120,
                       margin: const EdgeInsets.only(bottom: 32),
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: AppColors.cardFondo,
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
                           BoxShadow(
@@ -217,7 +219,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
                       height: 120,
                       margin: const EdgeInsets.only(bottom: 32),
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: AppColors.cardFondo,
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
                           BoxShadow(
@@ -237,7 +239,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
                               child: Icon(
                                 Icons.delivery_dining,
                                 size: 60,
-                                color: Color(0xFF37474F),
+                                color: AppColors.header,
                               ),
                             );
                           },
@@ -254,7 +256,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
                         style: const TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.bold,
-                          color: Colors.white,
+                          color: AppColors.cardFondo,
                         ),
                         textAlign: TextAlign.center,
                       ),
@@ -282,7 +284,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
                       value: _progress,
                       minHeight: 8,
                       backgroundColor: Colors.white.withValues(alpha: 0.2),
-                      valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF4CAF50)),
+                      valueColor: const AlwaysStoppedAnimation<Color>(AppColors.exito),
                     ),
                   ),
                   

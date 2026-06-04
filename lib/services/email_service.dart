@@ -6,6 +6,18 @@ import '../config/supabase_config.dart';
 import '../models/orden.dart';
 
 class EmailService {
+  /// En Repartidor las notificaciones de cambio de estado las envía el trigger
+  /// `enviar_email_cambio_estado` en Supabase (email + WhatsApp). Evita duplicados.
+  static const bool repartidorUsaTriggerBdParaEstados = true;
+
+  static bool _omitirNotificacionEstadoDesdeApp() {
+    if (repartidorUsaTriggerBdParaEstados) {
+      print('📧 Notificación desde app omitida (trigger BD al guardar estado)');
+      return true;
+    }
+    return false;
+  }
+
   // URL de la Edge Function de Supabase
   static String get _edgeFunctionUrl {
     return '${SupabaseConfig.supabaseUrl}/functions/v1/send-order-email';
@@ -28,6 +40,7 @@ class EmailService {
 
   // Enviar email cuando la orden cambia a "EN TRÁNSITO"
   static Future<bool> enviarEmailOrdenEnTransito(Orden orden, String emailEmisor, {String? tenantId}) async {
+    if (_omitirNotificacionEstadoDesdeApp()) return true;
     try {
       print('📧 ===== ENVIAR EMAIL EN TRANSITO =====');
       print('📧 Estado de la orden recibida: ${orden.estado}');
@@ -54,6 +67,7 @@ class EmailService {
 
   // Enviar email cuando la orden cambia a "EN REPARTO"
   static Future<bool> enviarEmailOrdenEnReparto(Orden orden, String emailEmisor, {String? tenantId}) async {
+    if (_omitirNotificacionEstadoDesdeApp()) return true;
     try {
       return await _llamarEdgeFunction(
         email: emailEmisor,
@@ -69,6 +83,7 @@ class EmailService {
 
   // Enviar email cuando la orden cambia a "ENTREGADA"
   static Future<bool> enviarEmailOrdenEntregada(Orden orden, String emailEmisor, {String? tenantId}) async {
+    if (_omitirNotificacionEstadoDesdeApp()) return true;
     try {
       // ✅ FIX: Si es una remesa, usar send-remesa-email en lugar de send-order-email
       if (orden.tieneRemesa == true) {
@@ -105,6 +120,7 @@ class EmailService {
 
   // Enviar email cuando la orden cambia a "LISTO PARA RECOGER"
   static Future<bool> enviarEmailOrdenListaParaRecoger(Orden orden, String emailEmisor, {String? tenantId}) async {
+    if (_omitirNotificacionEstadoDesdeApp()) return true;
     try {
       print('📧 ===== ENVIAR EMAIL ORDEN LISTA PARA RECOGER =====');
       print('📧 Estado de la orden recibida: ${orden.estado}');

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../main.dart';
+import '../config/app_colors.dart';
+import '../widgets/volonex_dialog.dart';
 
 class HistorialPagosCompletoScreen extends StatefulWidget {
   final String repartidorId;
@@ -68,9 +70,9 @@ class _HistorialPagosCompletoScreenState extends State<HistorialPagosCompletoScr
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
+      backgroundColor: AppColors.fondoGeneral,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF37474F),
+        backgroundColor: AppColors.header,
         title: const Text(
           'Historial de Pagos',
           style: TextStyle(
@@ -90,14 +92,14 @@ class _HistorialPagosCompletoScreenState extends State<HistorialPagosCompletoScr
                       Icon(
                         Icons.payment_outlined,
                         size: 64,
-                        color: Colors.grey[400],
+                        color: AppColors.darkTextMuted,
                       ),
                       const SizedBox(height: 16),
                       Text(
                         'No hay pagos en el último mes',
                         style: TextStyle(
                           fontSize: 16,
-                          color: Colors.grey[600],
+                          color: AppColors.textoSecundario,
                         ),
                       ),
                     ],
@@ -107,7 +109,7 @@ class _HistorialPagosCompletoScreenState extends State<HistorialPagosCompletoScr
                   onRefresh: _cargarHistorial,
                   child: Center(
                     child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 800),
+                      constraints: const BoxConstraints(maxWidth: AppLayout.cardMaxWidth),
                       child: ListView.builder(
                         padding: const EdgeInsets.all(16),
                         itemCount: _historialPagos.length,

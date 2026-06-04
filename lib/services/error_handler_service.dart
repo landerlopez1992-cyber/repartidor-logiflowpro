@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
+import '../config/app_colors.dart';
+import '../widgets/volonex_dialog.dart';
 
-/// Servicio para manejar errores y mostrar modales informativos
+/// Servicio para manejar errores y mostrar modales informativos (estilo VolonexPro+).
 class ErrorHandlerService {
   static final ErrorHandlerService _instance = ErrorHandlerService._internal();
   factory ErrorHandlerService() => _instance;
   ErrorHandlerService._internal();
 
-  /// Mostrar modal de error
   static Future<void> showErrorModal(
     BuildContext context,
     String titulo,
@@ -19,107 +20,66 @@ class ErrorHandlerService {
     return showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFFFFFFFF),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        title: Row(
+      builder: (ctx) => VolonexDialog(
+        title: titulo,
+        leading: const Icon(Icons.error_outline, color: AppColors.error, size: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFDC2626).withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(
-                Icons.error_outline,
-                color: Color(0xFFDC2626),
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                titulo,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF2C2C2C),
+            Text(mensaje),
+            if (detalleTecnico != null && detalleTecnico.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppColors.darkElevated,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.darkBorder),
                 ),
-              ),
-            ),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                mensaje,
-                style: const TextStyle(
-                  fontSize: 15,
-                  color: Color(0xFF2C2C2C),
-                  height: 1.5,
-                ),
-              ),
-              if (detalleTecnico != null && detalleTecnico.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF5F5F5),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFFE0E0E0)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Row(
-                        children: [
-                          Icon(Icons.bug_report, size: 16, color: Color(0xFF666666)),
-                          SizedBox(width: 8),
-                          Text(
-                            'Detalle técnico:',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF666666),
-                            ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.bug_report, size: 14, color: AppColors.darkTextMuted),
+                        SizedBox(width: 6),
+                        Text(
+                          'Detalle técnico',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.darkTextMuted,
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        detalleTecnico,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Color(0xFF666666),
-                          fontFamily: 'monospace',
                         ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    SelectableText(
+                      detalleTecnico,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.darkTextMuted,
+                        fontFamily: 'monospace',
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ],
-          ),
+          ],
         ),
         actions: [
           ElevatedButton(
             onPressed: () {
-              Navigator.of(context).pop();
+              Navigator.of(ctx).pop();
               onAceptar?.call();
             },
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFDC2626),
+              backgroundColor: AppColors.error,
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
             ),
             child: const Text('Aceptar'),
           ),
@@ -128,7 +88,6 @@ class ErrorHandlerService {
     );
   }
 
-  /// Mostrar modal de advertencia
   static Future<void> showWarningModal(
     BuildContext context,
     String titulo,
@@ -141,71 +100,28 @@ class ErrorHandlerService {
     return showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFFFFFFFF),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFF9800).withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(
-                Icons.warning_amber_rounded,
-                color: Color(0xFFFF9800),
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                titulo,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF2C2C2C),
-                ),
-              ),
-            ),
-          ],
-        ),
-        content: Text(
-          mensaje,
-          style: const TextStyle(
-            fontSize: 15,
-            color: Color(0xFF2C2C2C),
-            height: 1.5,
-          ),
-        ),
+      builder: (ctx) => VolonexDialog(
+        title: titulo,
+        leading: const Icon(Icons.warning_amber_rounded, color: AppColors.botonPrincipal, size: 24),
+        child: Text(mensaje),
         actions: [
           if (onCancelar != null)
             TextButton(
               onPressed: () {
-                Navigator.of(context).pop();
+                Navigator.of(ctx).pop();
                 onCancelar();
               },
-              style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFF666666),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              ),
-              child: const Text('Cancelar'),
+              child: const Text('Cancelar', style: TextStyle(color: AppColors.darkTextMuted)),
             ),
           ElevatedButton(
             onPressed: () {
-              Navigator.of(context).pop();
+              Navigator.of(ctx).pop();
               onAceptar?.call();
             },
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFF9800),
+              backgroundColor: AppColors.botonPrincipal,
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
             ),
             child: const Text('Aceptar'),
           ),
@@ -214,7 +130,6 @@ class ErrorHandlerService {
     );
   }
 
-  /// Mostrar modal de éxito
   static Future<void> showSuccessModal(
     BuildContext context,
     String titulo,
@@ -226,59 +141,20 @@ class ErrorHandlerService {
     return showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFFFFFFFF),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFF4CAF50).withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(
-                Icons.check_circle_outline,
-                color: Color(0xFF4CAF50),
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                titulo,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF2C2C2C),
-                ),
-              ),
-            ),
-          ],
-        ),
-        content: Text(
-          mensaje,
-          style: const TextStyle(
-            fontSize: 15,
-            color: Color(0xFF2C2C2C),
-            height: 1.5,
-          ),
-        ),
+      builder: (ctx) => VolonexDialog(
+        title: titulo,
+        leading: const Icon(Icons.check_circle_outline, color: AppColors.exito, size: 24),
+        child: Text(mensaje),
         actions: [
           ElevatedButton(
             onPressed: () {
-              Navigator.of(context).pop();
+              Navigator.of(ctx).pop();
               onAceptar?.call();
             },
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4CAF50),
+              backgroundColor: AppColors.exito,
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
             ),
             child: const Text('Aceptar'),
           ),
@@ -301,28 +177,29 @@ class ErrorHandlerService {
     String mensaje = mensajePersonalizado ?? 'Ha ocurrido un error inesperado';
     String? detalleTecnico;
 
-    // Determinar tipo de error y mensaje apropiado
     final errorString = error.toString();
-    
-    if (errorString.contains('SocketException') || 
+
+    if (errorString.contains('SocketException') ||
         errorString.contains('network') ||
         errorString.contains('connection')) {
       tituloFinal = 'Error de Conexión';
-      mensaje = 'No hay conexión a internet. Los datos se guardaron localmente y se sincronizarán cuando haya conexión.';
-      detalleTecnico = null; // No mostrar detalle técnico de errores de red
+      mensaje =
+          'No hay conexión a internet. Los datos se guardaron localmente y se sincronizarán cuando haya conexión.';
+      detalleTecnico = null;
     } else if (errorString.contains('timeout')) {
       tituloFinal = 'Tiempo de Espera Agotado';
-      mensaje = 'La operación tardó demasiado. Los datos se guardaron localmente y se sincronizarán más tarde.';
+      mensaje =
+          'La operación tardó demasiado. Los datos se guardaron localmente y se sincronizarán más tarde.';
     } else if (errorString.contains('permission') || errorString.contains('Permission')) {
       tituloFinal = 'Permiso Denegado';
       mensaje = 'No se tiene permiso para realizar esta operación.';
       detalleTecnico = errorString;
     } else if (errorString.contains('storage') || errorString.contains('Storage')) {
       tituloFinal = 'Error de Almacenamiento';
-      mensaje = 'No se pudo guardar en el almacenamiento local. Verifica que haya espacio disponible.';
+      mensaje =
+          'No se pudo guardar en el almacenamiento local. Verifica que haya espacio disponible.';
       detalleTecnico = errorString;
     } else {
-      // Error genérico
       detalleTecnico = errorString;
     }
 

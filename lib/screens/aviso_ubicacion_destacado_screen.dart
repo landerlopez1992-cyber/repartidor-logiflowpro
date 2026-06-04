@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:geolocator/geolocator.dart';
+import '../config/app_colors.dart';
+import '../widgets/volonex_dialog.dart';
 
 /// Pantalla de aviso destacado para permiso de ubicación
 /// REQUERIDO por Google Play: Debe mostrarse ANTES de solicitar cualquier permiso del sistema
@@ -29,7 +31,7 @@ class _AvisoUbicacionDestacadoScreenState extends State<AvisoUbicacionDestacadoS
         return false; // Bloquear el botón de atrás
       },
       child: Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.cardFondo,
         body: SafeArea(
           child: SingleChildScrollView(
           padding: const EdgeInsets.all(20.0),
@@ -178,9 +180,7 @@ class _AvisoUbicacionDestacadoScreenState extends State<AvisoUbicacionDestacadoS
               ),
               const SizedBox(height: 24),
               
-              // Botón de continuar (único botón - obligatorio)
-              SizedBox(
-                width: double.infinity,
+              Center(
                 child: ElevatedButton(
                   onPressed: _solicitandoPermisos ? null : () async {
                     setState(() {
@@ -286,9 +286,9 @@ class _AvisoUbicacionDestacadoScreenState extends State<AvisoUbicacionDestacadoS
                     }
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4CAF50),
+                    backgroundColor: AppColors.exito,
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),

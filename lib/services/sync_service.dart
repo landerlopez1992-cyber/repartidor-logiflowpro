@@ -5,7 +5,9 @@ import 'dart:typed_data';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../main.dart';
+import 'goodbarber_sync_service.dart';
 import 'offline_storage_service.dart';
+import 'ubicacion_offline_service.dart';
 // (imports limpiados por lints)
 
 /// Servicio de sincronización offline/online
@@ -446,7 +448,8 @@ class SyncService {
     
     print('✅ Conexión a Supabase verificada - Procediendo con sincronización');
     
-    // Primero sincronizar fotos y firmas desde archivos locales
+    // GPS pendiente y luego fotos/firmas antes de estados de orden
+    await UbicacionOfflineService.sincronizarPendientes();
     await syncPendingPhotosAndSignatures();
     
     if (_pendingOperations.isEmpty) {
@@ -466,6 +469,23 @@ class SyncService {
     print('🔄 Operaciones pendientes: ${_pendingOperations.length}');
     
     final operationsToSync = List<Map<String, dynamic>>.from(_pendingOperations);
+    operationsToSync.sort((a, b) {
+      int prio(String t) {
+        switch (t) {
+          case 'upload_photo':
+            return 0;
+          case 'upload_firma':
+            return 1;
+          case 'update_orden_estado':
+            return 2;
+          case 'mark_delivered':
+            return 3;
+          default:
+            return 4;
+        }
+      }
+      return prio(a['type']?.toString() ?? '').compareTo(prio(b['type']?.toString() ?? ''));
+    });
     final successfulOperations = <String>[];
     final failedOperations = <Map<String, dynamic>>[];
     
@@ -488,12 +508,14 @@ class SyncService {
           // Incrementar contador de reintentos
           operation['retries'] = (operation['retries'] ?? 0) + 1;
           
-          // Si ha fallado más de 3 veces, descartar
+          // Mantener en cola: nunca descartar cambios de reparto (se reintenta al reconectar)
+          failedOperations.add(operation);
           if (operation['retries'] >= 3) {
-            print('❌ Operación descartada después de 3 intentos: ${operation['type']} para orden ${operation['orden_id']}');
-            successfulOperations.add(operation['id']); // Marcar como "procesada" para eliminarla
+            print(
+              '❌ Operación sigue en cola tras ${operation['retries']} intentos: '
+              '${operation['type']} orden ${operation['orden_id']}',
+            );
           } else {
-            failedOperations.add(operation);
             print('⚠️ Operación falló - Se reintentará (${operation['retries']}/3)');
           }
         }
@@ -502,13 +524,12 @@ class SyncService {
         
         operation['retries'] = (operation['retries'] ?? 0) + 1;
         
-        if (operation['retries'] < 3) {
-          failedOperations.add(operation);
-          print('⚠️ Se reintentará más tarde (${operation['retries']}/3)');
-        } else {
-          print('❌ Operación descartada después de 3 intentos fallidos');
-          successfulOperations.add(operation['id']);
-        }
+        failedOperations.add(operation);
+        print(
+          operation['retries'] >= 3
+              ? '❌ Operación permanece en cola tras ${operation['retries']} intentos'
+              : '⚠️ Se reintentará más tarde (${operation['retries']}/3)',
+        );
       }
     }
     
@@ -569,9 +590,7 @@ class SyncService {
               .update(data)
               .eq('id', ordenId);
           
-          // 🔒 NO actualizar el caché aquí - dejar que el flujo normal de recarga 
-          // lo maneje con la lógica de preservación de cambios locales
-          // que ahora está implementada en OrdenCacheService.cacheOrders()
+          await _syncGoodBarberSiAplica(ordenId, data);
           print('✅ Estado sincronizado exitosamente en Supabase para orden $ordenId');
           
           return true;
@@ -721,6 +740,7 @@ class SyncService {
           print('✅ Respuesta de Supabase: $response');
           print('✅ Orden $ordenId marcada como entregada en Supabase exitosamente');
           
+          await _syncGoodBarberSiAplica(ordenId, data);
           return true;
           
         default:
@@ -741,6 +761,20 @@ class SyncService {
       
       // Retornar false para reintentar
       return false;
+    }
+  }
+
+  Future<void> _syncGoodBarberSiAplica(String ordenId, Map<String, dynamic> data) async {
+    final est = data['estado']?.toString().trim();
+    if (est == null || est.isEmpty) return;
+    try {
+      await GoodBarberSyncService.sincronizarEstadoAGoodBarber(
+        supabase,
+        ordenId,
+        est,
+      );
+    } catch (e) {
+      print('⚠️ GoodBarber tras sync cola: $e');
     }
   }
 

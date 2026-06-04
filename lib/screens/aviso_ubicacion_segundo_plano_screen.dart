@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../config/app_colors.dart';
+import '../widgets/volonex_dialog.dart';
 
 /// Clase para mostrar el aviso de ubicación en segundo plano
 /// REQUERIDO por Google Play cuando se solicita ACCESS_BACKGROUND_LOCATION (permiso "Permitir todo el tiempo")
@@ -122,173 +124,90 @@ class _AvisoUbicacionSegundoPlanoDialogState extends State<AvisoUbicacionSegundo
         // El usuario debe presionar "Aceptar" o "Rechazar" para proceder
         return false; // Bloquear el botón de atrás
       },
-      child: AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
-        contentPadding: const EdgeInsets.all(24),
-        content: SingleChildScrollView(
+      child: VolonexDialog(
+        title: 'Permiso de Ubicación en Segundo Plano',
+        leading: const Icon(Icons.location_on, color: AppColors.exito, size: 26),
+        child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Icono
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF4CAF50).withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.location_on,
-                  size: 56,
-                  color: Color(0xFF4CAF50),
-                ),
-              ),
-              const SizedBox(height: 24),
-              
-              // Título
               const Text(
-                'Permiso de Ubicación en Segundo Plano',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF2C2C2C),
-                ),
+                'VolonexPro+ recopila datos de ubicación para habilitar el rastreo de entregas en tiempo real, incluso cuando la app está cerrada o no está en uso.',
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
-              
-              // Descripción principal - Formato recomendado por Google Play
-              const Text(
-                'VolonexPro+ recopila datos de ubicación para habilitar el rastreo de entregas en tiempo real, incluso cuando la app está cerrada o no está en uso.',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Color(0xFF666666),
-                  height: 1.5,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 20),
-              
-              // Información detallada
               Container(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF5F5F5),
+                  color: AppColors.darkElevated,
                   borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.darkBorder),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildInfoItem(
-                      Icons.check_circle,
-                      'Solo durante tu jornada laboral',
-                    ),
-                    const SizedBox(height: 12),
-                    _buildInfoItem(
-                      Icons.security,
-                      'Datos protegidos y cifrados',
-                    ),
-                    const SizedBox(height: 12),
-                    _buildInfoItem(
-                      Icons.business,
-                      'Compartido únicamente con tu agencia',
-                    ),
+                    _buildInfoItem(Icons.check_circle, 'Solo durante tu jornada laboral'),
+                    const SizedBox(height: 10),
+                    _buildInfoItem(Icons.security, 'Datos protegidos y cifrados'),
+                    const SizedBox(height: 10),
+                    _buildInfoItem(Icons.business, 'Compartido únicamente con tu agencia'),
                   ],
                 ),
               ),
-              const SizedBox(height: 20),
-              
-              // Nota importante
+              const SizedBox(height: 14),
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFF9800).withOpacity(0.1),
+                  color: AppColors.botonPrincipal.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: const Color(0xFFFF9800).withOpacity(0.3),
-                    width: 1,
-                  ),
+                  border: Border.all(color: AppColors.botonPrincipal.withOpacity(0.35)),
                 ),
                 child: const Row(
                   children: [
-                    Icon(
-                      Icons.info_outline,
-                      color: Color(0xFFFF9800),
-                      size: 20,
-                    ),
+                    Icon(Icons.info_outline, color: AppColors.botonPrincipal, size: 18),
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         'En la siguiente ventana, selecciona "Permitir todo el tiempo"',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF666666),
-                          fontWeight: FontWeight.w500,
-                        ),
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 24),
-              
-              // Botones
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () {
-                        print('📍 [ONPRESSED] Botón Rechazar presionado');
-                        _manejarRechazo();
-                      },
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        side: const BorderSide(color: Color(0xFFDC2626), width: 2),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: Text(
-                        _procesando ? 'Cerrando...' : 'Rechazar',
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFFDC2626),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () {
-                        print('📍 [ONPRESSED] Botón Aceptar presionado');
-                        _manejarAceptacion();
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF4CAF50),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: Text(
-                        _procesando ? 'Cerrando...' : 'Aceptar',
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
             ],
           ),
         ),
+        actions: [
+          OutlinedButton(
+            onPressed: _procesando
+                ? null
+                : () {
+                    print('📍 [ONPRESSED] Botón Rechazar presionado');
+                    _manejarRechazo();
+                  },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.error,
+              side: const BorderSide(color: AppColors.error, width: 1.5),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            ),
+            child: Text(_procesando ? 'Cerrando...' : 'Rechazar'),
+          ),
+          ElevatedButton(
+            onPressed: _procesando
+                ? null
+                : () {
+                    print('📍 [ONPRESSED] Botón Aceptar presionado');
+                    _manejarAceptacion();
+                  },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.exito,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            ),
+            child: Text(_procesando ? 'Cerrando...' : 'Aceptar'),
+          ),
+        ],
       ),
     );
   }
@@ -296,21 +215,9 @@ class _AvisoUbicacionSegundoPlanoDialogState extends State<AvisoUbicacionSegundo
   Widget _buildInfoItem(IconData icon, String text) {
     return Row(
       children: [
-        Icon(
-          icon,
-          color: const Color(0xFF4CAF50),
-          size: 18,
-        ),
+        Icon(icon, color: AppColors.exito, size: 18),
         const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            text,
-            style: const TextStyle(
-              fontSize: 13,
-              color: Color(0xFF666666),
-            ),
-          ),
-        ),
+        Expanded(child: Text(text, style: const TextStyle(fontSize: 13))),
       ],
     );
   }

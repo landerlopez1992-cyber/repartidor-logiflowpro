@@ -18,6 +18,8 @@ import '../services/email_service.dart';
 import '../services/configuracion_service.dart';
 import '../services/sync_service.dart';
 import '../services/orden_cache_service.dart';
+import '../services/orden_estado_sync_helper.dart';
+import '../services/ubicacion_offline_service.dart';
 import '../services/offline_storage_service.dart';
 import '../services/connectivity_assistant_service.dart';
 import '../services/shorebird_service.dart';
@@ -39,6 +41,7 @@ import '../services/repartidor_chat_soporte_service.dart';
 import '../utils/orden_tipo_tarjeta_repartidor.dart';
 import '../utils/orden_recogida_colaborador_ui.dart';
 import '../utils/remesa_pura_entrega_ui.dart';
+import '../widgets/volonex_dialog.dart';
 import '../utils/repartidor_nombre_util.dart';
 
 class RepartidorMobileScreen extends StatefulWidget {
@@ -723,7 +726,17 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         // Continuar con la carga desde Supabase pero SIN mostrar loading
         // porque ya tenemos datos en pantalla
       } else {
-        // No hay caché, mostrar loading
+        // No hay caché
+        if (!syncService.isOnline) {
+          print('📴 Sin caché ni conexión — lista vacía sin bloquear UI');
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+              _ordenes = [];
+            });
+          }
+          return;
+        }
         setState(() {
           _isLoading = true;
         });
@@ -3038,7 +3051,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text('📴 Sin conexión a internet. Conecta a una red para sincronizar.'),
-                          backgroundColor: Colors.orange,
+                          backgroundColor: AppColors.botonPrincipal,
                           duration: Duration(seconds: 3),
                         ),
                       );
@@ -3047,20 +3060,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   }
                   
                   // Mostrar diálogo de sincronización
-                  showDialog(
-                    context: context,
-                    barrierDismissible: false,
-                    builder: (context) => AlertDialog(
-                      title: const Text('Sincronización'),
-                      content: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const CircularProgressIndicator(),
-                          const SizedBox(height: 16),
-                          Text('Verificando conexión y sincronizando $_operacionesPendientes operación${_operacionesPendientes > 1 ? "es" : ""} pendiente${_operacionesPendientes > 1 ? "s" : ""}...'),
-                        ],
-                      ),
-                    ),
+                  showVolonexProgressDialog(
+                    context,
+                    title: 'Sincronización',
+                    message:
+                        'Verificando conexión y sincronizando $_operacionesPendientes operación${_operacionesPendientes > 1 ? "es" : ""} pendiente${_operacionesPendientes > 1 ? "s" : ""}...',
                   );
                   
                   // Intentar sincronizar (verifica conexión a Supabase internamente)
@@ -3078,7 +3082,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                             ? '✅ Sincronización exitosa. Base de datos actualizada.' 
                             : '⚠️ No se pudo conectar a la base de datos. Se reintentará automáticamente cuando haya conexión.',
                         ),
-                        backgroundColor: success ? Colors.green : Colors.orange,
+                        backgroundColor: success ? AppColors.exito : AppColors.botonPrincipal,
                         duration: const Duration(seconds: 4),
                       ),
                     );
@@ -3884,78 +3888,39 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 const SizedBox(height: 4),
               ],
               
-              // Botones según estado
+              // Botones compactos (centrados, sin estirar a todo el ancho)
               if (estado == 'POR ENVIAR') ...[
                 const SizedBox(height: 8),
                 if (orden.recogerEnSucursal) ...[
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () => _marcarRemesaEntregadaEnSucursal(orden),
-                      icon: const Icon(Icons.store, size: 18),
-                      label: const Text('Solo dejar en sucursal'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFFE65100),
-                        side: const BorderSide(color: Color(0xFFFF9800), width: 1.5),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                    ),
+                  VolonexActionButton(
+                    label: 'Solo dejar en sucursal',
+                    icon: Icons.store,
+                    outlined: true,
+                    foregroundColor: AppColors.botonPrincipal,
+                    onPressed: () => _marcarRemesaEntregadaEnSucursal(orden),
                   ),
                   const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: () => _mostrarDetallesOrden(orden),
-                      icon: const Icon(Icons.check_circle, size: 18),
-                      label: const Text('Entregar al destinatario'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF4CAF50),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                    ),
+                  VolonexActionButton(
+                    label: 'Entregar al destinatario',
+                    icon: Icons.check_circle,
+                    backgroundColor: AppColors.exito,
+                    onPressed: () => _mostrarDetallesOrden(orden),
                   ),
-                ] else ...[
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: () => _mostrarDetallesOrden(orden),
-                      icon: const Icon(Icons.check_circle, size: 18),
-                      label: const Text('Entregar Remesa'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFFFD700),
-                        foregroundColor: const Color(0xFF1A1A1A),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                    ),
+                ] else
+                  VolonexActionButton(
+                    label: 'Entregar Remesa',
+                    icon: Icons.check_circle,
+                    backgroundColor: const Color(0xFFFFD700),
+                    foregroundColor: const Color(0xFF1A1A1A),
+                    onPressed: () => _mostrarDetallesOrden(orden),
                   ),
-                ],
               ] else if (estado == 'ENTREGADO EN SUCURSAL') ...[
                 const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () => _mostrarDetallesOrden(orden),
-                    icon: const Icon(Icons.check_circle, size: 18),
-                    label: const Text('Entregar al destinatario'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF4CAF50),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                  ),
+                VolonexActionButton(
+                  label: 'Entregar al destinatario',
+                  icon: Icons.check_circle,
+                  backgroundColor: AppColors.exito,
+                  onPressed: () => _mostrarDetallesOrden(orden),
                 ),
               ],
             ],
@@ -5635,27 +5600,77 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     if (confirmadoFinal) {
       print('✅ Usuario confirmó la entrega de la orden #${orden.numeroOrden}');
       try {
-        print('📡 Actualizando estado de orden en BD a ENTREGADO...');
-        await supabase
-            .from('ordenes')
-            .update({
-              'estado': 'ENTREGADO',
-              'fecha_entrega': DateTime.now().toIso8601String(),
-            })
-            .eq('id', orden.id);
-        
-        print('✅ Estado actualizado en BD: ENTREGADO');
-        
-        // Sincronizar con GoodBarber si la orden está vinculada
-        try {
-          await GoodBarberSyncService.sincronizarEstadoAGoodBarber(
-            supabase,
-            orden.id,
-            'ENTREGADO',
-          );
-        } catch (e) {
-          print('⚠️ Error sincronizando estado con GoodBarber: $e');
+        final fechaEntrega = DateTime.now().toIso8601String();
+        final updateData = {
+          'estado': 'ENTREGADO',
+          'fecha_entrega': fechaEntrega,
+        };
+        final ordenLocal = Orden(
+          id: orden.id,
+          numeroOrden: orden.numeroOrden,
+          emisor: orden.emisor,
+          receptor: orden.receptor,
+          descripcion: orden.descripcion,
+          direccionDestino: orden.direccionDestino,
+          telefonoDestinatario: orden.telefonoDestinatario,
+          ciudadDestino: orden.ciudadDestino,
+          provinciaDestino: orden.provinciaDestino,
+          municipioDestino: orden.municipioDestino,
+          consejoPopularBatey: orden.consejoPopularBatey,
+          peso: orden.peso,
+          largo: orden.largo,
+          ancho: orden.ancho,
+          alto: orden.alto,
+          estado: 'ENTREGADO',
+          fechaCreacion: orden.fechaCreacion,
+          fechaEntrega: fechaEntrega,
+          fechaEstimadaEntrega: orden.fechaEstimadaEntrega,
+          notas: orden.notas,
+          repartidor: orden.repartidor,
+          esUrgente: orden.esUrgente,
+          fotoEntrega: orden.fotoEntrega,
+          creadoPorNombre: orden.creadoPorNombre,
+          creadoPorEmail: orden.creadoPorEmail,
+          cantidadBultos: orden.cantidadBultos,
+          requierePago: orden.requierePago,
+          montoCobrar: orden.montoCobrar,
+          moneda: orden.moneda,
+          pagado: orden.pagado,
+          fechaPago: orden.fechaPago,
+          notasPago: orden.notasPago,
+          tieneRemesa: orden.tieneRemesa,
+          cantidadRemesa: orden.cantidadRemesa,
+          requiereFirma: orden.requiereFirma,
+          firmaUrl: orden.firmaUrl,
+          itemsAdicionales: orden.itemsAdicionales,
+          tenantId: orden.tenantId,
+        );
+        if (mounted) {
+          setState(() {
+            final index = _ordenes.indexWhere((o) => o.id == orden.id);
+            if (index != -1) _ordenes[index] = ordenLocal;
+          });
         }
+
+        final syncResult = await OrdenEstadoSyncHelper.persistirCambioEstado(
+          ordenId: orden.id,
+          ordenEnCache: ordenLocal,
+          updateData: updateData,
+          queueType: 'mark_delivered',
+        );
+
+        if (!syncResult.persistedToDb) {
+          _mostrarMensaje(
+            syncResult.queued
+                ? '✅ Entrega guardada localmente (se sincroniza al reconectar)'
+                : 'No se pudo registrar la entrega',
+          );
+          await _cargarOrdenes(preservarOrdenId: orden.id, preservarEstado: 'ENTREGADO');
+          _verificarYActivarRastreo();
+          return;
+        }
+
+        print('✅ Estado actualizado en BD: ENTREGADO');
 
         // Obtener email del EMISOR y enviar email
         print('📧 ===== INICIANDO PROCESO DE EMAIL ENTREGADO =====');
@@ -5780,14 +5795,63 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     
     if (confirmado) {
       try {
-        await supabase
-            .from('ordenes')
-            .update({
-              'estado': 'EN CAMINO',
-            })
-            .eq('id', orden.id);
-        
-        _mostrarMensaje('✅ Orden marcada como "En Camino"');
+        final ordenActualizada = Orden(
+          id: orden.id,
+          numeroOrden: orden.numeroOrden,
+          emisor: orden.emisor,
+          receptor: orden.receptor,
+          descripcion: orden.descripcion,
+          direccionDestino: orden.direccionDestino,
+          telefonoDestinatario: orden.telefonoDestinatario,
+          ciudadDestino: orden.ciudadDestino,
+          provinciaDestino: orden.provinciaDestino,
+          municipioDestino: orden.municipioDestino,
+          consejoPopularBatey: orden.consejoPopularBatey,
+          peso: orden.peso,
+          largo: orden.largo,
+          ancho: orden.ancho,
+          alto: orden.alto,
+          estado: 'EN CAMINO',
+          fechaCreacion: orden.fechaCreacion,
+          fechaEntrega: orden.fechaEntrega,
+          fechaEstimadaEntrega: orden.fechaEstimadaEntrega,
+          notas: orden.notas,
+          repartidor: orden.repartidor,
+          esUrgente: orden.esUrgente,
+          fotoEntrega: orden.fotoEntrega,
+          creadoPorNombre: orden.creadoPorNombre,
+          creadoPorEmail: orden.creadoPorEmail,
+          cantidadBultos: orden.cantidadBultos,
+          requierePago: orden.requierePago,
+          montoCobrar: orden.montoCobrar,
+          moneda: orden.moneda,
+          pagado: orden.pagado,
+          fechaPago: orden.fechaPago,
+          notasPago: orden.notasPago,
+          tieneRemesa: orden.tieneRemesa,
+          cantidadRemesa: orden.cantidadRemesa,
+          requiereFirma: orden.requiereFirma,
+          firmaUrl: orden.firmaUrl,
+          itemsAdicionales: orden.itemsAdicionales,
+          tenantId: orden.tenantId,
+        );
+        final result = await OrdenEstadoSyncHelper.persistirCambioEstado(
+          ordenId: orden.id,
+          ordenEnCache: ordenActualizada,
+          updateData: const {'estado': 'EN CAMINO'},
+          syncGoodBarber: false,
+        );
+        if (mounted) {
+          setState(() {
+            final i = _ordenes.indexWhere((o) => o.id == orden.id);
+            if (i != -1) _ordenes[i] = ordenActualizada;
+          });
+        }
+        _mostrarMensaje(
+          result.persistedToDb
+              ? '✅ Orden marcada como "En Camino"'
+              : '✅ Guardado localmente (se sincroniza al reconectar)',
+        );
         await _cargarOrdenes(preservarOrdenId: orden.id, preservarEstado: 'EN CAMINO');
       } catch (e) {
         _mostrarMensaje('Error al marcar como "En Camino": $e');
@@ -5809,15 +5873,64 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     
     if (confirmado) {
       try {
-        await supabase
-            .from('ordenes')
-            .update({
-              'estado': 'RECOGIDO',
-              'fecha_entrega': DateTime.now().toIso8601String(), // Usar fecha_entrega para consistencia
-            })
-            .eq('id', orden.id);
-        
-        _mostrarMensaje('✅ Orden marcada como "Recogido"');
+        final fecha = DateTime.now().toIso8601String();
+        final ordenActualizada = Orden(
+          id: orden.id,
+          numeroOrden: orden.numeroOrden,
+          emisor: orden.emisor,
+          receptor: orden.receptor,
+          descripcion: orden.descripcion,
+          direccionDestino: orden.direccionDestino,
+          telefonoDestinatario: orden.telefonoDestinatario,
+          ciudadDestino: orden.ciudadDestino,
+          provinciaDestino: orden.provinciaDestino,
+          municipioDestino: orden.municipioDestino,
+          consejoPopularBatey: orden.consejoPopularBatey,
+          peso: orden.peso,
+          largo: orden.largo,
+          ancho: orden.ancho,
+          alto: orden.alto,
+          estado: 'RECOGIDO',
+          fechaCreacion: orden.fechaCreacion,
+          fechaEntrega: fecha,
+          fechaEstimadaEntrega: orden.fechaEstimadaEntrega,
+          notas: orden.notas,
+          repartidor: orden.repartidor,
+          esUrgente: orden.esUrgente,
+          fotoEntrega: orden.fotoEntrega,
+          creadoPorNombre: orden.creadoPorNombre,
+          creadoPorEmail: orden.creadoPorEmail,
+          cantidadBultos: orden.cantidadBultos,
+          requierePago: orden.requierePago,
+          montoCobrar: orden.montoCobrar,
+          moneda: orden.moneda,
+          pagado: orden.pagado,
+          fechaPago: orden.fechaPago,
+          notasPago: orden.notasPago,
+          tieneRemesa: orden.tieneRemesa,
+          cantidadRemesa: orden.cantidadRemesa,
+          requiereFirma: orden.requiereFirma,
+          firmaUrl: orden.firmaUrl,
+          itemsAdicionales: orden.itemsAdicionales,
+          tenantId: orden.tenantId,
+        );
+        final result = await OrdenEstadoSyncHelper.persistirCambioEstado(
+          ordenId: orden.id,
+          ordenEnCache: ordenActualizada,
+          updateData: {'estado': 'RECOGIDO', 'fecha_entrega': fecha},
+          syncGoodBarber: false,
+        );
+        if (mounted) {
+          setState(() {
+            final i = _ordenes.indexWhere((o) => o.id == orden.id);
+            if (i != -1) _ordenes[i] = ordenActualizada;
+          });
+        }
+        _mostrarMensaje(
+          result.persistedToDb
+              ? '✅ Orden marcada como "Recogido"'
+              : '✅ Guardado localmente (se sincroniza al reconectar)',
+        );
         await _cargarOrdenes(preservarOrdenId: orden.id, preservarEstado: 'RECOGIDO');
       } catch (e) {
         _mostrarMensaje('Error al marcar como "Recogido": $e');
@@ -5912,76 +6025,33 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     );
     
     if (confirmado == true) {
-      final syncService = SyncService();
       final updateData = <String, dynamic>{'estado': 'LISTO PARA RECOGER'};
+      orden.estado = 'LISTO PARA RECOGER';
 
-      bool actualizadoExitosamente = false;
+      final syncResult = await OrdenEstadoSyncHelper.persistirCambioEstado(
+        ordenId: orden.id,
+        ordenEnCache: orden,
+        updateData: updateData,
+      );
 
-      // ✅ OFFLINE-FIRST: actualizar local inmediato (cache + lista)
-      try {
-        orden.estado = 'LISTO PARA RECOGER';
-        await OrdenCacheService.updateCachedOrder(orden);
-        if (mounted) {
-          setState(() {
-            final index = _ordenes.indexWhere((o) => o.id == orden.id);
-            if (index != -1) _ordenes[index] = orden;
-          });
-        }
-      } catch (e) {
-        print('⚠️ Error actualizando caché/lista local a LISTO PARA RECOGER: $e');
+      if (mounted) {
+        setState(() {
+          final index = _ordenes.indexWhere((o) => o.id == orden.id);
+          if (index != -1) _ordenes[index] = orden;
+        });
       }
 
-      // Intentar BD solo si hay conectividad (si falla DNS, se encola)
-      Orden? ordenActualizadaParaEmail;
-      if (syncService.isOnline) {
-        try {
-          print('📡 Actualizando estado de orden en BD a LISTO PARA RECOGER...');
-          await supabase.from('ordenes').update(updateData).eq('id', orden.id);
-          actualizadoExitosamente = true;
-          print('✅ Estado actualizado en BD: LISTO PARA RECOGER');
-
-          // Intentar leer la orden ya actualizada (no bloquear si falla)
-          try {
-            final ordenData = await supabase.from('ordenes').select('*').eq('id', orden.id).single();
-            final o = Orden.fromJson(ordenData);
-            o.estado = 'LISTO PARA RECOGER';
-            ordenActualizadaParaEmail = o;
-            await OrdenCacheService.updateCachedOrder(o);
-          } catch (e) {
-            print('⚠️ No se pudo recargar orden para email/UI: $e');
-          }
-        } catch (e) {
-          final errorString = e.toString();
-          if (errorString.contains('Failed host lookup') ||
-              errorString.contains('SocketException') ||
-              errorString.contains('ClientException')) {
-            print('📴 Error de conexión real a Supabase - Encolando LISTO PARA RECOGER');
-            actualizadoExitosamente = false;
-          } else {
-            print('❌ Error NO de red marcando LISTO PARA RECOGER: $e');
-            _mostrarMensaje('Error al marcar como "Listo para recoger": $e');
-            return;
-          }
-        }
+      if (!syncResult.ok) {
+        _mostrarMensaje('Error al marcar como "Listo para recoger"');
+        return;
       }
 
-      if (!actualizadoExitosamente) {
-        try {
-          await syncService.addOperation(
-            type: 'update_orden_estado',
-            ordenId: orden.id,
-            data: updateData,
-          );
-        } catch (e) {
-          print('⚠️ Error encolando LISTO PARA RECOGER: $e');
-        }
-      }
+      final actualizadoExitosamente = syncResult.persistedToDb;
 
-      // Email solo si BD se actualizó de verdad
       if (actualizadoExitosamente) {
         print('📧 ===== INICIANDO PROCESO DE EMAIL LISTO PARA RECOGER =====');
         try {
-          final ordenParaEmail = ordenActualizadaParaEmail ?? orden;
+          final ordenParaEmail = orden;
           final tenantId = ordenParaEmail.tenantId ?? _tenantId;
 
           String? emailEmisor;
@@ -6092,24 +6162,12 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         vendedorContactoEmail: orden.vendedorContactoEmail,
         avisosRecogidaVendedor: orden.avisosRecogidaVendedor,
       );
-      await OrdenCacheService.updateCachedOrder(ordenActualizada);
-
-      var actualizadoExitosamente = false;
-      try {
-        await supabase.from('ordenes').update({'estado': nuevoEstado}).eq('id', orden.id);
-        actualizadoExitosamente = true;
-        try {
-          await GoodBarberSyncService.sincronizarEstadoAGoodBarber(
-            supabase,
-            orden.id,
-            nuevoEstado,
-          );
-        } catch (e) {
-          print('⚠️ Error sincronizando estado con GoodBarber: $e');
-        }
-      } catch (e) {
-        print('⚠️ Actualización BD recogida colaborador: $e');
-      }
+      final syncResult = await OrdenEstadoSyncHelper.persistirCambioEstado(
+        ordenId: orden.id,
+        ordenEnCache: ordenActualizada,
+        updateData: {'estado': nuevoEstado},
+      );
+      final actualizadoExitosamente = syncResult.persistedToDb;
 
       if (mounted) {
         setState(() {
@@ -6402,44 +6460,14 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   Future<bool> _mostrarConfirmacion(String titulo, String mensaje) async {
     if (!mounted) return false;
-    final resultado = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFFFFFFFF),
-        title: Text(
-          titulo,
-          style: const TextStyle(
-            color: Color(0xFF2C2C2C),
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        content: Text(
-          mensaje,
-          style: const TextStyle(
-            color: Color(0xFF666666),
-            fontSize: 14,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text(
-              'Cancelar',
-              style: TextStyle(color: Color(0xFF666666)),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4CAF50),
-            ),
-            child: const Text('Confirmar'),
-          ),
-        ],
-      ),
+    return showVolonexConfirmDialog(
+      context,
+      title: titulo,
+      message: mensaje,
+      confirmColor: AppColors.exito,
+      icon: Icons.check_circle_outline,
+      iconColor: AppColors.botonPrincipal,
     );
-    return resultado ?? false;
   }
 
   void _mostrarErrorFotoObligatoria(Orden orden) {
@@ -7716,21 +7744,39 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           print('   - heading: ${position.heading}');
           print('   - speed: ${position.speed}');
           
-          // Guardar ubicación en Supabase
-          final result = await supabase.from('ubicaciones_repartidores').insert({
-            'repartidor_id': repartidorId.toString(),
-            'tenant_id': _tenantId.toString(),
-            'latitude': position.latitude,
-            'longitude': position.longitude,
-            'accuracy': position.accuracy,
-            'heading': position.heading,
-            'speed': position.speed,
-          }).select();
-          
-          print('✅ ✅ ✅ UBICACIÓN GUARDADA EXITOSAMENTE ✅ ✅ ✅');
-          print('✅ Registros insertados: ${result.length}');
-          print('✅ Repartidor ID: $repartidorId');
-          print('✅ Tenant ID: $_tenantId');
+          try {
+            final result = await supabase.from('ubicaciones_repartidores').insert({
+              'repartidor_id': repartidorId.toString(),
+              'tenant_id': _tenantId.toString(),
+              'latitude': position.latitude,
+              'longitude': position.longitude,
+              'accuracy': position.accuracy,
+              'heading': position.heading,
+              'speed': position.speed,
+            }).select();
+
+            print('✅ ✅ ✅ UBICACIÓN GUARDADA EXITOSAMENTE ✅ ✅ ✅');
+            print('✅ Registros insertados: ${result.length}');
+          } catch (insertError) {
+            final err = insertError.toString();
+            final sinRed = err.contains('Failed host lookup') ||
+                err.contains('SocketException') ||
+                err.contains('ClientException');
+            if (sinRed || !SyncService().isOnline) {
+              await UbicacionOfflineService.encolar(
+                repartidorId: repartidorId.toString(),
+                tenantId: _tenantId.toString(),
+                latitude: position.latitude,
+                longitude: position.longitude,
+                accuracy: position.accuracy,
+                heading: position.heading,
+                speed: position.speed,
+              );
+              print('📍 Ubicación guardada en cola offline');
+            } else {
+              rethrow;
+            }
+          }
           print('📍 ========================================');
           print('');
         } catch (e, stackTrace) {

@@ -31,6 +31,14 @@ class AppColors {
   
   /// Fondo General: Gris muy claro
   static const Color fondoGeneral = Color(0xFFF5F5F5);
+
+  // Tema oscuro VolonexPro+ (modales / login / paneles compactos)
+  static const Color darkBg = Color(0xFF12151C);
+  static const Color darkSurface = Color(0xFF1E232E);
+  static const Color darkElevated = Color(0xFF252A35);
+  static const Color darkBorder = Color(0xFF455A64);
+  static const Color darkText = Color(0xFFECEFF1);
+  static const Color darkTextMuted = Color(0xFF9CA3AF);
   
   /// Azul para información
   static const Color info = Color(0xFF2196F3);

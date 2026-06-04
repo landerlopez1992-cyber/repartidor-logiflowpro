@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'config/supabase_config.dart';
+import 'theme/volonex_theme.dart';
 import 'screens/login_repartidor_screen.dart';
 import 'screens/repartidor_mobile_screen.dart';
 import 'screens/loading_data_screen.dart';
@@ -65,10 +66,7 @@ class RepartidorApp extends StatelessWidget {
     return MaterialApp(
       title: 'VolonexPro+',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF5F5F5),
-      ),
+      theme: VolonexTheme.material,
       home: const AuthWrapper(),
     );
   }

@@ -6,6 +6,8 @@ import 'login_repartidor_screen.dart';
 import '../main.dart';
 import 'chat_repartidor_lista_screen.dart';
 import 'repartidor_mobile_screen.dart';
+import '../config/app_colors.dart';
+import '../widgets/volonex_dialog.dart';
 
 class RepartidorSuspendedScreen extends StatefulWidget {
   final String? empresaNombre;
@@ -174,16 +176,16 @@ class _RepartidorSuspendedScreenState extends State<RepartidorSuspendedScreen> {
         return false;
       },
       child: Scaffold(
-        backgroundColor: const Color(0xFFF5F5F5),
+        backgroundColor: AppColors.fondoGeneral,
         body: SafeArea(
           child: Center(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(20),
               child: Container(
-                constraints: const BoxConstraints(maxWidth: 500),
+                constraints: const BoxConstraints(maxWidth: AppLayout.dialogMaxWidth),
                 padding: const EdgeInsets.all(32),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: AppColors.cardFondo,
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
@@ -201,13 +203,13 @@ class _RepartidorSuspendedScreenState extends State<RepartidorSuspendedScreen> {
                       width: 100,
                       height: 100,
                       decoration: BoxDecoration(
-                        color: const Color(0xFFDC2626).withOpacity(0.1),
+                        color: AppColors.error.withOpacity(0.1),
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(
                         Icons.block,
                         size: 60,
-                        color: Color(0xFFDC2626),
+                        color: AppColors.error,
                       ),
                     ),
                     const SizedBox(height: 24),
@@ -218,7 +220,7 @@ class _RepartidorSuspendedScreenState extends State<RepartidorSuspendedScreen> {
                       style: TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFF2C2C2C),
+                        color: AppColors.textoPrincipal,
                       ),
                       textAlign: TextAlign.center,
                     ),
@@ -229,49 +231,33 @@ class _RepartidorSuspendedScreenState extends State<RepartidorSuspendedScreen> {
                       'Contactar a $_empresaNombre',
                       style: const TextStyle(
                         fontSize: 18,
-                        color: Color(0xFF666666),
+                        color: AppColors.textoSecundario,
                         fontWeight: FontWeight.w500,
                       ),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 32),
                     
-                    // Botón de Chat de Soporte
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (context) => const ChatRepartidorListaScreen(),
-                            ),
-                          );
-                        },
-                        icon: const Icon(Icons.chat_bubble_outline, size: 24),
-                        label: const Text(
-                          'Ir al Chat de Soporte',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
+                    VolonexActionButton(
+                      label: 'Ir al Chat de Soporte',
+                      icon: Icons.chat_bubble_outline,
+                      backgroundColor: AppColors.exito,
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => const ChatRepartidorListaScreen(),
                           ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF4CAF50),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                      ),
+                        );
+                      },
                     ),
                     const SizedBox(height: 16),
                     
-                    // Botón de cerrar sesión
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: () {
+                    VolonexActionButton(
+                      label: 'Cerrar Sesión',
+                      icon: Icons.logout,
+                      outlined: true,
+                      foregroundColor: AppColors.error,
+                      onPressed: () {
                           print('🚪 Cerrando sesión desde pantalla de suspensión...');
                           
                           if (kIsWeb) {
@@ -289,17 +275,6 @@ class _RepartidorSuspendedScreenState extends State<RepartidorSuspendedScreen> {
                             });
                           }
                         },
-                        icon: const Icon(Icons.logout),
-                        label: const Text('Cerrar Sesión'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFFDC2626),
-                          side: const BorderSide(color: Color(0xFFDC2626)),
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                      ),
                     ),
                     const SizedBox(height: 24),
                     
@@ -307,14 +282,14 @@ class _RepartidorSuspendedScreenState extends State<RepartidorSuspendedScreen> {
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF5F5F5),
+                        color: AppColors.fondoGeneral,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Column(
                         children: [
                           Icon(
                             Icons.info_outline,
-                            color: Color(0xFF666666),
+                            color: AppColors.textoSecundario,
                             size: 20,
                           ),
                           SizedBox(height: 8),
@@ -322,7 +297,7 @@ class _RepartidorSuspendedScreenState extends State<RepartidorSuspendedScreen> {
                             'Su cuenta ha sido suspendida temporalmente. Por favor contacte a su empresa a través del chat de soporte para más información.',
                             style: TextStyle(
                               fontSize: 12,
-                              color: Color(0xFF666666),
+                              color: AppColors.textoSecundario,
                             ),
                             textAlign: TextAlign.center,
                           ),

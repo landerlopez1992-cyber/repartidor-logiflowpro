@@ -8,9 +8,11 @@ import '../main.dart';
 import 'repartidor_mobile_screen.dart';
 import 'aviso_ubicacion_destacado_screen.dart';
 import 'loading_data_screen.dart';
-import '../services/orden_cache_service.dart';
+import '../services/sesion_offline_cleanup.dart';
 import '../services/auth_error_handler.dart';
 import '../services/sync_service.dart';
+import '../config/app_colors.dart';
+import '../widgets/volonex_dialog.dart';
 
 class LoginRepartidorScreen extends StatefulWidget {
   const LoginRepartidorScreen({super.key});
@@ -118,8 +120,7 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
           }
         }
 
-        // 🔒 CRÍTICO: Limpiar caché de órdenes
-        await OrdenCacheService.clearCache();
+        await SesionOfflineCleanup.limpiarTodo();
 
         print('🧹 TODOS los cachés de sesiones anteriores limpiados');
       } catch (cacheError) {
@@ -384,60 +385,15 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
   }
 
   void _mostrarError(String mensaje, [String? title]) {
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Icon(
-              title?.toLowerCase().contains('confirmar') == true
-                  ? Icons.email_outlined
-                  : Icons.error_outline,
-              color: title?.toLowerCase().contains('confirmar') == true
-                  ? const Color(0xFF1976D2)
-                  : const Color(0xFFDC2626),
-              size: 24,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                title ?? 'Error',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: title?.toLowerCase().contains('confirmar') == true
-                      ? const Color(0xFF1976D2)
-                      : const Color(0xFFDC2626),
-                ),
-              ),
-            ),
-          ],
-        ),
-        content: Text(
-          mensaje,
-          style: const TextStyle(fontSize: 16, height: 1.5),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            ),
-            child: Text(
-              'Entendido',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: title?.toLowerCase().contains('confirmar') == true
-                    ? const Color(0xFF1976D2)
-                    : const Color(0xFFDC2626),
-              ),
-            ),
-          ),
-        ],
-      ),
+    if (!mounted) return;
+    final esConfirmarCorreo =
+        title?.toLowerCase().contains('confirmar') == true;
+    showVolonexMessageDialog(
+      context,
+      title: title ?? 'Error',
+      message: mensaje,
+      isError: !esConfirmarCorreo,
+      buttonLabel: 'Entendido',
     );
   }
 

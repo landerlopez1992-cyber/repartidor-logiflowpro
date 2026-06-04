@@ -12,6 +12,7 @@ import '../models/orden.dart';
 import '../services/email_service.dart';
 import '../services/configuracion_service.dart';
 import '../services/sync_service.dart';
+import '../services/orden_estado_sync_helper.dart';
 import '../services/offline_storage_service.dart';
 import '../services/orden_cache_service.dart';
 import '../services/paises_service.dart';
@@ -19,6 +20,8 @@ import '../services/goodbarber_sync_service.dart';
 import '../main.dart';
 import '../utils/orden_recogida_colaborador_ui.dart';
 import '../utils/remesa_pura_entrega_ui.dart';
+import '../config/app_colors.dart';
+import '../widgets/volonex_dialog.dart';
 
 class DetalleOrdenScreen extends StatefulWidget {
   final Orden orden;
@@ -174,7 +177,8 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     // ✅ OFFLINE-FIRST: Solo intentar cargar desde BD si hay conexión
     final syncService = SyncService();
     if (!syncService.isOnline) {
-      print('📴 [INIT] Sin conexión - No se cargará orden desde BD (modo offline)');
+      print('📴 [INIT] Sin conexión - Cargando desde caché');
+      await _recargarOrden();
       return;
     }
     
@@ -1334,79 +1338,34 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             ],
 
             if (estado == 'POR ENVIAR' && _ordenActual.recogerEnSucursal) ...[
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () => _marcarRemesaDetalleComoEntregada(soloDejarEnSucursal: true),
-                  icon: const Icon(Icons.store, size: 22),
-                  label: const Text(
-                    'Solo dejar en sucursal',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFFE65100),
-                    side: const BorderSide(color: Color(0xFFFF9800), width: 1.5),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
+              VolonexActionButton(
+                label: 'Solo dejar en sucursal',
+                icon: Icons.store,
+                outlined: true,
+                foregroundColor: AppColors.botonPrincipal,
+                onPressed: () => _marcarRemesaDetalleComoEntregada(soloDejarEnSucursal: true),
               ),
               const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () => _marcarRemesaDetalleComoEntregada(entregarADestinatario: true),
-                  icon: const Icon(Icons.check_circle, size: 24),
-                  label: const Text(
-                    'Entregar al destinatario',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4CAF50),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    elevation: 4,
-                  ),
-                ),
+              VolonexActionButton(
+                label: 'Entregar al destinatario',
+                icon: Icons.check_circle,
+                backgroundColor: AppColors.exito,
+                onPressed: () => _marcarRemesaDetalleComoEntregada(entregarADestinatario: true),
               ),
             ] else if (estado == 'POR ENVIAR') ...[
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () => _marcarRemesaDetalleComoEntregada(entregarADestinatario: true),
-                  icon: const Icon(Icons.check_circle, size: 24),
-                  label: const Text(
-                    'Marcar Remesa como Entregada',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFFFD700),
-                    foregroundColor: const Color(0xFF1A1A1A),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    elevation: 4,
-                  ),
-                ),
+              VolonexActionButton(
+                label: 'Marcar Remesa como Entregada',
+                icon: Icons.check_circle,
+                backgroundColor: const Color(0xFFFFD700),
+                foregroundColor: const Color(0xFF1A1A1A),
+                onPressed: () => _marcarRemesaDetalleComoEntregada(entregarADestinatario: true),
               ),
             ] else if (estado == 'ENTREGADO EN SUCURSAL') ...[
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () => _marcarRemesaDetalleComoEntregada(entregarADestinatario: true),
-                  icon: const Icon(Icons.check_circle, size: 24),
-                  label: const Text(
-                    'Entregar al destinatario',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4CAF50),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    elevation: 4,
-                  ),
-                ),
+              VolonexActionButton(
+                label: 'Entregar al destinatario',
+                icon: Icons.check_circle,
+                backgroundColor: AppColors.exito,
+                onPressed: () => _marcarRemesaDetalleComoEntregada(entregarADestinatario: true),
               ),
             ],
             
@@ -1545,32 +1504,14 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     // Dejar en sucursal (estado intermedio; luego otro repartidor o tú puedes completar)
     if (soloDejarEnSucursal) {
       if (!_ordenActual.recogerEnSucursal || !esPorEnviar) return;
-      final confirmado = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.store, color: Color(0xFFFF9800), size: 24),
-              SizedBox(width: 12),
-              Text('Entregar en Sucursal'),
-            ],
-          ),
-          content: Text('¿Confirmas que dejaste la remesa #${_ordenActual.numeroRemesa ?? _ordenActual.numeroOrden} en la sucursal?\n\nLa sucursal se encargará de entregarla al destinatario.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancelar'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFFF9800),
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Confirmar'),
-            ),
-          ],
-        ),
+      final confirmado = await showVolonexConfirmDialog(
+        context,
+        title: 'Entregar en Sucursal',
+        message:
+            '¿Confirmas que dejaste la remesa #${_ordenActual.numeroRemesa ?? _ordenActual.numeroOrden} en la sucursal?\n\nLa sucursal se encargará de entregarla al destinatario.',
+        confirmColor: AppColors.botonPrincipal,
+        icon: Icons.store,
+        iconColor: AppColors.botonPrincipal,
       );
       
       if (confirmado != true) return;
@@ -5130,29 +5071,17 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     setState(() => _isLoading = true);
     const nuevoEstado = 'EN REPARTO';
     _ordenActual.estado = nuevoEstado;
-    await OrdenCacheService.updateCachedOrder(_ordenActual);
 
-    var ok = false;
-    try {
-      await supabase.from('ordenes').update({'estado': nuevoEstado}).eq('id', widget.orden.id);
-      ok = true;
-      try {
-        await GoodBarberSyncService.sincronizarEstadoAGoodBarber(
-          supabase,
-          widget.orden.id,
-          nuevoEstado,
-        );
-      } catch (e) {
-        print('⚠️ GoodBarber sync: $e');
-      }
-    } catch (e) {
-      print('❌ Error confirmando recogida: $e');
-    }
+    final syncResult = await OrdenEstadoSyncHelper.persistirCambioEstado(
+      ordenId: widget.orden.id,
+      ordenEnCache: _ordenActual,
+      updateData: {'estado': nuevoEstado},
+    );
 
     if (mounted) {
       setState(() => _isLoading = false);
       _mostrarMensaje(
-        ok
+        syncResult.persistedToDb
             ? '✅ Recogida confirmada. Ya puedes entregar al cliente.'
             : '✅ Recogida guardada localmente (sincroniza al reconectar).',
       );
@@ -5326,135 +5255,64 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     final resultado = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFFFFFFFF),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        title: Row(
-          children: [
-            Icon(iconData, color: iconColor, size: 24),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                titulo,
-                style: const TextStyle(
-                  color: Color(0xFF2C2C2C),
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
-        ),
-        content: Column(
+      builder: (ctx) => VolonexDialog(
+        title: titulo,
+        leading: Icon(iconData, color: iconColor, size: 24),
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
               'Antes de continuar, verifica:',
-              style: TextStyle(
-                color: Color(0xFF2C2C2C),
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-              ),
+              style: TextStyle(fontWeight: FontWeight.w600),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: iconColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
+                color: iconColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: iconColor),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    mensaje,
-                    style: TextStyle(
-                      color: iconColor,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
+              child: Text(
+                mensaje,
+                style: TextStyle(
+                  color: iconColor,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
               ),
             ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFF4CAF50).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.check_circle, color: Color(0xFF4CAF50), size: 16),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '¿Confirmas que esta información es correcta?',
-                      style: TextStyle(
-                        color: Color(0xFF2C2C2C),
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
+            const SizedBox(height: 12),
+            const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.check_circle, color: AppColors.exito, size: 16),
+                SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    '¿Confirmas que esta información es correcta?',
+                    style: TextStyle(fontSize: 13),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ],
         ),
         actions: [
-          Row(
-            children: [
-          Expanded(
-            child: OutlinedButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF666666),
-                side: const BorderSide(color: Color(0xFFE0E0E0), width: 1.5),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text(
-                'Cancelar',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar', style: TextStyle(color: AppColors.darkTextMuted)),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: iconColor,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 0,
-              ),
-              child: const Text(
-                'Confirmar',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: iconColor,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
             ),
-              ),
-            ],
+            child: const Text('Confirmar'),
           ),
         ],
       ),

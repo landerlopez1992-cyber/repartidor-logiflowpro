@@ -11,7 +11,7 @@ import 'historial_pagos_completo_screen.dart';
 import 'repartidor_ayuda_screen.dart';
 import '../services/sync_service.dart';
 import '../services/repartidor_perfil_cache_service.dart';
-import '../services/orden_cache_service.dart';
+import '../services/sesion_offline_cleanup.dart';
 import '../services/auth_error_handler.dart';
 import '../services/repartidor_notificaciones_push_service.dart';
 
@@ -1486,8 +1486,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             await prefs.remove('cached_tenant_id_${user.id}'); // 🔒 CRÍTICO: Limpiar tenant_id
             await prefs.remove('cached_user_data_${user.id}');
             
-            // 🔒 CRÍTICO: Limpiar caché de órdenes para evitar que el próximo usuario las vea
-            await OrdenCacheService.clearCache();
+            // 🔒 Cola de sync, medios pendientes y órdenes en caché
+            await SesionOfflineCleanup.limpiarTodo();
             
             print('🧹 Caché del usuario limpiado correctamente');
           } catch (cacheError) {
