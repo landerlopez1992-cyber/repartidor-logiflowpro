@@ -762,7 +762,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     final esEmpleado = widget.rolRemitente == 'EMPLEADO';
 
     return Scaffold(
-      backgroundColor: AppColors.fondoGeneral,
+      backgroundColor: AppColors.darkBg,
       appBar: AppBar(
         backgroundColor: AppColors.header,
         title: Row(
@@ -845,7 +845,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                               Icon(
                                 Icons.chat_bubble_outline,
                                 size: 80,
-                                color: AppColors.textoSecundario.withOpacity(0.3),
+                                color: AppColors.darkTextMuted.withOpacity(0.3),
                               ),
                               const SizedBox(height: 16),
                               Text(
@@ -853,7 +853,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                                 style: const TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.w600,
-                                  color: AppColors.textoPrincipal,
+                                  color: AppColors.darkText,
                                 ),
                               ),
                               const SizedBox(height: 8),
@@ -861,7 +861,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                                 'Escribe un mensaje para comenzar',
                                 style: TextStyle(
                                   fontSize: 14,
-                                  color: AppColors.textoSecundario,
+                                  color: AppColors.darkTextMuted,
                                 ),
                               ),
                             ],
@@ -932,7 +932,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                             margin: const EdgeInsets.only(bottom: 8),
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
-                              color: AppColors.fondoGeneral,
+                              color: AppColors.darkElevated,
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Row(
@@ -956,7 +956,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                                         style: TextStyle(
                                           fontSize: 12,
                                           fontWeight: FontWeight.w600,
-                                          color: AppColors.textoPrincipal,
+                                          color: AppColors.darkText,
                                         ),
                                       ),
                                       const SizedBox(height: 4),
@@ -964,7 +964,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                                         'Presiona enviar para subirla',
                                         style: TextStyle(
                                           fontSize: 11,
-                                          color: AppColors.textoSecundario,
+                                          color: AppColors.darkTextMuted,
                                         ),
                                       ),
                                     ],
@@ -1013,11 +1013,11 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                                       ? 'Agregar mensaje (opcional)...'
                                       : 'Escribe un mensaje...',
                                   hintStyle: const TextStyle(
-                                    color: AppColors.textoSecundario,
+                                    color: AppColors.darkTextMuted,
                                     fontSize: 14,
                                   ),
                                   filled: true,
-                                  fillColor: AppColors.fondoGeneral,
+                                  fillColor: AppColors.darkElevated,
                                   border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(24),
                                     borderSide: BorderSide.none,
@@ -1209,7 +1209,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                                 ? const Color(0xFF4CAF50)
                                 : esEmpleado
                                     ? const Color(0xFFFF9800)
-                                    : AppColors.textoSecundario,
+                                    : AppColors.darkTextMuted,
                           ),
                         ),
                         if (esAdmin) ...[
@@ -1280,7 +1280,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                           mensaje,
                           style: TextStyle(
                             fontSize: 14,
-                            color: esMio ? Colors.white : AppColors.textoPrincipal,
+                            color: esMio ? Colors.white : AppColors.darkText,
                             height: 1.4,
                           ),
                         ),
@@ -1297,7 +1297,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                       fontSize: 11,
                       color: pendienteEnvio
                           ? const Color(0xFFFF9800)
-                          : AppColors.textoSecundario,
+                          : AppColors.darkTextMuted,
                       fontWeight:
                           pendienteEnvio ? FontWeight.w600 : FontWeight.normal,
                     ),

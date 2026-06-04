@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
-import '../main.dart';
 import '../config/app_colors.dart';
+import '../services/repartidor_historial_pago_service.dart';
+import '../services/repartidor_perfil_cache_service.dart';
+import '../services/sync_service.dart';
+import '../widgets/historial_pago_detalle_card.dart';
 import '../widgets/volonex_dialog.dart';
+import '../widgets/volonex_ui.dart';
 
 class HistorialPagosCompletoScreen extends StatefulWidget {
   final String repartidorId;
@@ -18,8 +22,12 @@ class HistorialPagosCompletoScreen extends StatefulWidget {
 }
 
 class _HistorialPagosCompletoScreenState extends State<HistorialPagosCompletoScreen> {
-  List<Map<String, dynamic>> _historialPagos = [];
+  List<HistorialNominaItem> _nominas = [];
+  List<Map<String, dynamic>> _acreditaciones = [];
   bool _isLoading = true;
+  String _filtroEstado = 'TODOS';
+  bool _verAcreditaciones = false;
+  String? _error;
 
   @override
   void initState() {
@@ -30,93 +38,105 @@ class _HistorialPagosCompletoScreenState extends State<HistorialPagosCompletoScr
   Future<void> _cargarHistorial() async {
     setState(() {
       _isLoading = true;
+      _error = null;
     });
 
     try {
-      // Obtener historial del último mes
-      final fechaLimite = DateTime.now().subtract(const Duration(days: 30));
-      
-      final historialResponse = await supabase
-          .from('solicitudes_pago_repartidores')
-          .select('*')
-          .eq('repartidor_id', widget.repartidorId)
-          .gte('fecha_solicitud', fechaLimite.toIso8601String())
-          .order('fecha_solicitud', ascending: false);
+      if (!SyncService().isOnline) {
+        final cache = await RepartidorPerfilCacheService.getCachedHistorialPagos();
+        if (cache != null && cache.isNotEmpty) {
+          setState(() {
+            _nominas = cache.map((s) => HistorialNominaItem(solicitud: s)).toList();
+            _acreditaciones = [];
+            _isLoading = false;
+          });
+          return;
+        }
+      }
 
+      final nominas = await RepartidorHistorialPagoService.cargarHistorial(widget.repartidorId);
+      final acreditaciones =
+          await RepartidorHistorialPagoService.cargarAcreditacionesSaldo(widget.repartidorId);
+
+      await RepartidorPerfilCacheService.cacheHistorialPagos(
+        nominas.map((n) => n.solicitud).toList(),
+      );
+
+      if (!mounted) return;
       setState(() {
-        _historialPagos = List<Map<String, dynamic>>.from(historialResponse);
+        _nominas = nominas;
+        _acreditaciones = acreditaciones;
         _isLoading = false;
       });
     } catch (e) {
-      print('❌ Error cargando historial completo: $e');
+      print('❌ Error historial pagos: $e');
+      if (!mounted) return;
       setState(() {
+        _error = '$e';
         _isLoading = false;
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al cargar historial: $e'),
-            backgroundColor: const Color(0xFFDC2626),
-          ),
-        );
-      }
     }
   }
 
-  String _formatearFecha(DateTime fecha) {
-    return '${fecha.day}/${fecha.month}/${fecha.year} ${fecha.hour.toString().padLeft(2, '0')}:${fecha.minute.toString().padLeft(2, '0')}';
+  List<HistorialNominaItem> get _nominasFiltradas {
+    if (_filtroEstado == 'TODOS') return _nominas;
+    return _nominas.where((n) => n.estado == _filtroEstado).toList();
+  }
+
+  double get _totalAceptado {
+    return _nominas
+        .where((n) => n.estado == 'ACEPTADO')
+        .fold(0.0, (s, n) => s + n.monto);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.fondoGeneral,
+      backgroundColor: AppColors.darkBg,
       appBar: AppBar(
         backgroundColor: AppColors.header,
         title: const Text(
-          'Historial de Pagos',
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
+          'Historial de nóminas',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17),
         ),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _historialPagos.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.payment_outlined,
-                        size: 64,
-                        color: AppColors.darkTextMuted,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'No hay pagos en el último mes',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: AppColors.textoSecundario,
-                        ),
-                      ),
-                    ],
-                  ),
-                )
+          ? const Center(child: CircularProgressIndicator(color: AppColors.botonPrincipal))
+          : _error != null
+              ? _buildError()
               : RefreshIndicator(
+                  color: AppColors.botonPrincipal,
                   onRefresh: _cargarHistorial,
                   child: Center(
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: AppLayout.cardMaxWidth),
-                      child: ListView.builder(
+                      child: ListView(
                         padding: const EdgeInsets.all(16),
-                        itemCount: _historialPagos.length,
-                        itemBuilder: (context, index) {
-                          final pago = _historialPagos[index];
-                          return _buildItemPago(pago);
-                        },
+                        children: [
+                          _buildResumen(),
+                          const SizedBox(height: 16),
+                          _buildFiltros(),
+                          const SizedBox(height: 12),
+                          if (_verAcreditaciones) ...[
+                            _buildSeccionTitulo('Acreditaciones de saldo (entregas)'),
+                            if (_acreditaciones.isEmpty)
+                              _emptyHint('No hay acreditaciones recientes en el saldo.'),
+                            ..._acreditaciones.map((m) => HistorialAcreditacionCard(movimiento: m)),
+                            const SizedBox(height: 20),
+                          ],
+                          _buildSeccionTitulo('Solicitudes de nómina'),
+                          if (_nominasFiltradas.isEmpty)
+                            _emptyHint(
+                              _nominas.isEmpty
+                                  ? 'Aún no hay solicitudes de pago. Cuando solicites y la empresa apruebe una nómina, aparecerá aquí con todo el detalle.'
+                                  : 'No hay solicitudes con el filtro seleccionado.',
+                            )
+                          else
+                            ..._nominasFiltradas.map(
+                              (item) => HistorialPagoDetalleCard(item: item, expanded: _nominasFiltradas.length <= 3),
+                            ),
+                        ],
                       ),
                     ),
                   ),
@@ -124,174 +144,136 @@ class _HistorialPagosCompletoScreenState extends State<HistorialPagosCompletoScr
     );
   }
 
-  Widget _buildItemPago(Map<String, dynamic> pago) {
-    final estado = pago['estado']?.toString() ?? 'PENDIENTE';
-    final monto = (pago['monto'] ?? 0.0).toDouble();
-    final moneda = pago['moneda']?.toString() ?? 'CUP';
-    final fechaSolicitud = pago['fecha_solicitud'] != null
-        ? DateTime.parse(pago['fecha_solicitud'])
-        : null;
-    final fechaAceptacion = pago['fecha_aceptacion'] != null
-        ? DateTime.parse(pago['fecha_aceptacion'])
-        : null;
-    final aceptadoPor = pago['aceptado_por_nombre']?.toString();
-    final totalOrdenes = pago['total_ordenes_entregadas'] ?? 0;
+  Widget _buildError() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, color: AppColors.error, size: 48),
+            const SizedBox(height: 12),
+            Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: AppColors.darkText)),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: _cargarHistorial,
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.botonPrincipal),
+              child: const Text('Reintentar'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-    Color colorEstado;
-    IconData iconoEstado;
-    String textoEstado;
-
-    switch (estado) {
-      case 'PENDIENTE':
-        colorEstado = const Color(0xFFFF9800);
-        iconoEstado = Icons.pending;
-        textoEstado = 'Pendiente';
-        break;
-      case 'ACEPTADO':
-        colorEstado = const Color(0xFF4CAF50);
-        iconoEstado = Icons.check_circle;
-        textoEstado = 'Aceptado';
-        break;
-      case 'RECHAZADO':
-        colorEstado = const Color(0xFFDC2626);
-        iconoEstado = Icons.cancel;
-        textoEstado = 'Rechazado';
-        break;
-      default:
-        colorEstado = const Color(0xFF666666);
-        iconoEstado = Icons.help;
-        textoEstado = estado;
-    }
-
+  Widget _buildResumen() {
+    final aceptadas = _nominas.where((n) => n.estado == 'ACEPTADO').length;
+    final pendientes = _nominas.where((n) => n.estado == 'PENDIENTE').length;
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.darkSurface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colorEstado.withOpacity(0.3)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: AppColors.darkBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Text(
+            widget.repartidorNombre,
+            style: const TextStyle(color: AppColors.darkText, fontWeight: FontWeight.bold, fontSize: 15),
+          ),
+          const SizedBox(height: 10),
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: colorEstado.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(iconoEstado, color: colorEstado, size: 24),
-                  ),
-                  const SizedBox(width: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        textoEstado,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: colorEstado,
-                        ),
-                      ),
-                      if (totalOrdenes > 0)
-                        Text(
-                          '$totalOrdenes orden${totalOrdenes != 1 ? 'es' : ''}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFF666666),
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '\$${monto.toStringAsFixed(2)}',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: colorEstado,
-                    ),
-                  ),
-                  Text(
-                    moneda,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: colorEstado.withOpacity(0.7),
-                    ),
-                  ),
-                ],
-              ),
+              _stat('Cobradas', '$aceptadas', AppColors.exito),
+              _stat('Pendientes', '$pendientes', AppColors.botonPrincipal),
+              _stat('Total cobrado', '\$${_totalAceptado.toStringAsFixed(0)}', AppColors.darkText),
             ],
           ),
-          const Divider(height: 24),
-          if (fechaSolicitud != null)
-            _buildInfoRow(
-              Icons.calendar_today,
-              'Solicitado',
-              _formatearFecha(fechaSolicitud),
-            ),
-          if (fechaAceptacion != null && estado == 'ACEPTADO') ...[
-            const SizedBox(height: 8),
-            _buildInfoRow(
-              Icons.check_circle_outline,
-              'Aceptado',
-              _formatearFecha(fechaAceptacion),
-            ),
-          ],
-          if (aceptadoPor != null && estado == 'ACEPTADO') ...[
-            const SizedBox(height: 8),
-            _buildInfoRow(
-              Icons.person_outline,
-              'Por',
-              aceptadoPor,
-            ),
-          ],
         ],
       ),
     );
   }
 
-  Widget _buildInfoRow(IconData icon, String label, String value) {
-    return Row(
+  Widget _stat(String label, String value, Color color) {
+    return Column(
       children: [
-        Icon(icon, size: 16, color: const Color(0xFF666666)),
-        const SizedBox(width: 8),
-        Text(
-          '$label: ',
-          style: const TextStyle(
-            fontSize: 12,
-            color: Color(0xFF666666),
-            fontWeight: FontWeight.w500,
+        Text(value, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16)),
+        Text(label, style: const TextStyle(color: AppColors.darkTextMuted, fontSize: 10)),
+      ],
+    );
+  }
+
+  Widget _buildFiltros() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              _chipFiltro('TODOS', 'Todos'),
+              _chipFiltro('ACEPTADO', 'Cobradas'),
+              _chipFiltro('PENDIENTE', 'Pendientes'),
+              _chipFiltro('RECHAZADO', 'Rechazadas'),
+            ],
           ),
         ),
-        Expanded(
-          child: Text(
-            value,
-            style: const TextStyle(
-              fontSize: 12,
-              color: Color(0xFF2C2C2C),
-            ),
-          ),
+        const SizedBox(height: 8),
+        VolonexUi.materialFilterChip(
+          label: 'Ver acreditaciones de saldo por entrega',
+          selected: _verAcreditaciones,
+          onSelected: (v) => setState(() => _verAcreditaciones = v),
         ),
       ],
     );
   }
-}
 
+  Widget _chipFiltro(String value, String label) {
+    final sel = _filtroEstado == value;
+    return VolonexUi.filterChip(
+      label: label,
+      selected: sel,
+      onTap: () => setState(() => _filtroEstado = value),
+    );
+  }
+
+  Widget _buildSeccionTitulo(String t) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Text(
+        t,
+        style: const TextStyle(
+          color: AppColors.darkText,
+          fontSize: 15,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyHint(String msg) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: AppColors.darkSurface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.darkBorder),
+      ),
+      child: Column(
+        children: [
+          const Icon(Icons.history, size: 48, color: AppColors.darkTextMuted),
+          const SizedBox(height: 12),
+          Text(
+            msg,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: AppColors.darkTextMuted, fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
+}

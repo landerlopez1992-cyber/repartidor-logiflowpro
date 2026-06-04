@@ -22,12 +22,14 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
     6: false, // Perfil y Configuración
     7: false, // Localización GPS
     8: false, // Ruta Optimizada
+    9: false, // Chat con la Empresa
+    10: false, // Master, Recolector y Remesas
   };
   
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.fondoGeneral,
+      backgroundColor: AppColors.darkBg,
       appBar: AppBar(
         backgroundColor: AppColors.header,
         title: const Text(
@@ -52,15 +54,10 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    const Color(0xFF4CAF50).withOpacity(0.2),
-                    const Color(0xFF4CAF50).withOpacity(0.1),
-                  ],
-                ),
+                color: AppColors.darkSurface,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: const Color(0xFF4CAF50).withOpacity(0.3),
+                  color: AppColors.exito.withValues(alpha: 0.45),
                   width: 1,
                 ),
               ),
@@ -69,7 +66,7 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                   const Icon(
                     Icons.help_outline,
                     size: 48,
-                    color: Color(0xFF4CAF50),
+                    color: AppColors.exito,
                   ),
                   const SizedBox(height: 12),
                   const Text(
@@ -77,16 +74,16 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                     style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
-                      color: Color(0xFF2C2C2C),
+                      color: AppColors.darkText,
                     ),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),
-                  Text(
+                  const Text(
                     'Aquí encontrarás toda la información que necesitas para usar la app de repartidor de forma eficiente.',
                     style: TextStyle(
                       fontSize: 14,
-                      color: Colors.grey[700],
+                      color: AppColors.darkTextMuted,
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -109,6 +106,8 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                 _buildItemLista('6. Perfil y Configuración'),
                 _buildItemLista('7. Localización GPS'),
                 _buildItemLista('8. Ruta Optimizada'),
+                _buildItemLista('9. Chat con la Empresa'),
+                _buildItemLista('10. Master, Recolector y Remesas'),
               ],
             ),
             
@@ -126,18 +125,22 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                   'pasan por diferentes estados hasta llegar a ti como repartidor.',
                 ),
                 const SizedBox(height: 12),
-                _buildSubTitulo('Estados de las Órdenes:'),
-                _buildItemLista('• POR ENVIAR: La orden está en la bodega, esperando ser enviada.'),
-                _buildItemLista('• EN TRANSITO: La orden ha salido de la bodega y está en camino.'),
-                _buildItemLista('• EN REPARTO: La orden está contigo y lista para entregar.'),
-                _buildItemLista('• ENTREGADO: La orden fue entregada exitosamente.'),
+                _buildSubTitulo('Estados de las Órdenes (envío a domicilio):'),
+                _buildItemLista('• POR ENVIAR: En bodega; aún no puedes iniciar la entrega en ruta.'),
+                _buildItemLista('• EN TRANSITO: Salió de bodega y va hacia reparto.'),
+                _buildItemLista('• EN REPARTO: Asignada a ti y lista para entregar al destinatario.'),
+                _buildItemLista('• LISTO PARA RECOGER: Paquete listo en sucursal (cuando aplica recogida en sucursal).'),
+                _buildItemLista('• ENTREGADO EN SUCURSAL: Entregado en sucursal; puede faltar entrega final al cliente.'),
+                _buildItemLista('• ENTREGADO: Entrega completada al destinatario.'),
                 const SizedBox(height: 12),
-                _buildSubTitulo('¿Cuándo puedo recibir una orden?'),
+                _buildSubTitulo('Órdenes de recogida (recolectores):'),
+                _buildItemLista('• POR RECOGER, EN CAMINO, RECOGIDO: flujo para recoger paquetes del cliente.'),
+                const SizedBox(height: 12),
+                _buildSubTitulo('¿Cuándo puedo trabajar una orden?'),
                 _buildTexto(
-                  'Solo puedes recibir órdenes que estén en estado "EN TRANSITO" o "POR ENVIAR" '
-                  'con repartidor asignado. Las órdenes en "POR ENVIAR" aún no han salido de la '
-                  'bodega, por lo que debes esperar a que cambien a "EN TRANSITO" antes de poder '
-                  'iniciar la entrega.',
+                  'Las órdenes en "POR ENVIAR" suelen estar bloqueadas hasta que la empresa las pase a '
+                  '"EN TRANSITO" o "EN REPARTO". Si ves "LISTO PARA RECOGER", sigue el flujo de sucursal '
+                  'indicado en la tarjeta de la orden.',
                 ),
               ],
             ),
@@ -169,6 +172,19 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                   'Si la orden requiere firma, el destinatario debe firmar en la pantalla. '
                   'Esta firma queda registrada como comprobante de recepción.',
                 ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Remesas y entrega en sucursal:'),
+                _buildTexto(
+                  'Algunas órdenes son remesas o tienen entrega en sucursal. La app te guía con textos '
+                  'y pasos específicos (monto, sucursal, entrega al destinatario). Sigue siempre lo que '
+                  'indica la tarjeta de la orden.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Sin conexión al entregar:'),
+                _buildTexto(
+                  'Puedes completar la entrega sin internet: foto, firma y cambio de estado se guardan '
+                  'en el teléfono y se envían solos cuando vuelva la señal (ver sección 4).',
+                ),
               ],
             ),
             
@@ -180,22 +196,44 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
               titulo: '3. Gestión de Órdenes',
               icono: Icons.inventory_2,
               contenido: [
-                _buildSubTitulo('Ver Mis Órdenes:'),
+                _buildSubTitulo('Pantalla principal:'),
                 _buildTexto(
-                  'En la pantalla principal verás todas las órdenes asignadas a ti. '
-                  'Puedes filtrarlas por estado para encontrar fácilmente lo que necesitas.',
+                  'En la pantalla de órdenes ves tu carga de trabajo. Usa los filtros superiores '
+                  '(Activas, Entregadas, Urgentes, Atrasadas) para organizarte.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Búsqueda rápida:'),
+                _buildTexto(
+                  'El buscador filtra por número de orden, destinatario, dirección, teléfono, estado '
+                  'y datos de sucursal. Escribe unas letras y la lista se actualiza sola.',
                 ),
                 const SizedBox(height: 12),
                 _buildSubTitulo('Detalles de una Orden:'),
                 _buildTexto(
-                  'Toca cualquier orden para ver información completa: dirección, destinatario, '
-                  'teléfono, notas especiales, y más.',
+                  'Toca una tarjeta para ver dirección, destinatario, teléfono, notas, cobros y '
+                  'acciones (navegar, explorar, entregar).',
                 ),
                 const SizedBox(height: 12),
-                _buildSubTitulo('Órdenes Urgentes:'),
+                _buildSubTitulo('Notificaciones y campana:'),
+                _buildItemLista('• Icono de campana: avisos de nuevas órdenes o cambios importantes.'),
+                _buildItemLista('• También puedes recibir notificaciones push en el teléfono (si están activadas).'),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Cambios pendientes de subir:'),
                 _buildTexto(
-                  'Las órdenes marcadas como urgentes aparecen destacadas. '
-                  'Debes priorizarlas en tu ruta de entrega.',
+                  'Si entregaste sin internet, un indicador puede mostrar operaciones pendientes. '
+                  'No cierres la app hasta que se sincronicen o recuperes buena señal.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Escáner QR:'),
+                _buildTexto(
+                  'Desde el menú superior puedes abrir el escáner para localizar o validar órdenes '
+                  'rápidamente en bodega o en ruta (según lo configure tu empresa).',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Órdenes Urgentes y Atrasadas:'),
+                _buildTexto(
+                  'Usa el filtro "Urgentes" o "Atrasadas" para priorizar. Las urgentes suelen ir '
+                  'destacadas en la lista.',
                 ),
               ],
             ),
@@ -217,16 +255,30 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                 _buildItemLista('• Solicitar pagos'),
                 const SizedBox(height: 12),
                 _buildSubTitulo('¿Qué puedo hacer SIN internet?'),
-                _buildItemLista('• Ver órdenes previamente cargadas'),
-                _buildItemLista('• Marcar entregas (se guardarán localmente)'),
-                _buildItemLista('• Tomar fotos de entrega'),
-                _buildItemLista('• Ver información de destinatarios'),
-                _buildItemLista('• Navegar con GPS (si tienes datos móviles)'),
+                _buildItemLista('• Ver las órdenes que ya se guardaron en el teléfono (no desaparecen por falta de señal).'),
+                _buildItemLista('• Seguir consultando detalle, destinatario y dirección en caché.'),
+                _buildItemLista('• Marcar entregas, firmas y fotos (quedan en cola local).'),
+                _buildItemLista('• Revisar conversaciones de chat guardadas localmente.'),
+                _buildItemLista('• Ver perfil y datos básicos desde caché.'),
+                _buildItemLista('• Navegar con GPS si el mapa del teléfono tiene datos móviles.'),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Aviso al perder conexión:'),
+                _buildTexto(
+                  'La app puede mostrarte un mensaje cuando detecta que estás sin internet, '
+                  'para que sepas que estás en modo offline.',
+                ),
                 const SizedBox(height: 12),
                 _buildSubTitulo('Sincronización Automática:'),
                 _buildTexto(
-                  'Cuando recuperes la conexión, todos los cambios realizados sin internet '
-                  'se sincronizarán automáticamente con la empresa.',
+                  'Al recuperar la conexión, la app envía entregas, fotos, firmas y cambios de estado '
+                  'pendientes. Si el servidor responde vacío por un error momentáneo, se mantienen '
+                  'las órdenes que ya tenías cargadas hasta tener datos nuevos.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Recomendación:'),
+                _buildTexto(
+                  'Abre la app con buena señal al iniciar el turno para descargar la lista del día. '
+                  'Así trabajarás mejor si más tarde entras a zonas con mala cobertura.',
                 ),
               ],
             ),
@@ -293,6 +345,11 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                 _buildItemLista('3. Ingresa tu nueva contraseña (mínimo 6 caracteres).'),
                 _buildItemLista('4. Confirma la nueva contraseña.'),
                 _buildItemLista('5. Guarda los cambios.'),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Guía de Ayuda:'),
+                _buildTexto(
+                  'En "Mi Perfil" (icono de ayuda) abres esta guía con todos los procesos actualizados.',
+                ),
                 const SizedBox(height: 12),
                 _buildSubTitulo('Cerrar Sesión:'),
                 _buildTexto(
@@ -363,9 +420,81 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                 const SizedBox(height: 12),
                 _buildSubTitulo('Estados en la Ruta:'),
                 _buildTexto(
-                  'Solo puedes entregar órdenes que estén en estado "EN REPARTO". '
-                  'Si una orden está en "POR ENVIAR", significa que aún no ha salido de la bodega '
-                  'y debes esperar a que cambie a "EN TRANSITO" o "EN REPARTO".',
+                  'La ruta incluye órdenes listas para reparto. Las que siguen en "POR ENVIAR" '
+                  'normalmente no forman parte del recorrido hasta que la empresa las active.',
+                ),
+              ],
+            ),
+            
+            const SizedBox(height: 12),
+            
+            // Sección 9: Chat con la Empresa
+            _buildSeccionExpandible(
+              indice: 9,
+              titulo: '9. Chat con la Empresa',
+              icono: Icons.chat_bubble_outline,
+              contenido: [
+                _buildSubTitulo('¿Para qué sirve?'),
+                _buildTexto(
+                  'Puedes escribir a la empresa (administración o soporte) sin salir de la app. '
+                  'Úsalo para dudas de una orden, retrasos, incidencias o coordinación del día.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Cómo abrir el chat:'),
+                _buildItemLista('1. En la pantalla principal, toca el icono de chat (burbuja) arriba.'),
+                _buildItemLista('2. Elige la conversación con tu empresa.'),
+                _buildItemLista('3. Escribe el mensaje o adjunta una foto si hace falta.'),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Mensajes y avisos:'),
+                _buildItemLista('• Un punto o número rojo indica mensajes nuevos sin leer.'),
+                _buildItemLista('• Al entrar a una conversación, los mensajes se marcan como leídos.'),
+                _buildItemLista('• Puedes recibir sonido o notificación cuando llega un mensaje de la empresa.'),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Sin internet:'),
+                _buildTexto(
+                  'Puedes leer mensajes guardados en el teléfono. Los que envíes sin conexión '
+                  'se enviarán cuando vuelva la señal.',
+                ),
+              ],
+            ),
+            
+            const SizedBox(height: 12),
+            
+            // Sección 10: Master, Recolector y Remesas
+            _buildSeccionExpandible(
+              indice: 10,
+              titulo: '10. Master, Recolector y Remesas',
+              icono: Icons.badge_outlined,
+              contenido: [
+                _buildSubTitulo('Repartidor normal:'),
+                _buildTexto(
+                  'Ves las órdenes de envío asignadas a tu nombre. El filtro "Activas" muestra el trabajo '
+                  'pendiente; "Entregadas" el historial reciente del día.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Repartidor Master:'),
+                _buildItemLista('• Puede ver órdenes de más repartidores del mismo equipo (según la empresa).'),
+                _buildItemLista('• Filtro "MÍAS": solo tus asignaciones.'),
+                _buildItemLista('• Sin "MÍAS": ves la carga del equipo para coordinar.'),
+                _buildItemLista('• Si la empresa lo permite, también ve recogidas en sucursal pendientes.'),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Recolector:'),
+                _buildTexto(
+                  'Si tu cuenta es tipo recolector, la app muestra órdenes de RECOGIDA con estados '
+                  'POR RECOGER, EN CAMINO y RECOGIDO. El flujo es recoger paquetes del cliente, '
+                  'no entrega a domicilio.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Remesas:'),
+                _buildTexto(
+                  'Las remesas pueden tener pasos y montos distintos. Revisa siempre el detalle '
+                  'antes de cobrar o marcar entregado. Algunas combinan sucursal y entrega final al destinatario.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Órdenes de tienda por vendedor:'),
+                _buildTexto(
+                  'Las entregas gestionadas por un vendedor/colaborador en la tienda web pueden no '
+                  'aparecerte en tu lista: las lleva quien vendió el producto, no el repartidor de envíos.',
                 ),
               ],
             ),
@@ -377,10 +506,10 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: const Color(0xFFFF9800).withOpacity(0.1),
+                color: AppColors.darkSurface,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: const Color(0xFFFF9800).withOpacity(0.3),
+                  color: AppColors.botonPrincipal.withValues(alpha: 0.45),
                   width: 1,
                 ),
               ),
@@ -389,7 +518,7 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                   const Icon(
                     Icons.support_agent,
                     size: 40,
-                    color: Color(0xFFFF9800),
+                    color: AppColors.botonPrincipal,
                   ),
                   const SizedBox(height: 12),
                   const Text(
@@ -397,16 +526,16 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
-                      color: Color(0xFF2C2C2C),
+                      color: AppColors.darkText,
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Text(
-                    'Si tienes dudas adicionales o problemas técnicos, contacta a tu supervisor '
-                    'o al equipo de soporte de la empresa.',
+                  const Text(
+                    'Si tienes dudas adicionales o problemas técnicos, usa el chat de la app '
+                    'o contacta a tu supervisor en la empresa.',
                     style: TextStyle(
                       fontSize: 14,
-                      color: Colors.grey[700],
+                      color: AppColors.darkTextMuted,
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -432,21 +561,14 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.darkSurface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isExpanded 
-              ? const Color(0xFF4CAF50).withOpacity(0.5)
-              : Colors.grey[300]!,
-          width: isExpanded ? 2 : 1,
+          color: isExpanded
+              ? AppColors.exito.withValues(alpha: 0.55)
+              : AppColors.darkBorder,
+          width: isExpanded ? 1.5 : 1,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
       ),
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
@@ -462,12 +584,12 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
           leading: Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: const Color(0xFF4CAF50).withOpacity(0.1),
+              color: AppColors.exito.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
               icono,
-              color: const Color(0xFF4CAF50),
+              color: AppColors.exito,
               size: 24,
             ),
           ),
@@ -476,14 +598,17 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
             style: const TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
-              color: Color(0xFF2C2C2C),
+              color: AppColors.darkText,
             ),
           ),
           trailing: Icon(
             isExpanded ? Icons.expand_less : Icons.expand_more,
-            color: const Color(0xFF4CAF50),
+            color: AppColors.exito,
             size: 28,
           ),
+          collapsedIconColor: AppColors.darkTextMuted,
+          iconColor: AppColors.exito,
+          textColor: AppColors.darkText,
           children: contenido,
         ),
       ),
@@ -498,7 +623,7 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
         style: const TextStyle(
           fontSize: 16,
           fontWeight: FontWeight.bold,
-          color: Color(0xFF37474F),
+          color: AppColors.darkText,
         ),
       ),
     );
@@ -509,9 +634,9 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
       padding: const EdgeInsets.only(bottom: 8),
       child: Text(
         texto,
-        style: TextStyle(
+        style: const TextStyle(
           fontSize: 14,
-          color: Colors.grey[700],
+          color: AppColors.darkTextMuted,
           height: 1.5,
         ),
       ),
@@ -528,16 +653,16 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
             '• ',
             style: TextStyle(
               fontSize: 14,
-              color: Color(0xFF4CAF50),
+              color: AppColors.exito,
               fontWeight: FontWeight.bold,
             ),
           ),
           Expanded(
             child: Text(
               texto,
-              style: TextStyle(
+              style: const TextStyle(
                 fontSize: 14,
-                color: Colors.grey[700],
+                color: AppColors.darkTextMuted,
                 height: 1.5,
               ),
             ),

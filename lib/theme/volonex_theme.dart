@@ -1,22 +1,23 @@
 import 'package:flutter/material.dart';
 import '../config/app_colors.dart';
 
-/// Tema global VolonexPro+ para la app Repartidor (móvil).
+/// Tema global VolonexPro+ — app Repartidor (oscuro, alineado con historial de nóminas).
 class VolonexTheme {
   VolonexTheme._();
 
   static ThemeData get material => ThemeData(
         useMaterial3: true,
-        scaffoldBackgroundColor: AppColors.fondoGeneral,
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: AppColors.darkBg,
         primaryColor: AppColors.header,
-        colorScheme: const ColorScheme.light(
+        colorScheme: const ColorScheme.dark(
           primary: AppColors.header,
           secondary: AppColors.botonPrincipal,
-          surface: AppColors.cardFondo,
+          surface: AppColors.darkSurface,
           error: AppColors.error,
           onPrimary: Colors.white,
           onSecondary: Colors.white,
-          onSurface: AppColors.textoPrincipal,
+          onSurface: AppColors.darkText,
         ),
         appBarTheme: const AppBarTheme(
           backgroundColor: AppColors.header,
@@ -31,10 +32,13 @@ class VolonexTheme {
           iconTheme: IconThemeData(color: Colors.white, size: 22),
         ),
         cardTheme: CardThemeData(
-          color: AppColors.cardFondo,
-          elevation: 2,
-          shadowColor: Colors.black26,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          color: AppColors.darkSurface,
+          elevation: 0,
+          shadowColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: const BorderSide(color: AppColors.darkBorder, width: 1),
+          ),
           margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         ),
         dialogTheme: DialogThemeData(
@@ -42,14 +46,19 @@ class VolonexTheme {
           insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
-        dividerColor: AppColors.borde,
+        dividerColor: AppColors.darkBorder,
         textTheme: const TextTheme(
-          bodyLarge: TextStyle(color: AppColors.textoPrincipal, fontSize: 15),
-          bodyMedium: TextStyle(color: AppColors.textoSecundario, fontSize: 14),
+          bodyLarge: TextStyle(color: AppColors.darkText, fontSize: 15),
+          bodyMedium: TextStyle(color: AppColors.darkTextMuted, fontSize: 14),
           titleMedium: TextStyle(
-            color: AppColors.textoPrincipal,
+            color: AppColors.darkText,
             fontSize: 16,
             fontWeight: FontWeight.w600,
+          ),
+          titleLarge: TextStyle(
+            color: AppColors.darkText,
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
           ),
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
@@ -85,21 +94,23 @@ class VolonexTheme {
         ),
         snackBarTheme: SnackBarThemeData(
           behavior: SnackBarBehavior.floating,
-          backgroundColor: AppColors.header,
-          contentTextStyle: const TextStyle(color: Colors.white, fontSize: 14),
+          backgroundColor: AppColors.darkElevated,
+          contentTextStyle: const TextStyle(color: AppColors.darkText, fontSize: 14),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           insetPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: AppColors.cardFondo,
+          fillColor: AppColors.darkElevated,
+          hintStyle: const TextStyle(color: AppColors.darkTextMuted),
+          labelStyle: const TextStyle(color: AppColors.darkTextMuted),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: AppColors.borde),
+            borderSide: const BorderSide(color: AppColors.darkBorder),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: AppColors.borde),
+            borderSide: const BorderSide(color: AppColors.darkBorder),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
@@ -110,5 +121,20 @@ class VolonexTheme {
         progressIndicatorTheme: const ProgressIndicatorThemeData(
           color: AppColors.botonPrincipal,
         ),
+        chipTheme: ChipThemeData(
+          backgroundColor: AppColors.darkElevated,
+          selectedColor: AppColors.botonPrincipal,
+          labelStyle: const TextStyle(color: AppColors.darkTextMuted, fontSize: 12),
+          secondaryLabelStyle: const TextStyle(color: Colors.white, fontSize: 12),
+          checkmarkColor: Colors.white,
+          side: const BorderSide(color: AppColors.darkBorder),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        ),
+        listTileTheme: const ListTileThemeData(
+          iconColor: AppColors.darkTextMuted,
+          textColor: AppColors.darkText,
+          tileColor: AppColors.darkSurface,
+        ),
+        iconTheme: const IconThemeData(color: AppColors.darkText),
       );
 }

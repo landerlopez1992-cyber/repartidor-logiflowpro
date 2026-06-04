@@ -3,6 +3,7 @@ import 'offline_storage_service.dart';
 import 'sync_service.dart';
 import 'ubicacion_offline_service.dart';
 import 'repartidor_pantallas_offline_service.dart';
+import 'entrega_progreso_service.dart';
 
 /// Limpia cola de sync, órdenes en caché y fotos/firmas pendientes al cambiar de usuario.
 class SesionOfflineCleanup {
@@ -33,6 +34,11 @@ class SesionOfflineCleanup {
       await RepartidorPantallasOfflineService.limpiarTodo();
     } catch (e) {
       print('⚠️ clear caché pantallas: $e');
+    }
+    try {
+      await EntregaProgresoService.limpiarTodo();
+    } catch (e) {
+      print('⚠️ clear progreso entrega: $e');
     }
   }
 }

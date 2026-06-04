@@ -8,6 +8,7 @@ import '../services/repartidor_pantallas_offline_service.dart';
 import '../services/sync_service.dart';
 import '../services/network_timeout.dart';
 import 'detalle_orden_screen.dart';
+import '../config/app_colors.dart';
 
 class NotificacionesRepartidorScreen extends StatefulWidget {
   const NotificacionesRepartidorScreen({super.key});
@@ -398,7 +399,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
       length: 3,
       initialIndex: _tabIndex,
       child: Scaffold(
-        backgroundColor: const Color(0xFFF5F5F5),
+        backgroundColor: AppColors.darkBg,
         appBar: AppBar(
           backgroundColor: const Color(0xFF37474F),
           title: const Text(
@@ -857,7 +858,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
             constraints: const BoxConstraints(maxWidth: 800),
             child: Card(
               margin: const EdgeInsets.only(bottom: 12),
-              color: leida ? Colors.white : const Color(0xFFE3F2FD),
+              color: leida ? AppColors.darkSurface : AppColors.darkElevated,
               elevation: leida ? 2 : 4,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -1031,7 +1032,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
             constraints: const BoxConstraints(maxWidth: 800),
             child: Card(
               margin: const EdgeInsets.only(bottom: 12),
-              color: leida ? Colors.white : const Color(0xFFE3F2FD),
+              color: leida ? AppColors.darkSurface : AppColors.darkElevated,
               elevation: leida ? 2 : 4,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),

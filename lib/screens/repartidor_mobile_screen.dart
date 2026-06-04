@@ -45,6 +45,7 @@ import '../utils/orden_tipo_tarjeta_repartidor.dart';
 import '../utils/orden_recogida_colaborador_ui.dart';
 import '../utils/remesa_pura_entrega_ui.dart';
 import '../widgets/volonex_dialog.dart';
+import '../widgets/volonex_ui.dart';
 import '../utils/entrega_foto_util.dart';
 import '../widgets/foto_entrega_preview.dart';
 import '../utils/repartidor_nombre_util.dart';
@@ -2931,7 +2932,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.fondoGeneral,
+      backgroundColor: AppColors.darkBg,
       appBar: AppBar(
         backgroundColor: AppColors.header,
         foregroundColor: Colors.white,
@@ -3322,70 +3323,39 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           
           // ✅ INDICADOR DE MODO OFFLINE
           if (!_isOnline)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: Colors.orange.shade100,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.cloud_off, color: Colors.orange.shade900, size: 18),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Sin conexión - Mostrando datos guardados',
-                    style: TextStyle(
-                      color: Colors.orange.shade900,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  if (_operacionesPendientes > 0)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.shade700,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        '$_operacionesPendientes pendiente${_operacionesPendientes > 1 ? "s" : ""}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
+            VolonexUi.offlineBanner(
+              message: 'Sin conexión — mostrando datos guardados',
+              pendingOps: _operacionesPendientes,
             ),
           
           // Barra de búsqueda
           Container(
             padding: const EdgeInsets.all(16),
-            color: Colors.white,
+            color: AppColors.darkBg,
             child: TextField(
               key: const ValueKey('search_field'), // Key para mantener estado
               controller: _searchController,
               focusNode: _searchFocusNode, // FocusNode para mantener el foco
+              style: const TextStyle(color: AppColors.darkText),
               decoration: InputDecoration(
                 hintText: 'Buscar órdenes...',
-                prefixIcon: const Icon(Icons.search, color: Color(0xFF1976D2)),
+                hintStyle: const TextStyle(color: AppColors.darkTextMuted),
+                prefixIcon: const Icon(Icons.search, color: AppColors.botonPrincipal),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(25),
-                  borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+                  borderSide: const BorderSide(color: AppColors.darkBorder),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(25),
-                  borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+                  borderSide: const BorderSide(color: AppColors.darkBorder),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(25),
-                  borderSide: const BorderSide(color: Color(0xFF1976D2), width: 2),
+                  borderSide: const BorderSide(color: AppColors.botonPrincipal, width: 2),
                 ),
                 contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 filled: true,
-                fillColor: const Color(0xFFF8F9FA),
+                fillColor: AppColors.darkElevated,
               ),
             ),
           ),
@@ -3394,7 +3364,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           if (_tieneRutaOptimizada)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: Colors.white,
+              color: AppColors.darkBg,
               child: Center(
                 child: ElevatedButton.icon(
                   onPressed: () => _mostrarRutaOptimizada(),
@@ -3419,7 +3389,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           // Filtros de estado (diferentes según tipo de usuario)
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: Colors.white,
+            color: AppColors.darkBg,
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -3458,7 +3428,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           // Contador de resultados
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: Colors.white,
+            color: AppColors.darkBg,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -3466,7 +3436,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   '${_ordenesFiltradas.length} órdenes encontradas',
                   style: const TextStyle(
                     fontSize: 14,
-                    color: Color(0xFF666666),
+                    color: AppColors.darkTextMuted,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -3495,7 +3465,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             child: _isLoading
                 ? const Center(
                     child: CircularProgressIndicator(
-                      color: Color(0xFF1976D2),
+                      color: AppColors.botonPrincipal,
                     ),
                   )
                 : _ordenesFiltradas.isEmpty
@@ -3539,109 +3509,41 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   }
 
   Widget _buildFiltroChip(String label, bool isSelected) {
-    return GestureDetector(
+    return VolonexUi.filterChip(
+      label: label,
+      selected: isSelected,
+      selectedColor: const Color(0xFF2196F3),
       onTap: () {
         setState(() {
           _filtroEstado = label;
-          _ordenesFiltradasCache = null; // Invalidar caché cuando cambie el filtro
+          _ordenesFiltradasCache = null;
           _cacheKeyFiltradas = null;
         });
       },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF1976D2) : Colors.grey[200],
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: isSelected ? Colors.white : Colors.grey[700],
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
     );
   }
 
   Widget _buildFiltroRepartidorChip(String label, bool isSelected) {
-    // Color verde para "MÍAS", naranja para "TODAS"
-    final bool esMias = label == 'MÍAS';
-    final Color colorSeleccionado = esMias ? const Color(0xFF4CAF50) : const Color(0xFFFF9800);
-    
-    return GestureDetector(
+    final esMias = label == 'MÍAS';
+    return VolonexUi.filterChip(
+      label: label,
+      selected: isSelected,
+      selectedColor: esMias ? AppColors.exito : AppColors.botonPrincipal,
+      icon: esMias ? Icons.person : null,
       onTap: () {
         setState(() {
           _filtroRepartidor = label == 'MÍAS' ? 'MÍAS' : null;
-          _ordenesFiltradasCache = null; // Invalidar caché cuando cambie el filtro
+          _ordenesFiltradasCache = null;
           _cacheKeyFiltradas = null;
         });
       },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? colorSeleccionado : Colors.grey[200],
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected ? colorSeleccionado : Colors.transparent,
-            width: 2,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (esMias)
-              const Icon(
-                Icons.person,
-                color: Colors.white,
-                size: 14,
-              ),
-            if (esMias) const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                color: isSelected ? Colors.white : Colors.grey[700],
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.inbox_outlined,
-            size: 80,
-            color: Colors.grey[400],
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'No hay órdenes',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey[600],
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'No tienes órdenes asignadas en este momento',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey[500],
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
+    return VolonexUi.emptyState(
+      icon: Icons.inbox_outlined,
+      message: 'No hay órdenes asignadas en este momento.\nPrueba otro filtro o espera nuevas asignaciones.',
     );
   }
 
@@ -3979,7 +3881,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                       orden.fechaEstimadaEntrega!.isBefore(DateTime.now()) && 
                       orden.estado != 'ENTREGADO';
     final fondoTarjeta = esUrgente
-        ? const Color(0xFFFFEBEE)
+        ? const Color(0xFF3A2528)
         : tipoInfo.colorFondo;
 
     return Container(
@@ -4250,9 +4152,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFFF3E0),
+                    color: AppColors.botonPrincipal.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFFE65100), width: 1.5),
+                    border: Border.all(color: AppColors.botonPrincipal, width: 1.5),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -4274,7 +4176,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                       const SizedBox(height: 6),
                       Text(
                         OrdenRecogidaColaboradorUi.mensajeInfoTarjeta(orden),
-                        style: const TextStyle(color: Color(0xFF5D4037), fontSize: 11),
+                        style: const TextStyle(color: AppColors.darkText, fontSize: 11),
                       ),
                       if (OrdenRecogidaColaboradorUi.tieneDatosColaborador(orden)) ...[
                         const SizedBox(height: 8),
@@ -4304,7 +4206,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                       const SizedBox(height: 6),
                       const Text(
                         'La dirección exacta del punto de recogida coordínala con el colaborador.',
-                        style: TextStyle(color: Color(0xFF666666), fontSize: 10),
+                        style: const TextStyle(color: AppColors.darkTextMuted, fontSize: 10),
                       ),
                     ],
                   ),
@@ -4623,21 +4525,27 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, color: const Color(0xFF666666), size: 14),
+        Icon(icon, color: AppColors.darkTextMuted, size: 14),
         const SizedBox(width: 4),
         Expanded(
           child: RichText(
             text: TextSpan(
               style: const TextStyle(
-                color: Color(0xFF666666),
+                color: AppColors.darkTextMuted,
                 fontSize: 11,
               ),
               children: [
                 TextSpan(
                   text: '$label ',
-                  style: const TextStyle(fontWeight: FontWeight.w500),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.darkTextMuted,
+                  ),
                 ),
-                TextSpan(text: value),
+                TextSpan(
+                  text: value,
+                  style: const TextStyle(color: AppColors.darkText),
+                ),
               ],
             ),
           ),
@@ -5533,7 +5441,24 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     return resuelta;
   }
 
+  bool _ordenRequiereProcesoEntregaGuiado(Orden orden) {
+    return orden.tieneRemesa ||
+        (orden.requierePago && !orden.pagado) ||
+        RemesaPuraEntregaUi.exigeFirmaEntrega(orden) ||
+        orden.cantidadBultos > 1;
+  }
+
   Future<void> _marcarComoEntregado(Orden orden) async {
+    if (_ordenRequiereProcesoEntregaGuiado(orden)) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => DetalleOrdenScreen(orden: orden),
+        ),
+      );
+      await _aplicarOrdenDesdeCacheTrasDetalle(orden.id);
+      return;
+    }
+
     var ordenTrabajo = await EntregaFotoUtil.ordenConFotoResuelta(orden);
     _actualizarOrdenEnLista(ordenTrabajo);
 

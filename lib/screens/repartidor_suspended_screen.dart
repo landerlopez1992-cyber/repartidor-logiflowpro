@@ -176,7 +176,7 @@ class _RepartidorSuspendedScreenState extends State<RepartidorSuspendedScreen> {
         return false;
       },
       child: Scaffold(
-        backgroundColor: AppColors.fondoGeneral,
+        backgroundColor: AppColors.darkBg,
         body: SafeArea(
           child: Center(
             child: SingleChildScrollView(
@@ -185,7 +185,7 @@ class _RepartidorSuspendedScreenState extends State<RepartidorSuspendedScreen> {
                 constraints: const BoxConstraints(maxWidth: AppLayout.dialogMaxWidth),
                 padding: const EdgeInsets.all(32),
                 decoration: BoxDecoration(
-                  color: AppColors.cardFondo,
+                  color: AppColors.darkSurface,
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
@@ -220,7 +220,7 @@ class _RepartidorSuspendedScreenState extends State<RepartidorSuspendedScreen> {
                       style: TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.bold,
-                        color: AppColors.textoPrincipal,
+                        color: AppColors.darkText,
                       ),
                       textAlign: TextAlign.center,
                     ),
@@ -231,7 +231,7 @@ class _RepartidorSuspendedScreenState extends State<RepartidorSuspendedScreen> {
                       'Contactar a $_empresaNombre',
                       style: const TextStyle(
                         fontSize: 18,
-                        color: AppColors.textoSecundario,
+                        color: AppColors.darkTextMuted,
                         fontWeight: FontWeight.w500,
                       ),
                       textAlign: TextAlign.center,
@@ -282,14 +282,14 @@ class _RepartidorSuspendedScreenState extends State<RepartidorSuspendedScreen> {
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: AppColors.fondoGeneral,
+                        color: AppColors.darkElevated,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Column(
                         children: [
                           Icon(
                             Icons.info_outline,
-                            color: AppColors.textoSecundario,
+                            color: AppColors.darkTextMuted,
                             size: 20,
                           ),
                           SizedBox(height: 8),
@@ -297,7 +297,7 @@ class _RepartidorSuspendedScreenState extends State<RepartidorSuspendedScreen> {
                             'Su cuenta ha sido suspendida temporalmente. Por favor contacte a su empresa a través del chat de soporte para más información.',
                             style: TextStyle(
                               fontSize: 12,
-                              color: AppColors.textoSecundario,
+                              color: AppColors.darkTextMuted,
                             ),
                             textAlign: TextAlign.center,
                           ),

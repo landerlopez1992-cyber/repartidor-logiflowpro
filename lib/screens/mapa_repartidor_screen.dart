@@ -9,6 +9,7 @@ import '../services/sync_service.dart';
 import '../services/network_timeout.dart';
 import '../models/orden.dart';
 import '../widgets/profile_avatar.dart';
+import '../config/app_colors.dart';
 
 class MapaRepartidorScreen extends StatefulWidget {
   final Orden orden;
@@ -347,7 +348,7 @@ class _MapaRepartidorScreenState extends State<MapaRepartidorScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
+      backgroundColor: AppColors.darkBg,
       appBar: AppBar(
         backgroundColor: const Color(0xFF37474F),
         title: Row(

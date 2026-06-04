@@ -35,6 +35,18 @@ class RepartidorSaldoService {
       return (saldo: 0.0, moneda: 'USD', solicitudPendiente: true);
     }
 
+    try {
+      final syncRaw = await supabase.rpc(
+        'repartidor_sincronizar_saldo_acumulado',
+        params: {'p_repartidor_id': repartidorId},
+      );
+      if (syncRaw is Map && syncRaw['ok'] != true) {
+        print('⚠️ repartidor_sincronizar_saldo_acumulado: $syncRaw');
+      }
+    } catch (e) {
+      print('⚠️ repartidor_sincronizar_saldo_acumulado: $e');
+    }
+
     final row = await supabase
         .from('usuarios')
         .select('repartidor_saldo_acumulado, repartidor_saldo_moneda')

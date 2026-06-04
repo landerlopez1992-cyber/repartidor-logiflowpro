@@ -24,6 +24,9 @@ import '../utils/entrega_foto_util.dart';
 import '../config/app_colors.dart';
 import '../widgets/volonex_dialog.dart';
 import '../widgets/foto_entrega_preview.dart';
+import '../models/entrega_progreso.dart';
+import '../services/entrega_progreso_service.dart';
+import '../widgets/entrega_progreso_panel.dart';
 
 class DetalleOrdenScreen extends StatefulWidget {
   final Orden orden;
@@ -45,6 +48,8 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
   String? _fotoEntregaUrl; // URL de la foto tomada localmente
   String? _firmaUrl; // URL de la firma almacenada
   late Orden _ordenActual; // Orden que se actualiza localmente
+  EntregaProgreso? _entregaProgreso;
+  String? _bannerExitoPasoEntrega;
   Map<String, dynamic>? _sucursalInfo; // Información de la sucursal para recogida
   RealtimeChannel? _ordenChannel; // Canal de Realtime para escuchar cambios en la orden
   final SignatureController _signatureController = SignatureController(
@@ -89,6 +94,93 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     
     // 🔥 SUSCRIBIRSE A CAMBIOS EN TIEMPO REAL para esta orden específica
     _suscribirseACambiosOrden();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refrescarProgresoEntrega());
+  }
+
+  List<EntregaPaso> get _pasosEntregaRequeridos =>
+      EntregaProgresoService.pasosRequeridosParaOrden(
+        orden: _ordenActual,
+        fotoObligatoria: _fotoEntregaObligatoria,
+        exigeFirma: RemesaPuraEntregaUi.exigeFirmaEntrega(_ordenActual),
+        exigeFoto: RemesaPuraEntregaUi.exigeFotoEntrega(
+          _ordenActual,
+          _fotoEntregaObligatoria,
+        ),
+      );
+
+  bool get _mostrarPanelProgresoEntrega {
+    if (_ordenActual.estado == 'ENTREGADO' ||
+        _ordenActual.estado == 'CANCELADA' ||
+        _ordenActual.tipoOrden == 'RECOGIDA') {
+      return false;
+    }
+    return _pasosEntregaRequeridos.isNotEmpty;
+  }
+
+  Future<void> _refrescarProgresoEntrega() async {
+    var p = await EntregaProgresoService.cargarOMaterializar(_ordenActual.id);
+    p = EntregaProgresoService.sincronizarConOrden(
+      base: p,
+      orden: _ordenActual,
+      tieneFoto: _tieneFotoEntregaResuelta(),
+      firmaUrl: _firmaUrl,
+    );
+    await EntregaProgresoService.guardar(p);
+    if (!mounted) return;
+    setState(() => _entregaProgreso = p);
+  }
+
+  Future<void> _completarPasoEntrega(
+    EntregaPaso paso,
+    String mensajeExito, {
+    String? etiquetaMonto,
+  }) async {
+    await EntregaProgresoService.marcarPaso(
+      _ordenActual.id,
+      paso,
+      etiquetaMonto: etiquetaMonto,
+    );
+    await _refrescarProgresoEntrega();
+    if (!mounted) return;
+    setState(() => _bannerExitoPasoEntrega = mensajeExito);
+    _mostrarMensaje(mensajeExito);
+    Future.delayed(const Duration(seconds: 6), () {
+      if (mounted && _bannerExitoPasoEntrega == mensajeExito) {
+        setState(() => _bannerExitoPasoEntrega = null);
+      }
+    });
+  }
+
+  Future<void> _aplicarCobroDesdeProgresoLocal() async {
+    if (!_ordenActual.requierePago || _ordenActual.pagado) return;
+    final ordenJson = _ordenActual.toJson();
+    ordenJson['pagado'] = true;
+    ordenJson['fecha_pago'] =
+        (_ordenActual.fechaPago ?? DateTime.now()).toIso8601String();
+    _ordenActual = Orden.fromJson(ordenJson);
+    await OrdenCacheService.updateCachedOrder(_ordenActual);
+  }
+
+  /// Tras marcar ENTREGADO, alinea saldo acumulado (método por orden) en BD.
+  Future<void> _sincronizarSaldoRepartidorTrasEntrega() async {
+    try {
+      final user = supabase.auth.currentUser;
+      if (user == null) return;
+      final row = await supabase
+          .from('usuarios')
+          .select('id')
+          .eq('auth_id', user.id)
+          .maybeSingle();
+      final repId = row?['id']?.toString();
+      if (repId == null || repId.isEmpty) return;
+      await supabase.rpc(
+        'repartidor_sincronizar_saldo_acumulado',
+        params: {'p_repartidor_id': repId},
+      );
+    } catch (e) {
+      print('⚠️ sync saldo repartidor tras entrega: $e');
+    }
   }
   
   // Suscribirse a cambios en tiempo real de la orden actual
@@ -989,7 +1081,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     
     return Scaffold(
       key: ValueKey('scaffold_$pickupKey'),
-      backgroundColor: const Color(0xFFF8F9FA),
+      backgroundColor: AppColors.darkBg,
       appBar: AppBar(
         title: Text('Orden #${widget.orden.numeroOrden.isNotEmpty ? widget.orden.numeroOrden : (widget.orden.id.length > 8 ? widget.orden.id.substring(0, 8) : widget.orden.id)}'),
         backgroundColor: const Color(0xFF2C3E50),
@@ -1010,6 +1102,22 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           children: [
             // Card principal con información básica
             _buildInfoCard(),
+            if (_bannerExitoPasoEntrega != null &&
+                _bannerExitoPasoEntrega!.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              EntregaPasoExitoBanner(mensaje: _bannerExitoPasoEntrega!),
+            ],
+            if (_mostrarPanelProgresoEntrega && _entregaProgreso != null) ...[
+              const SizedBox(height: 12),
+              EntregaProgresoPanel(
+                progreso: _entregaProgreso!,
+                pasosRequeridos: _pasosEntregaRequeridos,
+                siguientePaso: EntregaProgresoService.siguientePasoPendiente(
+                  progreso: _entregaProgreso!,
+                  requeridos: _pasosEntregaRequeridos,
+                ),
+              ),
+            ],
             if (_tieneFotoEntregaResuelta()) ...[
               const SizedBox(height: 12),
               Center(
@@ -4266,68 +4374,97 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     print('🔍 DEBUG - Foto obligatoria: $_fotoEntregaObligatoria');
     print('🔍 DEBUG - Tiene foto: ${_tieneFotoEntregaResuelta()}');
 
-    // Foto obligatoria: una sola vez (mismo flujo online/offline)
-    if (!await _asegurarFotoEntregaObligatoria()) {
-      _mostrarMensaje('❌ Se requiere la foto de entrega para marcar como entregada.');
-      return;
-    }
-    
-    // 🔄 FLUJO SECUENCIAL DE VALIDACIÓN Y ACCIONES
-    
-    // PASO 1: Validar y entregar REMESA (si tiene)
-    if (_ordenActual.tieneRemesa) {
-      print('📦 PASO 1: Validando remesa...');
-      final remesaEntregada = await _validarYEntregarRemesa();
-      if (!remesaEntregada) {
-        print('❌ Remesa no entregada, cancelando entrega');
-        return; // Usuario canceló o no entregó la remesa
+    await _refrescarProgresoEntrega();
+
+    // Foto obligatoria (omitir si ya quedó registrada en progreso local)
+    final fotoYaOk = _entregaProgreso?.fotoConfirmada == true &&
+        _tieneFotoEntregaResuelta();
+    if (!fotoYaOk) {
+      if (!await _asegurarFotoEntregaObligatoria()) {
+        _mostrarMensaje(
+          '❌ Se requiere la foto de entrega para marcar como entregada.',
+        );
+        return;
       }
-      print('✅ Remesa validada y entregada');
+      if (_tieneFotoEntregaResuelta() &&
+          RemesaPuraEntregaUi.exigeFotoEntrega(
+            _ordenActual,
+            _fotoEntregaObligatoria,
+          )) {
+        await _completarPasoEntrega(
+          EntregaPaso.foto,
+          'Foto de entrega guardada exitosamente',
+        );
+      }
     }
     
-    // PASO 2: Validar y cobrar PAGO (si requiere)
+    // 🔄 FLUJO SECUENCIAL: cobro → remesa → firma → bultos (progreso guardado en caché)
+    
+    // PASO 1: Cobrar al cliente (si aplica)
     if (_ordenActual.requierePago && !_ordenActual.pagado) {
-      print('💰 PASO 2: Validando pago...');
-      
-      // 🔒 CRÍTICO: Preservar foto y firma antes de recargar
-      final fotoAntesDePago = _fotoEntregaUrl;
-      final firmaAntesDePago = _firmaUrl;
-      
-      final pagoCobrado = await _validarYCobrarPago();
-      if (!pagoCobrado) {
-        print('❌ Pago no cobrado, cancelando entrega');
-        return; // Usuario canceló o no cobró el pago
-      }
-      
-      // Recargar orden para actualizar estado de pago
-      await _recargarOrden();
-      
-      // 🔒 CRÍTICO: Restaurar foto y firma después de recargar
-      if (fotoAntesDePago != null && fotoAntesDePago.isNotEmpty) {
-        _fotoEntregaUrl = fotoAntesDePago;
-        try {
-          final ordenJson = _ordenActual.toJson();
-          ordenJson['foto_entrega'] = fotoAntesDePago;
-          _ordenActual = Orden.fromJson(ordenJson);
-          print('✅ Foto preservada después de recargar por pago: $fotoAntesDePago');
-        } catch (e) {
-          print('⚠️ Error preservando foto después de recargar: $e');
+      if (_entregaProgreso?.cobroConfirmado == true) {
+        print('⏭️ Cobro ya confirmado (progreso local) — continuando');
+        await _aplicarCobroDesdeProgresoLocal();
+      } else {
+        print('💰 PASO 1: Validando cobro...');
+        final fotoAntesDePago = _fotoEntregaUrl;
+        final firmaAntesDePago = _firmaUrl;
+
+        final pagoCobrado = await _validarYCobrarPago();
+        if (!pagoCobrado) {
+          print('❌ Pago no cobrado, cancelando entrega');
+          return;
         }
-      }
-      
-      if (firmaAntesDePago != null && firmaAntesDePago.isNotEmpty) {
-        _firmaUrl = firmaAntesDePago;
-        try {
-          final ordenJson = _ordenActual.toJson();
-          ordenJson['firma_url'] = firmaAntesDePago;
-          _ordenActual = Orden.fromJson(ordenJson);
-          print('✅ Firma preservada después de recargar por pago: $firmaAntesDePago');
-        } catch (e) {
-          print('⚠️ Error preservando firma después de recargar: $e');
+
+        final simbolo = _ordenActual.moneda == 'USD' ? '\$' : '\$';
+        final etiqueta =
+            '$simbolo${_ordenActual.montoCobrar.toStringAsFixed(2)} ${_ordenActual.moneda}';
+        await _completarPasoEntrega(
+          EntregaPaso.cobro,
+          'Monto cobrado exitosamente',
+          etiquetaMonto: etiqueta,
+        );
+
+        await _recargarOrden();
+        if (fotoAntesDePago != null && fotoAntesDePago.isNotEmpty) {
+          _fotoEntregaUrl = fotoAntesDePago;
+          try {
+            final ordenJson = _ordenActual.toJson();
+            ordenJson['foto_entrega'] = fotoAntesDePago;
+            _ordenActual = Orden.fromJson(ordenJson);
+          } catch (_) {}
         }
+        if (firmaAntesDePago != null && firmaAntesDePago.isNotEmpty) {
+          _firmaUrl = firmaAntesDePago;
+          try {
+            final ordenJson = _ordenActual.toJson();
+            ordenJson['firma_url'] = firmaAntesDePago;
+            _ordenActual = Orden.fromJson(ordenJson);
+          } catch (_) {}
+        }
+        print('✅ Pago validado y cobrado');
       }
-      
-      print('✅ Pago validado y cobrado');
+    }
+    
+    // PASO 2: Entregar remesa (si aplica)
+    if (_ordenActual.tieneRemesa) {
+      if (_entregaProgreso?.remesaConfirmada == true) {
+        print('⏭️ Remesa ya confirmada (progreso local) — continuando');
+      } else {
+        print('📦 PASO 2: Validando remesa...');
+        final remesaEntregada = await _validarYEntregarRemesa();
+        if (!remesaEntregada) {
+          print('❌ Remesa no entregada, cancelando entrega');
+          return;
+        }
+        final montoRemesa = _ordenActual.cantidadRemesa ?? 0.0;
+        await _completarPasoEntrega(
+          EntregaPaso.remesa,
+          'Remesa entregada exitosamente',
+          etiquetaMonto: '\$${montoRemesa.toStringAsFixed(2)}',
+        );
+        print('✅ Remesa validada y entregada');
+      }
     }
     
     // PASO 3: FIRMA (la foto ya se validó al inicio del flujo)
@@ -4388,7 +4525,11 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       }
     }
     
-    if (_ordenActual.requiereFirma && !tieneFirma) {
+    if (_ordenActual.requiereFirma &&
+        _entregaProgreso?.firmaConfirmada == true &&
+        tieneFirma) {
+      print('⏭️ Firma ya confirmada (progreso local) — continuando');
+    } else if (_ordenActual.requiereFirma && !tieneFirma) {
       print('✍️ PASO 4: Firma requerida pero no obtenida, mostrando modal...');
       print('✍️ DEBUG - _firmaUrl: $_firmaUrl');
       print('✍️ DEBUG - _ordenActual.firmaUrl: ${_ordenActual.firmaUrl}');
@@ -4428,20 +4569,38 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       }
       
       print('✅ Firma capturada exitosamente: $_firmaUrl');
+      await _completarPasoEntrega(
+        EntregaPaso.firma,
+        'Firma del cliente guardada exitosamente',
+      );
     } else {
       print('✅ Firma validada (ya existe o no es obligatoria)');
       print('✍️ DEBUG - _firmaUrl: $_firmaUrl');
       print('✍️ DEBUG - _ordenActual.firmaUrl: ${_ordenActual.firmaUrl}');
+      if (tieneFirma && _entregaProgreso?.firmaConfirmada != true) {
+        await _completarPasoEntrega(
+          EntregaPaso.firma,
+          'Firma del cliente guardada exitosamente',
+        );
+      }
     }
     
     // PASO 5: Confirmación de bultos (solo si hay más de 1)
     if (_ordenActual.cantidadBultos > 1) {
-      print('📦 PASO 5: Confirmando cantidad de bultos...');
-      final confirmado = await _mostrarDialogoConfirmacionBultos();
-      if (!confirmado) {
-        return; // Usuario canceló
+      if (_entregaProgreso?.bultosConfirmados == true) {
+        print('⏭️ Bultos ya confirmados (progreso local)');
+      } else {
+        print('📦 PASO 5: Confirmando cantidad de bultos...');
+        final confirmado = await _mostrarDialogoConfirmacionBultos();
+        if (!confirmado) {
+          return;
+        }
+        await _completarPasoEntrega(
+          EntregaPaso.bultos,
+          'Bultos confirmados exitosamente',
+        );
+        print('✅ Bultos confirmados');
       }
-      print('✅ Bultos confirmados');
     }
 
     // Verificar que el widget esté montado antes de mostrar el diálogo final
@@ -4469,6 +4628,10 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       _ordenActual.estado = 'ENTREGADO';
       _ordenActual.fechaEntrega = DateTime.now();
       await OrdenCacheService.updateCachedOrder(_ordenActual);
+      await EntregaProgresoService.limpiar(_ordenActual.id);
+      if (mounted) {
+        setState(() => _bannerExitoPasoEntrega = null);
+      }
       
       // Obtener nombre del repartidor actual que está entregando
       String? nombreRepartidorActual;
@@ -4522,6 +4685,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           
           print('✅ Orden marcada como entregada en BD (online)');
           actualizadoExitosamente = true;
+          await _sincronizarSaldoRepartidorTrasEntrega();
           
           // Sincronizar con GoodBarber si la orden está vinculada
           try {
@@ -4712,6 +4876,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             _mostrarMensaje('✅ Orden entregada exitosamente');
             Navigator.pop(context, true);
           }
+          return;
         } catch (e) {
           print('⚠️ Error actualizando en BD (posible falta de conexión real): $e');
           print('📴 Agregando a cola de sincronización...');
@@ -5895,10 +6060,25 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             })
             .eq('id', widget.orden.id);
         
-        // Recargar la orden para reflejar el cambio
-        await _recargarOrden();
-        
-        _mostrarMensaje('✅ Dinero cobrado registrado. Ahora puedes entregar la orden.');
+        final ordenJson = _ordenActual.toJson();
+        ordenJson['pagado'] = true;
+        ordenJson['fecha_pago'] = DateTime.now().toIso8601String();
+        _ordenActual = Orden.fromJson(ordenJson);
+        await OrdenCacheService.updateCachedOrder(_ordenActual);
+
+        final simbolo = _ordenActual.moneda == 'USD' ? '\$' : '\$';
+        await _completarPasoEntrega(
+          EntregaPaso.cobro,
+          'Monto cobrado exitosamente',
+          etiquetaMonto:
+              '$simbolo${_ordenActual.montoCobrar.toStringAsFixed(2)} ${_ordenActual.moneda}',
+        );
+
+        try {
+          await _recargarOrden();
+        } catch (_) {}
+
+        _mostrarMensaje('✅ Monto cobrado exitosamente. Continúa con el resto del proceso.');
         
       } catch (e) {
         _mostrarMensaje('Error al registrar el cobro: $e');

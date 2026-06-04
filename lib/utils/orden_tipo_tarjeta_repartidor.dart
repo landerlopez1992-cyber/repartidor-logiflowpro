@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../config/app_colors.dart';
 import '../models/orden.dart';
 
 /// Tipo visual de tarjeta en la lista del repartidor (sin jerga técnica al usuario).
@@ -29,6 +30,8 @@ class OrdenTipoTarjetaInfo {
 
 class OrdenTipoTarjetaRepartidorUtil {
   OrdenTipoTarjetaRepartidorUtil._();
+
+  static const Color _fondoTarjeta = AppColors.darkSurface;
 
   static bool esRemesaPura(Orden orden) {
     if (!orden.tieneRemesa) return false;
@@ -72,48 +75,48 @@ class OrdenTipoTarjetaRepartidorUtil {
           tipo: OrdenTipoTarjetaRepartidor.remesaPura,
           etiqueta: 'Remesa',
           icono: Icons.payments_outlined,
-          colorAcento: Color(0xFF1565C0),
-          colorFondo: Color(0xFFE3F2FD),
+          colorAcento: Color(0xFF64B5F6),
+          colorFondo: _fondoTarjeta,
         );
       case OrdenTipoTarjetaRepartidor.recogidaDomicilio:
         return const OrdenTipoTarjetaInfo(
           tipo: OrdenTipoTarjetaRepartidor.recogidaDomicilio,
           etiqueta: 'Recogida',
           icono: Icons.home_work_outlined,
-          colorAcento: Color(0xFF6A1B9A),
-          colorFondo: Color(0xFFF3E5F5),
+          colorAcento: Color(0xFFCE93D8),
+          colorFondo: _fondoTarjeta,
         );
       case OrdenTipoTarjetaRepartidor.recogidaColaborador:
         return const OrdenTipoTarjetaInfo(
           tipo: OrdenTipoTarjetaRepartidor.recogidaColaborador,
           etiqueta: 'Recoger colaborador',
           icono: Icons.storefront_outlined,
-          colorAcento: Color(0xFFE65100),
-          colorFondo: Color(0xFFFFF3E0),
+          colorAcento: AppColors.botonPrincipal,
+          colorFondo: _fondoTarjeta,
         );
       case OrdenTipoTarjetaRepartidor.entregaColaborador:
         return const OrdenTipoTarjetaInfo(
           tipo: OrdenTipoTarjetaRepartidor.entregaColaborador,
           etiqueta: 'Pedido colaborador',
           icono: Icons.shopping_bag_outlined,
-          colorAcento: Color(0xFF00695C),
-          colorFondo: Color(0xFFE0F2F1),
+          colorAcento: Color(0xFF4DB6AC),
+          colorFondo: _fondoTarjeta,
         );
       case OrdenTipoTarjetaRepartidor.envioConRemesa:
         return const OrdenTipoTarjetaInfo(
           tipo: OrdenTipoTarjetaRepartidor.envioConRemesa,
           etiqueta: 'Envío + remesa',
           icono: Icons.local_shipping_outlined,
-          colorAcento: Color(0xFF0277BD),
-          colorFondo: Color(0xFFE1F5FE),
+          colorAcento: Color(0xFF4FC3F7),
+          colorFondo: _fondoTarjeta,
         );
       case OrdenTipoTarjetaRepartidor.envioPanel:
         return const OrdenTipoTarjetaInfo(
           tipo: OrdenTipoTarjetaRepartidor.envioPanel,
           etiqueta: 'Envío empresa',
           icono: Icons.inventory_2_outlined,
-          colorAcento: Color(0xFF37474F),
-          colorFondo: Color(0xFFECEFF1),
+          colorAcento: Color(0xFF90A4AE),
+          colorFondo: _fondoTarjeta,
         );
     }
   }

@@ -12,6 +12,7 @@ class RepartidorSolicitudPreview {
     this.ultimaNominaFecha,
     this.diasDesdeUltimaNomina = 0,
     this.montoEstimadoPorDia = 0,
+    this.diasLaborablesEtiqueta = '',
   });
 
   final String metodoPago;
@@ -23,6 +24,7 @@ class RepartidorSolicitudPreview {
   final DateTime? ultimaNominaFecha;
   final int diasDesdeUltimaNomina;
   final double montoEstimadoPorDia;
+  final String diasLaborablesEtiqueta;
 
   bool get esPorOrden => metodoPago == 'por_orden';
   bool get esPorDistancia => metodoPago == 'por_distancia';
@@ -67,6 +69,7 @@ class RepartidorSolicitudPagoService {
       montoEstimadoPorDia: montoDiaRaw is num
           ? montoDiaRaw.toDouble()
           : double.tryParse('$montoDiaRaw') ?? 0,
+      diasLaborablesEtiqueta: map['dias_laborables_etiqueta']?.toString() ?? '',
     );
   }
 

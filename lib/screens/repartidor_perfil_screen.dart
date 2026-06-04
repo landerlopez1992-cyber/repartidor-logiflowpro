@@ -15,6 +15,10 @@ import '../services/sesion_offline_cleanup.dart';
 import '../services/auth_error_handler.dart';
 import '../services/repartidor_notificaciones_push_service.dart';
 import '../services/repartidor_saldo_service.dart';
+import '../services/repartidor_solicitud_pago_service.dart';
+import '../widgets/repartidor_solicitud_pago_dialogs.dart';
+import '../services/repartidor_historial_pago_service.dart';
+import '../widgets/historial_pago_detalle_card.dart';
 
 class RepartidorPerfilScreen extends StatefulWidget {
   const RepartidorPerfilScreen({super.key});
@@ -42,13 +46,13 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   double _totalDineroRemesas = 0.0;
   int _totalOrdenesCobradas = 0;
   
-  // Historial de pagos
-  List<Map<String, dynamic>> _historialPagos = [];
+  List<HistorialNominaItem> _historialNomina = [];
   bool _cargandoHistorial = false;
   
-  // Saldo del repartidor (pagos aceptados)
   double _saldo = 0.0;
-  String _monedaSaldo = 'CUP';
+  String _monedaSaldo = 'USD';
+  String _metodoPago = 'por_orden';
+  RepartidorSolicitudPreview? _previewPago;
   RealtimeChannel? _channelPagos;
   
   // Estado de conexión
@@ -149,20 +153,13 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             _isLoading = false;
           });
 
-          // Solo cargar estadísticas, historial y saldo si NO es recolector
           if (!_esRecolector) {
-            // Cargar estadísticas semanales
             await _cargarEstadisticasSemanales();
-            
-            // Cargar historial de pagos
-            await _cargarHistorialPagos();
-            
-            // Cargar saldo del repartidor
-            await _cargarSaldo();
-            
-            // Suscribirse a cambios en solicitudes de pago
-            _suscribirseACambiosPagos();
           }
+          await _cargarHistorialPagos();
+          await _cargarSaldo();
+          await _cargarPreviewPago();
+          _suscribirseACambiosPagos();
         } catch (e) {
           // Si no encuentra por auth_id, intentar por email
           if (user.email != null) {
@@ -197,13 +194,13 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                 _isLoading = false;
               });
 
-              // Solo cargar estadísticas, historial y saldo si NO es recolector
               if (!_esRecolector) {
                 await _cargarEstadisticasSemanales();
-                await _cargarHistorialPagos();
-                await _cargarSaldo();
-                _suscribirseACambiosPagos();
               }
+              await _cargarHistorialPagos();
+              await _cargarSaldo();
+              await _cargarPreviewPago();
+              _suscribirseACambiosPagos();
             } catch (e2) {
               print('⚠️ Error cargando desde Supabase, usando caché: $e2');
               await _cargarDesdeCache();
@@ -285,7 +282,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     try {
       final historialCache = await RepartidorPerfilCacheService.getCachedHistorialPagos();
       setState(() {
-        _historialPagos = historialCache;
+        _historialNomina =
+            historialCache.map((s) => HistorialNominaItem(solicitud: s)).toList();
         _cargandoHistorial = false;
       });
       print('💾 Historial de pagos cargado desde caché: ${historialCache.length} registros');
@@ -582,7 +580,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.fondoGeneral,
+      backgroundColor: AppColors.darkBg,
       appBar: AppBar(
         backgroundColor: AppColors.header,
         title: const Text(
@@ -634,20 +632,14 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                         _buildFotoPerfil(),
                         const SizedBox(height: 24),
 
-                        // Solo mostrar estadísticas, pagos y saldo si NO es recolector
                         if (!_esRecolector) ...[
-                          // Estadísticas
                           _buildEstadisticas(),
                           const SizedBox(height: 24),
-
-                          // Botón Solicitar Pago
-                          _buildBotonSolicitarPago(),
-                          const SizedBox(height: 24),
-
-                          // Historial de Pagos
-                          _buildHistorialPagos(),
-                          const SizedBox(height: 24),
                         ],
+                        _buildBotonSolicitarPago(),
+                        const SizedBox(height: 24),
+                        _buildHistorialPagos(),
+                        const SizedBox(height: 24),
 
                         // Información personal (siempre visible)
                         _buildInformacionPersonal(),
@@ -780,26 +772,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
       ),
         ),
         const SizedBox(height: 12),
-        // Saldo del repartidor
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          decoration: BoxDecoration(
-            color: const Color(0xFF4CAF50).withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: const Color(0xFF4CAF50),
-              width: 1.5,
-            ),
-          ),
-          child: Text(
-            'Saldo ${_saldo.toStringAsFixed(2)} $_monedaSaldo',
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF4CAF50),
-            ),
-          ),
-        ),
+        _buildResumenPagoChip(),
       ],
     );
   }
@@ -808,15 +781,9 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.darkSurface,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: AppColors.darkBorder),
       ),
       child: Column(
         children: [
@@ -828,7 +795,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
-                  color: AppColors.textoPrincipal,
+                  color: AppColors.darkText,
                 ),
               ),
               Container(
@@ -932,15 +899,9 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.darkSurface,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: AppColors.darkBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -950,7 +911,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
-              color: Color(0xFF2C2C2C),
+              color: AppColors.darkText,
             ),
           ),
           const SizedBox(height: 16),
@@ -1148,7 +1109,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                 child: Text(
                   'Cambiar Contraseña',
                   style: TextStyle(
-                    color: Color(0xFF2C2C2C),
+                    color: AppColors.darkText,
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
                   ),
@@ -1427,7 +1388,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             Text(
               'Cerrar Sesión',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.darkText,
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),
@@ -1534,19 +1495,13 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
 
     if (isOnline) {
       try {
-        final response = await supabase
-            .from('solicitudes_pago_repartidores')
-            .select('*')
-            .eq('repartidor_id', _repartidorId!)
-            .order('fecha_solicitud', ascending: false);
-
-        final historial = List<Map<String, dynamic>>.from(response);
-        
-        // Guardar en caché
-        await RepartidorPerfilCacheService.cacheHistorialPagos(historial);
+        final items = await RepartidorHistorialPagoService.cargarHistorial(_repartidorId!);
+        await RepartidorPerfilCacheService.cacheHistorialPagos(
+          items.map((n) => n.solicitud).toList(),
+        );
 
         setState(() {
-          _historialPagos = historial;
+          _historialNomina = items;
           _cargandoHistorial = false;
         });
       } catch (e) {
@@ -1560,20 +1515,64 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     }
   }
 
+  Widget _buildResumenPagoChip() {
+    final p = _previewPago;
+    String texto;
+    Color color = const Color(0xFF4CAF50);
+    if (p?.esPorDistancia == true) {
+      final u = p!.unidadEsMilla ? 'milla' : 'km';
+      texto = 'Pago por recorrido · ${p.tarifa.toStringAsFixed(2)} ${p.moneda}/$u';
+      color = const Color(0xFFFF9800);
+    } else if (p?.esPorDia == true) {
+      final lab = p!.diasLaborablesEtiqueta;
+      texto = lab.isNotEmpty
+          ? '${p.diasDesdeUltimaNomina} días laborables ($lab)'
+          : '${p.diasDesdeUltimaNomina} días laborables';
+      color = const Color(0xFFFF9800);
+    } else {
+      texto = 'Saldo ${_saldo.toStringAsFixed(2)} $_monedaSaldo';
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color, width: 1.5),
+      ),
+      child: Text(
+        texto,
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: color),
+      ),
+    );
+  }
+
+  Future<void> _cargarPreviewPago() async {
+    if (_repartidorId == null || !_isOnline) return;
+    try {
+      final p = await RepartidorSolicitudPagoService.cargarPreview(_repartidorId!);
+      if (!mounted || p == null) return;
+      setState(() {
+        _previewPago = p;
+        _metodoPago = p.metodoPago;
+        if (p.esPorOrden) {
+          _saldo = p.saldoAcumulado;
+          _monedaSaldo = p.moneda;
+        }
+      });
+    } catch (e) {
+      print('⚠️ Preview solicitud pago: $e');
+    }
+  }
+
   Widget _buildBotonSolicitarPago() {
     return Center(
       child: Container(
         constraints: const BoxConstraints(maxWidth: 300),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.darkSurface,
           borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 10,
-              offset: const Offset(0, 2),
-            ),
-          ],
+          border: Border.all(color: AppColors.darkBorder),
         ),
         child: ElevatedButton.icon(
           onPressed: _mostrarModalSolicitarPago,
@@ -1599,676 +1598,160 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     );
   }
 
-  Future<void> _mostrarModalSolicitarPago() async {
-    final montoController = TextEditingController(
-      text: _saldo > 0 ? _saldo.toStringAsFixed(2) : '',
-    );
-    final kilometrosController = TextEditingController();
-    String monedaSeleccionada = _monedaSaldo;
-    
-    // Obtener órdenes entregadas NO pagadas en tiempo real
-    List<Map<String, dynamic>> ordenesEntregadas = [];
-    int totalOrdenes = 0;
-    
-    try {
-      final nombreRepartidor = _nombreController.text.trim();
-      
-      // IMPORTANTE: Solo contar órdenes ENTREGADAS (no pendientes) y NO pagadas
-      // Esto previene que el repartidor cobre 2 veces por las mismas órdenes
-      
-      print('🔍 Buscando órdenes ENTREGADAS y NO pagadas para: $nombreRepartidor');
-      print('🔍 Repartidor ID: $_repartidorId');
-      
-      // Obtener SOLO órdenes realmente ENTREGADAS (excluir ATRASADO, CANCELADA, etc.)
-      // IMPORTANTE: Solo contar órdenes con estado = 'ENTREGADO' y que tengan fecha_entrega
-      // CRÍTICO: Filtrar órdenes NO pagadas directamente en la consulta
-      // NOTA: Hacer JOIN con emisores para obtener el nombre del emisor
-      final todasLasOrdenes = await supabase
-          .from('ordenes')
-          .select('id, numero_orden, emisor_id, receptor, fecha_entrega, pagada, solicitud_pago_id, estado, fecha_estimada_entrega, emisores!left(nombre)')
-          .eq('repartidor_nombre', nombreRepartidor)
-          .eq('estado', 'ENTREGADO') // SOLO órdenes realmente ENTREGADAS (no ATRASADO, no CANCELADA)
-          .not('fecha_entrega', 'is', null) // Debe tener fecha_entrega (confirmación de entrega real)
-          .or('pagada.is.null,pagada.eq.false') // SOLO órdenes NO pagadas (null o false)
-          .order('fecha_entrega', ascending: false);
-      
-      print('📦 Total de órdenes ENTREGADAS encontradas (sin filtrar): ${todasLasOrdenes.length}');
-      
-      // PRIMERO: Obtener todas las solicitudes ACEPTADAS del repartidor para excluir sus órdenes
-      final solicitudesAceptadas = await supabase
-          .from('solicitudes_pago_repartidores')
-          .select('ordenes_incluidas')
-          .eq('repartidor_id', _repartidorId!)
-          .eq('estado', 'ACEPTADO');
-      
-      print('🔍 Solicitudes ACEPTADAS encontradas: ${solicitudesAceptadas.length}');
-      
-      // Extraer todos los IDs de órdenes que están en solicitudes ACEPTADAS
-      final Set<String> ordenesEnPagosAceptados = {};
-      for (var solicitud in solicitudesAceptadas) {
-        final ordenesIncluidas = solicitud['ordenes_incluidas'] as List<dynamic>?;
-        if (ordenesIncluidas != null) {
-          for (var ordenId in ordenesIncluidas) {
-            ordenesEnPagosAceptados.add(ordenId.toString());
-          }
+  Future<List<String>> _obtenerOrdenesIdsParaSolicitud() async {
+    final nombre = _nombreController.text.trim();
+    final estadoObjetivo = _esRecolector ? 'RECOGIDO' : 'ENTREGADO';
+
+    final todas = await supabase
+        .from('ordenes')
+        .select('id, pagada, estado, fecha_entrega, tipo_orden')
+        .eq('repartidor_nombre', nombre)
+        .eq('estado', estadoObjetivo)
+        .not('fecha_entrega', 'is', null)
+        .or('pagada.is.null,pagada.eq.false');
+
+    final solicitudesAceptadas = await supabase
+        .from('solicitudes_pago_repartidores')
+        .select('ordenes_incluidas')
+        .eq('repartidor_id', _repartidorId!)
+        .eq('estado', 'ACEPTADO');
+
+    final enPagos = <String>{};
+    for (final s in solicitudesAceptadas) {
+      final ids = s['ordenes_incluidas'] as List<dynamic>?;
+      if (ids != null) {
+        for (final id in ids) {
+          enPagos.add(id.toString());
         }
       }
-      
-      print('🔍 Órdenes en pagos ACEPTADOS: ${ordenesEnPagosAceptados.length}');
-      if (ordenesEnPagosAceptados.isNotEmpty) {
-        print('🔍 IDs de órdenes excluidas: $ordenesEnPagosAceptados');
-      }
-      
-      // SEGUNDO: Filtrar órdenes que NO estén pagadas Y NO estén en solicitudes ACEPTADAS
-      // También verificar que NO sea una orden atrasada (fecha_estimada_entrega pasada pero no entregada)
-      final ordenesFiltradas = <Map<String, dynamic>>[];
-      
-      for (var orden in todasLasOrdenes) {
-        final ordenId = orden['id']?.toString() ?? '';
-        final pagada = orden['pagada'] == true;
-        final solicitudPagoId = orden['solicitud_pago_id']?.toString();
-        final estado = orden['estado']?.toString() ?? '';
-        final fechaEntrega = orden['fecha_entrega'];
-        print('🔍 Orden ${orden['numero_orden']} (ID: $ordenId): estado=$estado, pagada=$pagada, solicitud_pago_id=$solicitudPagoId');
-        
-        // Verificar que el estado sea realmente ENTREGADO (doble verificación)
-        if (estado != 'ENTREGADO') {
-          print('⚠️ Orden ${orden['numero_orden']} excluida: estado=$estado (no es ENTREGADO)');
-          continue;
-        }
-        
-        // Verificar que tenga fecha_entrega (confirmación de entrega real)
-        if (fechaEntrega == null) {
-          print('⚠️ Orden ${orden['numero_orden']} excluida: no tiene fecha_entrega');
-          continue;
-        }
-        
-        // Si la orden está marcada como pagada, NO incluirla
-        if (pagada) {
-          print('⚠️ Orden ${orden['numero_orden']} excluida: está marcada como pagada');
-          continue;
-        }
-        
-        // Si la orden está en una solicitud ACEPTADA, NO incluirla
-        if (ordenesEnPagosAceptados.contains(ordenId)) {
-          print('⚠️ Orden ${orden['numero_orden']} excluida: está en solicitud ACEPTADA');
-          continue;
-        }
-        
-        // Si llegamos aquí, la orden es válida
-        ordenesFiltradas.add(orden);
-        print('✅ Orden ${orden['numero_orden']} incluida');
-      }
-      
-      ordenesEntregadas = ordenesFiltradas;
-      totalOrdenes = ordenesEntregadas.length;
-      print('📦 Total de órdenes entregadas encontradas (después de filtrar): $totalOrdenes');
-    } catch (e) {
-      print('❌ Error obteniendo órdenes entregadas: $e');
-      totalOrdenes = _ordenesEntregadas; // Usar el valor cacheado como fallback
-      print('📦 Usando valor cacheado: $totalOrdenes');
     }
 
-    final resultado = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setStateDialog) => AlertDialog(
-          backgroundColor: const Color(0xFFFFFFFF),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: Row(
-            children: [
-              const Icon(Icons.payment, color: Color(0xFFFF9800), size: 28),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Text(
-                  'Solicitar Pago',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF2C2C2C),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE8F5E9),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFF4CAF50)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.account_balance_wallet, color: Color(0xFF4CAF50), size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Saldo disponible: \$${_saldo.toStringAsFixed(2)} $_monedaSaldo',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF2E7D32),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE3F2FD),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFF1976D2)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.info_outline, color: Color(0xFF1976D2), size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          totalOrdenes == 0 
-                            ? 'Total de órdenes entregadas: 0 (puedes solicitar pago por kilómetros recorridos)'
-                            : 'Total de órdenes entregadas: $totalOrdenes',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF1976D2),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (ordenesEntregadas.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Órdenes incluidas en esta solicitud:',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF2C2C2C),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    constraints: const BoxConstraints(maxHeight: 200),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF5F5F5),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFFE0E0E0)),
-                    ),
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: ordenesEntregadas.length,
-                      itemBuilder: (context, index) {
-                        final orden = ordenesEntregadas[index];
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 24,
-                                height: 24,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF4CAF50),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(
-                                  Icons.check,
-                                  size: 16,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Orden #${orden['numero_orden'] ?? orden['id']}',
-                                      style: const TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w600,
-                                        color: Color(0xFF2C2C2C),
-                                      ),
-                                    ),
-                                    Text(
-                                      '${(orden['emisores'] as Map<String, dynamic>?)?['nombre'] ?? 'Sin emisor'} → ${orden['receptor'] ?? ''}',
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: Color(0xFF666666),
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    const Text(
-                      'Monto a solicitar:',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF2C2C2C),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    const Text(
-                      '*',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.red,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: montoController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                    hintText: 'Ej: 30.00',
-                    prefixIcon: const Icon(Icons.attach_money, color: Color(0xFFFF9800)),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(color: Color(0xFFFF9800)),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    const Text(
-                      'Kilómetros recorridos:',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF2C2C2C),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    const Text(
-                      '*',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.red,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: kilometrosController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                    hintText: 'Ej: 150.5',
-                    prefixIcon: const Icon(Icons.directions_car, color: Color(0xFFFF9800)),
-                    suffixText: 'km',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(color: Color(0xFFFF9800)),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Moneda:',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF2C2C2C),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ChoiceChip(
-                        label: const Text('CUP'),
-                        selected: monedaSeleccionada == 'CUP',
-                        onSelected: (selected) {
-                          if (selected) {
-                            setStateDialog(() {
-                              monedaSeleccionada = 'CUP';
-                            });
-                          }
-                        },
-                        selectedColor: const Color(0xFFFF9800),
-                        labelStyle: TextStyle(
-                          color: monedaSeleccionada == 'CUP' ? Colors.white : const Color(0xFF666666),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ChoiceChip(
-                        label: const Text('USD'),
-                        selected: monedaSeleccionada == 'USD',
-                        onSelected: (selected) {
-                          if (selected) {
-                            setStateDialog(() {
-                              monedaSeleccionada = 'USD';
-                            });
-                          }
-                        },
-                        selectedColor: const Color(0xFFFF9800),
-                        labelStyle: TextStyle(
-                          color: monedaSeleccionada == 'USD' ? Colors.white : const Color(0xFF666666),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                // Cerrar el modal de forma segura
-                try {
-                  Navigator.of(context).pop(false);
-                } catch (e) {
-                  print('❌ Error cerrando modal: $e');
-                }
-              },
-              style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFF666666),
-              ),
-              child: const Text('Cancelar'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                final monto = double.tryParse(montoController.text.trim());
-                final kilometros = double.tryParse(kilometrosController.text.trim());
-                
-                if (monto == null || monto <= 0) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Por favor ingresa un monto válido'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                  return;
-                }
-                if (monto > _saldo + 0.001) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        'El monto no puede superar tu saldo (\$${_saldo.toStringAsFixed(2)} $_monedaSaldo)',
-                      ),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                  return;
-                }
-                
-                // Validar kilómetros (obligatorio)
-                if (kilometros == null || kilometros <= 0) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Por favor ingresa los kilómetros recorridos'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                  return;
-                }
-                
-                Navigator.of(context).pop(true);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFFF9800),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              child: const Text('Solicitar Pago'),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    // Hacer dispose de los controllers de forma segura
-    try {
-      if (resultado == true) {
-        // Leer los valores antes de hacer dispose
-        final montoTexto = montoController.text.trim();
-        final kilometrosTexto = kilometrosController.text.trim();
-        
-        // Solo procesar si ambos campos tienen contenido
-        if (montoTexto.isNotEmpty && kilometrosTexto.isNotEmpty) {
-          final monto = double.tryParse(montoTexto);
-          final kilometros = double.tryParse(kilometrosTexto);
-          // Validar que ambos campos estén completos (ya se validaron en el modal, pero verificamos de nuevo)
-          if (monto != null && monto > 0 && kilometros != null && kilometros > 0 && _repartidorId != null && _tenantId != null) {
-            await _solicitarPago(monto, monedaSeleccionada, kilometros);
-          } else {
-            if (mounted) {
-              _mostrarMensaje('Error: Todos los campos son obligatorios', Colors.red);
-            }
-          }
-        }
-      }
-    } catch (e) {
-      print('❌ Error procesando solicitud de pago: $e');
-    } finally {
-      // Siempre hacer dispose de los controllers de forma segura
-      try {
-        montoController.dispose();
-      } catch (e) {
-        print('⚠️ Error haciendo dispose de montoController: $e');
-      }
-      try {
-        kilometrosController.dispose();
-      } catch (e) {
-        print('⚠️ Error haciendo dispose de kilometrosController: $e');
-      }
+    final out = <String>[];
+    for (final orden in todas) {
+      final id = orden['id']?.toString() ?? '';
+      if (id.isEmpty || orden['pagada'] == true) continue;
+      if (_esRecolector && (orden['tipo_orden']?.toString().toUpperCase() != 'RECOGIDA')) continue;
+      if (enPagos.contains(id)) continue;
+      out.add(id);
     }
+    return out;
   }
 
-  Future<void> _solicitarPago(double monto, String moneda, double kilometros) async {
-    if (_repartidorId == null || _tenantId == null) {
-      _mostrarMensaje('Error: No se pudo obtener información del repartidor', Colors.red);
-      return;
-    }
+  Future<void> _enviarSolicitudPago({
+    double? monto,
+    String? moneda,
+    List<String> ordenesIds = const [],
+    double? kilometros,
+    int? diasTrabajados,
+  }) async {
+    if (_repartidorId == null || _tenantId == null) return;
 
+    setState(() => _isLoading = true);
     try {
-      setState(() {
-        _isLoading = true;
-      });
-
-      final nombreRepartidor = _nombreController.text.trim();
-      
-      // IMPORTANTE: Obtener SOLO órdenes ENTREGADAS (no pendientes) y NO pagadas
-      // Esto previene que el repartidor cobre 2 veces por las mismas órdenes
-      
-      print('🔍 Obteniendo IDs de órdenes ENTREGADAS y NO pagadas para solicitud de pago');
-      print('🔍 Repartidor: $nombreRepartidor, ID: $_repartidorId');
-      
-      // Obtener SOLO órdenes realmente ENTREGADAS (excluir ATRASADO, CANCELADA, etc.)
-      // IMPORTANTE: Solo contar órdenes con estado = 'ENTREGADO' y que tengan fecha_entrega
-      // CRÍTICO: Filtrar órdenes NO pagadas directamente en la consulta
-      final todasLasOrdenes = await supabase
-          .from('ordenes')
-          .select('id, pagada, estado, fecha_entrega')
-          .eq('repartidor_nombre', nombreRepartidor)
-          .eq('estado', 'ENTREGADO') // SOLO órdenes realmente ENTREGADAS (no ATRASADO, no CANCELADA)
-          .not('fecha_entrega', 'is', null) // Debe tener fecha_entrega (confirmación de entrega real)
-          .or('pagada.is.null,pagada.eq.false'); // SOLO órdenes NO pagadas (null o false)
-      
-      print('📦 Total de órdenes ENTREGADAS encontradas (sin filtrar): ${todasLasOrdenes.length}');
-      
-      // PRIMERO: Obtener todas las solicitudes ACEPTADAS del repartidor para excluir sus órdenes
-      final solicitudesAceptadas = await supabase
-          .from('solicitudes_pago_repartidores')
-          .select('ordenes_incluidas')
-          .eq('repartidor_id', _repartidorId!)
-          .eq('estado', 'ACEPTADO');
-      
-      print('🔍 Solicitudes ACEPTADAS encontradas: ${solicitudesAceptadas.length}');
-      
-      // Extraer todos los IDs de órdenes que están en solicitudes ACEPTADAS
-      final Set<String> ordenesEnPagosAceptados = {};
-      for (var solicitud in solicitudesAceptadas) {
-        final ordenesIncluidas = solicitud['ordenes_incluidas'] as List<dynamic>?;
-        if (ordenesIncluidas != null) {
-          for (var ordenId in ordenesIncluidas) {
-            ordenesEnPagosAceptados.add(ordenId.toString());
-          }
-        }
-      }
-      
-      print('🔍 Órdenes en pagos ACEPTADOS: ${ordenesEnPagosAceptados.length}');
-      
-      // SEGUNDO: Filtrar órdenes que NO estén pagadas Y NO estén en solicitudes ACEPTADAS
-      // También verificar que NO sea una orden atrasada
-      List<String> ordenesIds = [];
-      for (var orden in todasLasOrdenes) {
-        final ordenId = orden['id']?.toString() ?? '';
-        final pagada = orden['pagada'] == true;
-        final estado = orden['estado']?.toString() ?? '';
-        final fechaEntrega = orden['fecha_entrega'];
-        
-        // Verificar que el estado sea realmente ENTREGADO (doble verificación)
-        if (estado != 'ENTREGADO') {
-          print('⚠️ Orden $ordenId excluida: estado=$estado (no es ENTREGADO)');
-          continue;
-        }
-        
-        // Verificar que tenga fecha_entrega (confirmación de entrega real)
-        if (fechaEntrega == null) {
-          print('⚠️ Orden $ordenId excluida: no tiene fecha_entrega');
-          continue;
-        }
-        
-        // Si la orden está marcada como pagada, NO incluirla
-        if (pagada) {
-          print('⚠️ Orden $ordenId excluida: está marcada como pagada');
-          continue;
-        }
-        
-        // Si la orden está en una solicitud ACEPTADA, NO incluirla
-        if (ordenesEnPagosAceptados.contains(ordenId)) {
-          print('⚠️ Orden $ordenId excluida: está en solicitud ACEPTADA');
-          continue;
-        }
-        
-        // Si llegamos aquí, la orden es válida
-        ordenesIds.add(ordenId);
-        print('✅ Orden $ordenId incluida');
-      }
-      
-      print('📦 Total de órdenes válidas para solicitud: ${ordenesIds.length}');
-
-      print('📦 Órdenes incluidas en la solicitud: ${ordenesIds.length}');
-      print('📦 IDs: $ordenesIds');
-      print('🚗 Kilómetros recorridos: $kilometros');
-
-      final insertData = {
-        'repartidor_id': _repartidorId,
-        'repartidor_nombre': nombreRepartidor,
-        'tenant_id': _tenantId,
-        'monto': monto,
-        'moneda': moneda,
-        'estado': 'PENDIENTE',
-        'total_ordenes_entregadas': ordenesIds.length,
-        'ordenes_incluidas': ordenesIds, // Guardar array de IDs
-        'kilometros_recorridos': kilometros, // Kilómetros son obligatorios
-      };
-
-      if (monto > _saldo + 0.001) {
-        _mostrarMensaje(
-          'El monto no puede ser mayor que tu saldo (\$${_saldo.toStringAsFixed(2)} $_monedaSaldo)',
-          Colors.red,
-        );
-        return;
-      }
-
-      final rpc = await supabase.rpc(
-        'repartidor_crear_solicitud_pago',
-        params: {
-          'p_repartidor_id': _repartidorId,
-          'p_monto': monto,
-          'p_moneda': moneda,
-          'p_total_ordenes': ordenesIds.length,
-          'p_ordenes_incluidas': ordenesIds,
-          'p_kilometros_recorridos': kilometros,
-          'p_repartidor_nombre': nombreRepartidor,
-          'p_tenant_id': _tenantId,
-        },
+      final map = await RepartidorSolicitudPagoService.crearSolicitud(
+        repartidorId: _repartidorId!,
+        tenantId: _tenantId!,
+        repartidorNombre: _nombreController.text.trim(),
+        moneda: moneda ?? _monedaSaldo,
+        monto: monto,
+        totalOrdenes: ordenesIds.length,
+        ordenesIds: ordenesIds,
+        kilometrosRecorridos: kilometros,
+        diasTrabajados: diasTrabajados,
       );
 
-      final map = rpc is Map ? Map<String, dynamic>.from(rpc) : <String, dynamic>{};
       if (map['ok'] != true) {
         final err = map['error']?.toString() ?? 'error';
         if (err == 'saldo_insuficiente') {
-          final disp = map['saldo'];
-          final s = disp is num ? disp.toDouble() : _saldo;
-          _mostrarMensaje(
-            'Saldo insuficiente. Disponible: \$${s.toStringAsFixed(2)} $moneda',
-            Colors.red,
-          );
+          final s = map['saldo'];
+          final disp = s is num ? s.toDouble() : _saldo;
+          _mostrarMensaje('Saldo insuficiente. Disponible: ${disp.toStringAsFixed(2)}', Colors.red);
+        } else if (err == 'solicitud_pendiente_existe') {
+          _mostrarMensaje('Ya tienes una solicitud pendiente', Colors.orange);
+        } else if (err == 'kilometros_requeridos') {
+          _mostrarMensaje('Debes indicar el recorrido total', Colors.red);
+        } else if (err == 'sin_dias_trabajados') {
+          _mostrarMensaje('No hay días nuevos desde la última nómina', Colors.orange);
+        } else if (err == 'tarifa_no_configurada') {
+          _mostrarMensaje('Tu empresa debe configurar la tarifa de pago', Colors.red);
         } else {
-          _mostrarMensaje('No se pudo crear la solicitud ($err)', Colors.red);
+          _mostrarMensaje('No se pudo enviar la solicitud', Colors.red);
         }
         return;
       }
 
-      _mostrarMensaje('Solicitud de pago enviada correctamente por ${ordenesIds.length} órdenes', Colors.green);
+      _mostrarMensaje('Solicitud de pago enviada correctamente', Colors.green);
       await _cargarSaldo();
+      await _cargarPreviewPago();
       await _cargarHistorialPagos();
-      
-      // No cerrar la pantalla, solo mostrar mensaje
-      // El saldo se actualizará automáticamente vía suscripción Realtime
     } catch (e) {
-      print('❌ Error solicitando pago: $e');
-      _mostrarMensaje('Error al solicitar pago: $e', Colors.red);
+      _mostrarMensaje('Error al solicitar pago', Colors.red);
+      print('❌ Solicitud pago: $e');
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Future<void> _mostrarModalSolicitarPago() async {
+    if (!_isOnline) {
+      _mostrarMensaje('Necesitas conexión para solicitar el pago', Colors.orange);
+      return;
+    }
+    if (_repartidorId == null) return;
+
+    await _cargarPreviewPago();
+    final preview = _previewPago;
+    if (preview == null) {
+      _mostrarMensaje('No se pudo cargar la configuración de pago', Colors.red);
+      return;
+    }
+    if (preview.solicitudPendiente) {
+      _mostrarMensaje('Ya tienes una solicitud de pago pendiente', Colors.orange);
+      return;
+    }
+    if (preview.tarifa <= 0) {
+      _mostrarMensaje('Tu empresa aún no configuró la tarifa de pago', Colors.red);
+      return;
+    }
+
+    if (preview.esPorDistancia) {
+      final r = await RepartidorSolicitudPagoDialogs.modalPorDistancia(context, preview);
+      if (r == null || !mounted) return;
+      await _enviarSolicitudPago(
+        moneda: preview.moneda,
+        kilometros: r.distancia,
+      );
+      return;
+    }
+
+    if (preview.esPorDia) {
+      final ok = await RepartidorSolicitudPagoDialogs.modalPorDia(context, preview);
+      if (ok != true || !mounted) return;
+      await _enviarSolicitudPago(
+        moneda: preview.moneda,
+        diasTrabajados: preview.diasDesdeUltimaNomina,
+      );
+      return;
+    }
+
+    final ordenesIds = await _obtenerOrdenesIdsParaSolicitud();
+    if (_saldo <= 0 && ordenesIds.isEmpty) {
+      _mostrarMensaje('No tienes saldo ni órdenes pendientes de cobro', Colors.orange);
+      return;
+    }
+
+    final r = await RepartidorSolicitudPagoDialogs.modalPorOrden(
+      context,
+      saldo: _saldo,
+      moneda: _monedaSaldo,
+      totalOrdenes: ordenesIds.length,
+    );
+    if (r == null || !mounted) return;
+    await _enviarSolicitudPago(
+      monto: r.monto,
+      moneda: r.moneda,
+      ordenesIds: ordenesIds,
+    );
   }
 
   Widget _buildHistorialPagos() {
@@ -2289,15 +1772,9 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.darkSurface,
           borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 10,
-              offset: const Offset(0, 2),
-            ),
-          ],
+          border: Border.all(color: AppColors.darkBorder),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2310,13 +1787,13 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
-                    color: AppColors.textoPrincipal,
+                    color: AppColors.darkText,
                   ),
                 ),
                 const Icon(
                   Icons.arrow_forward_ios,
                   size: 16,
-                  color: Color(0xFF666666),
+                  color: AppColors.darkTextMuted,
                 ),
               ],
             ),
@@ -2328,27 +1805,30 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                   child: CircularProgressIndicator(),
                 ),
               )
-            else if (_historialPagos.isEmpty)
+            else if (_historialNomina.isEmpty)
               const Center(
                 child: Padding(
                   padding: EdgeInsets.all(16.0),
                   child: Text(
-                    'No hay solicitudes de pago',
+                    'Sin nóminas registradas. Al solicitar y cobrar un pago verás el detalle aquí.',
+                    textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 14,
-                      color: Color(0xFF666666),
+                      color: AppColors.darkTextMuted,
                     ),
                   ),
                 ),
               )
             else
-              ..._historialPagos.take(2).map((pago) => _buildItemHistorialPago(pago)),
-            if (_historialPagos.length > 2)
+              ..._historialNomina
+                  .take(2)
+                  .map((item) => HistorialPagoDetalleCard(item: item, expanded: false)),
+            if (_historialNomina.length > 2)
               Padding(
                 padding: const EdgeInsets.only(top: 8.0),
                 child: Center(
                   child: Text(
-                    'Toca cualquier tarjeta para ver más (${_historialPagos.length} total)',
+                    'Ver historial completo (${_historialNomina.length} registros)',
                     style: const TextStyle(
                       fontSize: 12,
                       color: Color(0xFFFF9800),
@@ -2361,136 +1841,6 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         ),
       ),
     );
-  }
-
-  Widget _buildItemHistorialPago(Map<String, dynamic> pago) {
-    final estado = pago['estado']?.toString() ?? 'PENDIENTE';
-    final monto = pago['monto']?.toDouble() ?? 0.0;
-    final moneda = pago['moneda']?.toString() ?? 'CUP';
-    final fechaSolicitud = pago['fecha_solicitud'] != null
-        ? DateTime.parse(pago['fecha_solicitud'])
-        : null;
-    final fechaAceptacion = pago['fecha_aceptacion'] != null
-        ? DateTime.parse(pago['fecha_aceptacion'])
-        : null;
-
-    Color colorEstado;
-    IconData iconoEstado;
-    String textoEstado;
-
-    switch (estado) {
-      case 'PENDIENTE':
-        colorEstado = const Color(0xFFFF9800);
-        iconoEstado = Icons.pending;
-        textoEstado = 'Pendiente';
-        break;
-      case 'ACEPTADO':
-        colorEstado = const Color(0xFF4CAF50);
-        iconoEstado = Icons.check_circle;
-        textoEstado = 'Aceptado';
-        break;
-      case 'RECHAZADO':
-        colorEstado = const Color(0xFFDC2626);
-        iconoEstado = Icons.cancel;
-        textoEstado = 'Rechazado';
-        break;
-      case 'CANCELADA':
-        colorEstado = const Color(0xFFDC2626);
-        iconoEstado = Icons.cancel_outlined;
-        textoEstado = 'Cancelada';
-        break;
-      default:
-        colorEstado = const Color(0xFF666666);
-        iconoEstado = Icons.help;
-        textoEstado = estado;
-    }
-
-    return InkWell(
-      onTap: () {
-        if (_repartidorId != null) {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => HistorialPagosCompletoScreen(
-                repartidorId: _repartidorId!,
-                repartidorNombre: _nombreController.text.trim(),
-              ),
-            ),
-          );
-        }
-      },
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: colorEstado.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: colorEstado.withOpacity(0.3)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    Icon(iconoEstado, color: colorEstado, size: 20),
-                    const SizedBox(width: 8),
-                    Text(
-                      textoEstado,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: colorEstado,
-                      ),
-                    ),
-                  ],
-                ),
-                Text(
-                  '\$${monto.toStringAsFixed(2)} $moneda',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: colorEstado,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (fechaSolicitud != null)
-              Text(
-                'Solicitado: ${_formatearFecha(fechaSolicitud)}',
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFF666666),
-                ),
-              ),
-            if (fechaAceptacion != null && estado == 'ACEPTADO')
-              Text(
-                'Aceptado: ${_formatearFecha(fechaAceptacion)}',
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFF666666),
-                ),
-              ),
-            if (pago['aceptado_por_nombre'] != null && estado == 'ACEPTADO')
-              Text(
-                'Por: ${pago['aceptado_por_nombre']}',
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFF666666),
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _formatearFecha(DateTime fecha) {
-    return '${fecha.day}/${fecha.month}/${fecha.year} ${fecha.hour.toString().padLeft(2, '0')}:${fecha.minute.toString().padLeft(2, '0')}';
   }
 
   Future<void> _cargarSaldo() async {

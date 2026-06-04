@@ -1490,9 +1490,10 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
 
     if (ordenesConCoordenadas.isEmpty && ordenesSinCoordenadas.isEmpty) {
     return Scaffold(
+      backgroundColor: AppColors.darkBg,
       appBar: AppBar(
         title: const Text('Ruta Optimizada'),
-        backgroundColor: const Color(0xFF1976D2),
+        backgroundColor: AppColors.header,
         actions: [
           // Botón para centrar el mapa en la ubicación del repartidor
           if (_ubicacionRepartidor != null)
@@ -1504,7 +1505,10 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
         ],
       ),
         body: const Center(
-          child: Text('No hay órdenes para mostrar en el mapa'),
+          child: Text(
+            'No hay órdenes para mostrar en el mapa',
+            style: TextStyle(color: AppColors.darkTextMuted),
+          ),
         ),
       );
     }
@@ -1515,9 +1519,10 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
     }
 
     return Scaffold(
+      backgroundColor: AppColors.darkBg,
       appBar: AppBar(
         title: const Text('Ruta Optimizada'),
-        backgroundColor: const Color(0xFF37474F),
+        backgroundColor: AppColors.header,
         foregroundColor: Colors.white,
         actions: [
           // Botón para centrar el mapa en la ubicación del repartidor

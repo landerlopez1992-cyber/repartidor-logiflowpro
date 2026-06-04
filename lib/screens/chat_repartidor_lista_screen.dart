@@ -532,7 +532,7 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.fondoGeneral,
+      backgroundColor: AppColors.darkBg,
       appBar: AppBar(
         backgroundColor: AppColors.header,
         title: const Text(
@@ -558,7 +558,7 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                       Icon(
                         Icons.chat_bubble_outline,
                         size: 80,
-                        color: AppColors.textoSecundario.withOpacity(0.3),
+                        color: AppColors.darkTextMuted.withOpacity(0.3),
                       ),
                       const SizedBox(height: 16),
                       const Text(
@@ -566,7 +566,7 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w600,
-                          color: AppColors.textoPrincipal,
+                          color: AppColors.darkText,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -576,7 +576,7 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                             : 'Sin conexión: abre el chat con internet al menos una vez\npara guardar conversaciones en el teléfono.',
                         style: const TextStyle(
                           fontSize: 14,
-                          color: AppColors.textoSecundario,
+                          color: AppColors.darkTextMuted,
                         ),
                         textAlign: TextAlign.center,
                       ),
@@ -765,7 +765,7 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                                                     ? const Color(0xFF4CAF50)
                                                     : esEmpleado
                                                         ? const Color(0xFFFF9800)
-                                                        : AppColors.textoPrincipal,
+                                                        : AppColors.darkText,
                                               ),
                                             ),
                                           ),
@@ -805,7 +805,7 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                                         }(),
                                         style: const TextStyle(
                                           fontSize: 14,
-                                          color: AppColors.textoSecundario,
+                                          color: AppColors.darkTextMuted,
                                         ),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
@@ -816,7 +816,7 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                                             conversacion['ultimo_mensaje_fecha'])),
                                         style: const TextStyle(
                                           fontSize: 12,
-                                          color: AppColors.textoSecundario,
+                                          color: AppColors.darkTextMuted,
                                         ),
                                       ),
                                     ],
@@ -824,7 +824,7 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                                 ),
                                 const Icon(
                                   Icons.chevron_right,
-                                  color: AppColors.textoSecundario,
+                                  color: AppColors.darkTextMuted,
                                 ),
                               ],
                             ),

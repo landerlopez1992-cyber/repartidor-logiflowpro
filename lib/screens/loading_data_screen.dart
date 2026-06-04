@@ -123,7 +123,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.fondoGeneral,
+      backgroundColor: AppColors.darkBg,
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -150,7 +150,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
                       height: 120,
                       margin: const EdgeInsets.only(bottom: 32),
                       decoration: BoxDecoration(
-                        color: AppColors.cardFondo,
+                        color: AppColors.darkSurface,
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
                           BoxShadow(
@@ -167,7 +167,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
                           fit: BoxFit.contain,
                           errorBuilder: (context, error, stackTrace) {
                             return Container(
-                              color: AppColors.cardFondo,
+                              color: AppColors.darkSurface,
                               child: Center(
                                 child: Text(
                                   widget.empresaNombre?.isNotEmpty == true
@@ -191,7 +191,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
                       height: 120,
                       margin: const EdgeInsets.only(bottom: 32),
                       decoration: BoxDecoration(
-                        color: AppColors.cardFondo,
+                        color: AppColors.darkSurface,
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
                           BoxShadow(
@@ -219,7 +219,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
                       height: 120,
                       margin: const EdgeInsets.only(bottom: 32),
                       decoration: BoxDecoration(
-                        color: AppColors.cardFondo,
+                        color: AppColors.darkSurface,
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
                           BoxShadow(
@@ -256,7 +256,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
                         style: const TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.bold,
-                          color: AppColors.cardFondo,
+                          color: AppColors.darkSurface,
                         ),
                         textAlign: TextAlign.center,
                       ),
