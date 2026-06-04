@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../main.dart';
 import '../models/orden.dart';
 import '../constants/repartidor_notificacion_tipos.dart';
+import '../services/repartidor_notificaciones_push_service.dart';
 import 'detalle_orden_screen.dart';
 
 class NotificacionesRepartidorScreen extends StatefulWidget {
@@ -220,51 +221,34 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
         return;
       }
 
-      // Cargar notificaciones de pagos (TODAS: leídas y no leídas)
-      // Las leídas se mantienen almacenadas para que el repartidor pueda leerlas cuantas veces quiera
+      // Cargar notificaciones de pagos — solo no leídas (desaparecen al leer)
       final pagosResponse = await supabase
           .from(tablaNotificaciones)
           .select('id, tipo, titulo, mensaje, created_at, leida')
           .eq(campoId, _repartidorId!)
           .inFilter('tipo', ['PAGO_ACEPTADO', 'PAGO_RECHAZADO', 'PAGO_CANCELADO'])
+          .eq('leida', false)
           .order('created_at', ascending: false) // Más recientes primero
           .limit(100); // Aumentar límite para mostrar más notificaciones
       
-      print('📊 Notificaciones de pagos encontradas (todas): ${pagosResponse.length}');
-      
-      // Contar cuántas están leídas y cuántas no
-      final noLeidasPagos = pagosResponse.where((n) => n['leida'] == false).length;
-      final leidasPagos = pagosResponse.where((n) => n['leida'] == true).length;
-      
-      print('   - No leídas: $noLeidasPagos');
-      print('   - Leídas: $leidasPagos');
+      print('📊 Notificaciones de pagos NO LEÍDAS: ${pagosResponse.length}');
 
-      // Cargar notificaciones generales (push desde Super Admin)
-      // Tipo: 'general'
-      // IMPORTANTE: Cargar TODAS las notificaciones (leídas y no leídas)
-      // Las leídas se mantienen almacenadas para que el repartidor pueda leerlas cuantas veces quiera
-      print('🔍 Cargando notificaciones generales (todas)...');
+      // Cargar notificaciones generales (mensajes de la empresa) — solo no leídas
+      print('🔍 Cargando notificaciones generales (solo no leídas)...');
       print('   - Repartidor ID (tabla usuarios): $_repartidorId');
       print('   - Tipo de _repartidorId: ${_repartidorId.runtimeType}');
       print('   - Es recolector: $_esRecolector');
       
-      // Consulta directa con el repartidor_id/recolector_id - SIN filtrar por leida
       var generalesResponse = await supabase
           .from(tablaNotificaciones)
           .select('id, tipo, titulo, mensaje, created_at, leida, $campoId, tiene_adjunto, tipo_adjunto, url_adjunto, archivo_url, archivo_nombre')
           .eq(campoId, _repartidorId!)
           .eq('tipo', 'general')
+          .eq('leida', false)
           .order('created_at', ascending: false) // Más recientes primero
           .limit(100); // Aumentar límite para mostrar más notificaciones
       
-      print('📊 Notificaciones generales encontradas (todas): ${generalesResponse.length}');
-      
-      // Contar cuántas están leídas y cuántas no
-      final noLeidas = generalesResponse.where((n) => n['leida'] == false).length;
-      final leidas = generalesResponse.where((n) => n['leida'] == true).length;
-      
-      print('   - No leídas: $noLeidas');
-      print('   - Leídas: $leidas');
+      print('📊 Notificaciones generales NO LEÍDAS: ${generalesResponse.length}');
       
       if (generalesResponse.isNotEmpty) {
         print('✅ Notificaciones generales encontradas:');
@@ -553,6 +537,8 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                       
                       if (updateResult != null && updateResult['leida'] == true) {
                         print('✅ Notificación de orden marcada como leída - desaparecerá de la lista');
+                        await RepartidorNotificacionesPushService.instance
+                            .marcarPushMostrado(notificacionId.toString());
                         // NO recargar inmediatamente aquí porque vamos a navegar y puede causar problemas
                         // Se recargará después de volver de la navegación
                       } else {
@@ -1321,6 +1307,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
             .eq('id', id);
         
         print('✅ Notificación marcada como leída exitosamente');
+        await RepartidorNotificacionesPushService.instance.marcarPushMostrado(id);
         
         // Recargar notificaciones para que la leída desaparezca de la lista
         if (mounted) {
@@ -1472,6 +1459,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
             .eq('id', id);
         
         print('✅ Notificación de pago marcada como leída exitosamente');
+        await RepartidorNotificacionesPushService.instance.marcarPushMostrado(id);
         
         // Recargar notificaciones para actualizar el badge
         if (mounted) {

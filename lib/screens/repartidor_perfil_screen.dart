@@ -13,6 +13,7 @@ import '../services/sync_service.dart';
 import '../services/repartidor_perfil_cache_service.dart';
 import '../services/orden_cache_service.dart';
 import '../services/auth_error_handler.dart';
+import '../services/repartidor_notificaciones_push_service.dart';
 
 class RepartidorPerfilScreen extends StatefulWidget {
   const RepartidorPerfilScreen({super.key});
@@ -1493,6 +1494,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             print('⚠️ Error limpiando caché: $cacheError');
           }
         }
+
+        await RepartidorNotificacionesPushService.instance.limpiarAlCerrarSesion();
         
         await supabase.auth.signOut();
         if (mounted) {

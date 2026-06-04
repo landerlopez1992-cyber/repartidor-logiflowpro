@@ -45,7 +45,7 @@ dependencies:
   qr_flutter: ^4.1.0
   printing: ^5.14.2
   pdf: ^3.11.3
-  http: ^1.2.0
+  http: ^1.5.0
   geocoding: ^2.1.1
   geolocator: ^13.0.1
   flutter_map: ^7.0.2
@@ -100,6 +100,10 @@ dev_dependencies:
   
   # Generate app icons
   flutter_launcher_icons: ^0.13.1
+
+# http 1.6.0 rompe compilación web (typo dortoDart); Repartidor es solo móvil.
+dependency_overrides:
+  http: 1.5.0
 
 
 # For information on the generic Dart part of this file, see the

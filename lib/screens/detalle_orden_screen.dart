@@ -17,6 +17,7 @@ import '../services/orden_cache_service.dart';
 import '../services/paises_service.dart';
 import '../services/goodbarber_sync_service.dart';
 import '../main.dart';
+import '../utils/orden_recogida_colaborador_ui.dart';
 
 class DetalleOrdenScreen extends StatefulWidget {
   final Orden orden;
@@ -913,8 +914,16 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             _buildContactCard(),
             const SizedBox(height: 12),
             
-            // Card de detalles de entrega (solo para órdenes de envío, no para recogida)
-            if (widget.orden.tipoOrden != 'RECOGIDA' && !_ordenActual.recogerEnSucursal) ...[
+            if (OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(_ordenActual) &&
+                OrdenRecogidaColaboradorUi.tieneDatosColaborador(_ordenActual)) ...[
+              _buildColaboradorRecogidaCard(),
+              const SizedBox(height: 12),
+            ],
+
+            // Card de detalles de entrega (ocultar destino mientras no se recoge en colaborador)
+            if (widget.orden.tipoOrden != 'RECOGIDA' &&
+                !_ordenActual.recogerEnSucursal &&
+                !OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(_ordenActual)) ...[
               _buildDeliveryCard(),
               const SizedBox(height: 12),
             ],
@@ -935,7 +944,8 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             _buildStatusHistoryCard(),
             const SizedBox(height: 12),
 
-            if (!_ordenActual.entregaPorVendedor &&
+            if (!OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(_ordenActual) &&
+                !_ordenActual.entregaPorVendedor &&
                 (_ordenActual.vendedorContactoNombre != null ||
                     (_ordenActual.vendedorContactoTelefono != null &&
                         _ordenActual.vendedorContactoTelefono!.trim().isNotEmpty) ||
@@ -2330,7 +2340,9 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Coordina con el colaborador para recoger el pedido en el punto acordado.',
+              OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(_ordenActual)
+                  ? 'Recoge el pedido solo en el punto del colaborador. La dirección del cliente se mostrará después de confirmar la recogida.'
+                  : 'Coordina con el colaborador para recoger el pedido en el punto acordado.',
               style: TextStyle(fontSize: 13, color: const Color(0xFF666666)),
             ),
             if (nombre != null && nombre.isNotEmpty) ...[
@@ -2375,7 +2387,9 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                   ),
                 ),
                 Flexible(
-                  child: _buildStatusChip(_ordenActual.estado),
+                  child: _buildStatusChip(
+                    OrdenRecogidaColaboradorUi.estadoVisibleRepartidor(_ordenActual),
+                  ),
                 ),
               ],
             ),
@@ -2415,6 +2429,10 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
   }
 
   Widget _buildContactCard() {
+    if (OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(_ordenActual)) {
+      return const SizedBox.shrink();
+    }
+
     final bool esRecogida = _ordenActual.tipoOrden == 'RECOGIDA';
     final bool esPickupGoodBarber = _ordenActual.recogerEnSucursal == true && 
                                     _ordenActual.goodbarberOrderId != null;
@@ -3143,27 +3161,27 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
   }
 
   Widget _buildStatusTimeline() {
-    // Estados diferentes para órdenes de recogida vs envío
     final bool esRecogida = _ordenActual.tipoOrden == 'RECOGIDA';
+    final bool esRecogColab = OrdenRecogidaColaboradorUi.esRecogidaColaborador(_ordenActual);
     final List<String> estados;
-    
-    if (esRecogida) {
-      // Estados para órdenes de recogida
+    final int indiceActual;
+
+    if (esRecogColab) {
+      estados = OrdenRecogidaColaboradorUi.estadosTimeline;
+      indiceActual = OrdenRecogidaColaboradorUi.indiceEstadoTimeline(_ordenActual);
+    } else if (esRecogida) {
       estados = ['POR RECOGER', 'EN CAMINO', 'RECOGIDO'];
+      final estadoActual = _ordenActual.estado.trim().toUpperCase();
+      indiceActual = estados.indexOf(estadoActual);
     } else {
-      // Estados para órdenes de envío
       if (_ordenActual.recogerEnSucursal) {
-        // Si es recogida en sucursal, agregar "LISTO PARA RECOGER" después de EN REPARTO
         estados = ['POR ENVIAR', 'EN TRANSITO', 'EN REPARTO', 'LISTO PARA RECOGER', 'ENTREGADO'];
       } else {
-        // Estados normales para órdenes de envío
         estados = ['POR ENVIAR', 'EN TRANSITO', 'EN REPARTO', 'ENTREGADO'];
       }
+      final estadoActual = _ordenActual.estado.trim().toUpperCase();
+      indiceActual = estados.indexOf(estadoActual);
     }
-    
-    // Usar _ordenActual.estado en lugar de widget.orden.estado para reflejar el estado actual
-    final estadoActual = _ordenActual.estado.trim().toUpperCase();
-    final indiceActual = estados.indexOf(estadoActual);
     
     return Column(
       children: estados.asMap().entries.map((entry) {
@@ -3322,6 +3340,14 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     }
     
     switch (estado) {
+      case 'POR RECOLECTAR':
+        color = const Color(0xFFE65100);
+        icon = Icons.storefront;
+        break;
+      case 'LISTO PARA RECOGIDA':
+        color = const Color(0xFF2E7D32);
+        icon = Icons.inventory_2;
+        break;
       case 'POR ENVIAR':
         color = const Color(0xFFFF9800);
         icon = Icons.schedule;
@@ -3639,9 +3665,21 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
   Widget _buildBotonAccionProgresivo() {
     switch (_ordenActual.estado) {
       case 'POR ENVIAR':
-        // El repartidor NO puede cambiar órdenes de "POR ENVIAR" a "EN TRANSITO"
-        // Solo el admin o el sistema pueden hacerlo
-        // Esta orden está BLOQUEADA hasta que esté "EN TRANSITO"
+        if (OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(_ordenActual)) {
+          return ElevatedButton.icon(
+            onPressed: _isLoading ? null : () => _confirmarRecogidaEnColaborador(),
+            icon: const Icon(Icons.check_circle_outline, size: 20),
+            label: const Text('Confirmar recogida en colaborador'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF2E7D32),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          );
+        }
         return Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -4930,6 +4968,50 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               : '✅ Orden marcada como "Listo para recoger" (se sincronizará cuando haya conexión)',
         );
       }
+    }
+  }
+
+  Future<void> _confirmarRecogidaEnColaborador() async {
+    if (!OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(_ordenActual)) {
+      _mostrarMensaje('Esta acción solo aplica mientras debes recoger en el colaborador.');
+      return;
+    }
+
+    final confirmado = await _mostrarConfirmacion(
+      'Confirmar recogida',
+      '¿Confirmas que ya recogiste el pedido en el colaborador?\n\nDespués podrás ver la dirección del cliente y entregar.',
+    );
+    if (!confirmado) return;
+
+    setState(() => _isLoading = true);
+    const nuevoEstado = 'EN REPARTO';
+    _ordenActual.estado = nuevoEstado;
+    await OrdenCacheService.updateCachedOrder(_ordenActual);
+
+    var ok = false;
+    try {
+      await supabase.from('ordenes').update({'estado': nuevoEstado}).eq('id', widget.orden.id);
+      ok = true;
+      try {
+        await GoodBarberSyncService.sincronizarEstadoAGoodBarber(
+          supabase,
+          widget.orden.id,
+          nuevoEstado,
+        );
+      } catch (e) {
+        print('⚠️ GoodBarber sync: $e');
+      }
+    } catch (e) {
+      print('❌ Error confirmando recogida: $e');
+    }
+
+    if (mounted) {
+      setState(() => _isLoading = false);
+      _mostrarMensaje(
+        ok
+            ? '✅ Recogida confirmada. Ya puedes entregar al cliente.'
+            : '✅ Recogida guardada localmente (sincroniza al reconectar).',
+      );
     }
   }
 

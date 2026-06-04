@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../main.dart';
 import '../config/app_colors.dart';
+import '../services/repartidor_chat_soporte_service.dart';
 import 'chat_soporte_filtrado_screen.dart';
 
 class ChatRepartidorListaScreen extends StatefulWidget {
@@ -18,6 +19,33 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
   String? _tenantId;
   RealtimeChannel? _channelMensajes;
   Map<String, bool> _nuevosMensajes = {}; // Trackear conversaciones con nuevos mensajes
+
+  bool _esMensajeNoLeidoConContenido(
+    Map<String, dynamic> m,
+    String remitenteId,
+  ) {
+    if (m['remitente_auth_id'] != remitenteId) return false;
+    final leidoValue = m['leido'];
+    if (leidoValue == true) return false;
+    if (leidoValue is String && leidoValue.toLowerCase() == 'true') {
+      return false;
+    }
+    if (leidoValue is int && leidoValue == 1) return false;
+    return RepartidorChatSoporteService.tieneContenidoVisible(m);
+  }
+
+  int _contarNoLeidosRemitente(
+    List<dynamic> mensajes,
+    String remitenteId,
+  ) {
+    var n = 0;
+    for (final raw in mensajes) {
+      if (raw is! Map) continue;
+      final m = Map<String, dynamic>.from(raw);
+      if (_esMensajeNoLeidoConContenido(m, remitenteId)) n++;
+    }
+    return n;
+  }
 
   @override
   void initState() {
@@ -103,30 +131,12 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
           final fechaActual = DateTime.parse(conversacionesMap[remitenteId]!['ultimo_mensaje_fecha']);
           final fechaNueva = DateTime.parse(mensaje['created_at']);
           if (fechaNueva.isAfter(fechaActual)) {
-            conversacionesMap[remitenteId]!['ultimo_mensaje'] = mensaje['mensaje'];
+            conversacionesMap[remitenteId]!['ultimo_mensaje'] =
+                RepartidorChatSoporteService.textoPreview(mensaje);
             conversacionesMap[remitenteId]!['ultimo_mensaje_fecha'] = mensaje['created_at'];
           }
-          // Actualizar contador de mensajes no leídos (contar todos los mensajes no leídos de este remitente)
-          int mensajesNoLeidos = 0;
-          for (var m in mensajes) {
-            if (m['remitente_auth_id'] == remitenteId) {
-              final mLeidoValue = m['leido'];
-              bool mLeido = false;
-              if (mLeidoValue == null) {
-                mLeido = false;
-              } else if (mLeidoValue is bool) {
-                mLeido = mLeidoValue;
-              } else if (mLeidoValue is String) {
-                mLeido = mLeidoValue.toLowerCase() == 'true';
-              } else if (mLeidoValue is int) {
-                mLeido = mLeidoValue == 1;
-              }
-              if (!mLeido) {
-                mensajesNoLeidos++;
-              }
-            }
-          }
-          conversacionesMap[remitenteId]!['mensajes_no_leidos'] = mensajesNoLeidos;
+          conversacionesMap[remitenteId]!['mensajes_no_leidos'] =
+              _contarNoLeidosRemitente(mensajes, remitenteId);
         } else {
           // Obtener información del remitente
           try {
@@ -137,36 +147,20 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                 .maybeSingle();
 
             if (remitenteData != null) {
-              // Contar mensajes no leídos de este remitente
-              int mensajesNoLeidos = 0;
-              for (var m in mensajes) {
-                if (m['remitente_auth_id'] == remitenteId) {
-                  final mLeidoValue = m['leido'];
-                  bool mLeido = false;
-                  if (mLeidoValue == null) {
-                    mLeido = false;
-                  } else if (mLeidoValue is bool) {
-                    mLeido = mLeidoValue;
-                  } else if (mLeidoValue is String) {
-                    mLeido = mLeidoValue.toLowerCase() == 'true';
-                  } else if (mLeidoValue is int) {
-                    mLeido = mLeidoValue == 1;
-                  }
-                  if (!mLeido) {
-                    mensajesNoLeidos++;
-                  }
-                }
-              }
-              
+              final preview =
+                  RepartidorChatSoporteService.textoPreview(mensaje);
+              if (preview.isEmpty) continue;
+
               conversacionesMap[remitenteId] = {
                 'remitente_auth_id': remitenteId,
                 'remitente_nombre': remitenteData['nombre'] ?? 'Usuario',
                 'remitente_rol': remitenteData['rol'] ?? 'EMPLEADO',
                 'remitente_foto': remitenteData['foto_perfil'],
                 'remitente_email': remitenteData['email'],
-                'ultimo_mensaje': mensaje['mensaje'],
+                'ultimo_mensaje': preview,
                 'ultimo_mensaje_fecha': mensaje['created_at'],
-                'mensajes_no_leidos': mensajesNoLeidos,
+                'mensajes_no_leidos':
+                    _contarNoLeidosRemitente(mensajes, remitenteId),
                 'conversacion_id': _conversacionId,
               };
             }
@@ -217,17 +211,17 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
             
             // Solo procesar si el mensaje NO es del repartidor
             if (nuevoMensaje['remitente_auth_id'] != user?.id) {
+              final record = Map<String, dynamic>.from(nuevoMensaje);
+              if (!RepartidorChatSoporteService.tieneContenidoVisible(record)) {
+                return;
+              }
               final remitenteId = nuevoMensaje['remitente_auth_id'];
               
-              // Marcar que hay un nuevo mensaje de este remitente
               setState(() {
                 _nuevosMensajes[remitenteId] = true;
               });
               
-              // Actualizar la lista de conversaciones
-              await _actualizarConversacionConNuevoMensaje(remitenteId, nuevoMensaje);
-              
-              // Mostrar notificación visual
+              await _actualizarConversacionConNuevoMensaje(remitenteId, record);
               _mostrarNotificacionNuevoMensaje(remitenteId);
             }
           },
@@ -300,7 +294,8 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
 
         if (index != -1) {
           // Actualizar conversación existente
-          _conversaciones[index]['ultimo_mensaje'] = nuevoMensaje['mensaje'];
+          _conversaciones[index]['ultimo_mensaje'] =
+              RepartidorChatSoporteService.textoPreview(nuevoMensaje);
           _conversaciones[index]['ultimo_mensaje_fecha'] = nuevoMensaje['created_at'];
           _conversaciones[index]['mensajes_no_leidos'] = 
               (_conversaciones[index]['mensajes_no_leidos'] as int? ?? 0) + 1;
@@ -308,7 +303,8 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
           // Agregar nueva conversación
           _conversaciones.insert(0, {
             ...remitenteData,
-            'ultimo_mensaje': nuevoMensaje['mensaje'],
+            'ultimo_mensaje':
+                RepartidorChatSoporteService.textoPreview(nuevoMensaje),
             'ultimo_mensaje_fecha': nuevoMensaje['created_at'],
             'mensajes_no_leidos': 1,
             'conversacion_id': _conversacionId,
@@ -605,7 +601,15 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
-                                        conversacion['ultimo_mensaje'] ?? 'Sin mensajes',
+                                        () {
+                                          final t = conversacion['ultimo_mensaje']
+                                              ?.toString()
+                                              .trim();
+                                          if (t != null && t.isNotEmpty) {
+                                            return t;
+                                          }
+                                          return 'Sin mensajes';
+                                        }(),
                                         style: const TextStyle(
                                           fontSize: 14,
                                           color: AppColors.textoSecundario,

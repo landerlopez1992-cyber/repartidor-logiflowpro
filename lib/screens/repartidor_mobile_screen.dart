@@ -34,6 +34,10 @@ import 'ruta_optimizada_repartidor_screen.dart';
 import '../config/app_colors.dart';
 import '../constants/repartidor_notificacion_tipos.dart';
 import '../services/repartidor_notificacion_service.dart';
+import '../services/repartidor_notificaciones_push_service.dart';
+import '../services/repartidor_chat_soporte_service.dart';
+import '../utils/orden_tipo_tarjeta_repartidor.dart';
+import '../utils/orden_recogida_colaborador_ui.dart';
 import '../utils/repartidor_nombre_util.dart';
 
 class RepartidorMobileScreen extends StatefulWidget {
@@ -58,6 +62,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   String? _tipoRepartidor; // 'REPARTIDOR' o 'RECOLECTOR'
   bool _esRecolector = false; // Indica si es recolector
   int _mensajesNoLeidos = 0;
+  List<String> _conversacionesSoporteIds = [];
   RealtimeChannel? _channelNotificaciones;
   RealtimeChannel? _channelNotificacionesOrdenes;
   RealtimeChannel? _channelOrdenesNuevas;
@@ -68,6 +73,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   int _notificacionesNoLeidas = 0;
   String? _repartidorId;
   Set<String> _notificacionesProcesadas = {}; // Trackear notificaciones ya procesadas
+  bool _hidratadoPushAlInicio = false;
+  late DateTime _inicioSesionNotificacionesUtc;
   Map<String, dynamic>? _notificacionGeneralBanner; // Notificación general para mostrar en banner
   
   // Variables para rastreo de ubicación
@@ -1114,9 +1121,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                     rethrow;
                   }
                 })
-                .where((orden) =>
-                    !orden.pagada &&
-                    !orden.entregaPorVendedor) // Sin entrega por colaborador ni pagadas
+                .where((orden) => orden.visibleParaRepartidorLista)
                 .toList();
             
             print('📦 Órdenes cargadas (sin pagadas): ${ordenesCargadas.length}');
@@ -1271,7 +1276,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 return orden;
               })
               .where((orden) {
-                if (orden.entregaPorVendedor) {
+                if (!orden.visibleParaRepartidorLista && !(_esRepartidorMaster && orden.tieneRemesa)) {
                   return false;
                 }
                 // Para repartidores master, excluir órdenes de RECOGIDA (mantener null y ENVIO)
@@ -1307,9 +1312,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   // Interruptor ACTIVO: Master puede verla (continuar)
                 }
                 
-                // Filtrar órdenes pagadas (se ocultan del repartidor)
-                // EXCEPCIÓN: Para masters, las remesas puras SIEMPRE se muestran (ya procesadas arriba)
-                return !orden.pagada;
+                return orden.visibleParaRepartidorLista;
               })
               .toList();
           
@@ -1442,47 +1445,25 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   Future<void> _cargarMensajesNoLeidos() async {
     try {
-      final user = supabase.auth.currentUser;
-      if (user == null) return;
+      _conversacionesSoporteIds =
+          await RepartidorChatSoporteService.idsConversacionesRepartidor();
+      final mensajesNoLeidos =
+          await RepartidorChatSoporteService.contarMensajesNoLeidos();
 
-      print('🔍 Cargando mensajes no leídos para repartidor...');
-
-      // Obtener todos los mensajes no leídos
-      final todosMensajes = await supabase
-          .from('mensajes_soporte')
-          .select('id, leido, remitente_auth_id')
-          .neq('remitente_auth_id', user.id);
-
-      // Contar mensajes no leídos con manejo robusto de booleanos
-      int mensajesNoLeidos = 0;
-      for (var mensaje in todosMensajes) {
-        final leidoValue = mensaje['leido'];
-        bool leido = false;
-        if (leidoValue == null) {
-          leido = false; // null significa no leído
-        } else if (leidoValue is bool) {
-          leido = leidoValue;
-        } else if (leidoValue is String) {
-          leido = leidoValue.toLowerCase() == 'true';
-        } else if (leidoValue is int) {
-          leido = leidoValue == 1;
-        }
-        
-        if (!leido) {
-          mensajesNoLeidos++;
-        }
-      }
-
-      print('📊 Mensajes no leídos encontrados: $mensajesNoLeidos (de ${todosMensajes.length} totales)');
+      print(
+        '📊 Mensajes soporte no leídos (mis conversaciones): $mensajesNoLeidos',
+      );
 
       if (mounted) {
         setState(() {
           _mensajesNoLeidos = mensajesNoLeidos;
         });
-        print('✅ Contador actualizado: $_mensajesNoLeidos');
       }
     } catch (e) {
       print('❌ Error al cargar mensajes no leídos: $e');
+      if (mounted) {
+        setState(() => _mensajesNoLeidos = 0);
+      }
     }
   }
 
@@ -1494,12 +1475,21 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           schema: 'public',
           table: 'mensajes_soporte',
           callback: (payload) {
-            print('🔔 Nuevo mensaje recibido en tiempo real');
             final user = supabase.auth.currentUser;
-            if (user != null && payload.newRecord['remitente_auth_id'] != user.id) {
-              print('📱 Actualizando notificaciones para repartidor');
-              _cargarMensajesNoLeidos();
+            if (user == null) return;
+            final convId = payload.newRecord['conversacion_id']?.toString();
+            if (!RepartidorChatSoporteService.perteneceAMisConversaciones(
+              convId,
+              _conversacionesSoporteIds,
+            )) {
+              return;
             }
+            if (payload.newRecord['remitente_auth_id'] == user.id) return;
+            final preview = RepartidorChatSoporteService.textoPreview(
+              Map<String, dynamic>.from(payload.newRecord),
+            );
+            if (preview.isEmpty) return;
+            _cargarMensajesNoLeidos();
           },
         )
         .onPostgresChanges(
@@ -1507,8 +1497,13 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           schema: 'public',
           table: 'mensajes_soporte',
           callback: (payload) {
-            print('🔄 Mensaje actualizado en tiempo real');
-            _cargarMensajesNoLeidos();
+            final convId = payload.newRecord['conversacion_id']?.toString();
+            if (RepartidorChatSoporteService.perteneceAMisConversaciones(
+              convId,
+              _conversacionesSoporteIds,
+            )) {
+              _cargarMensajesNoLeidos();
+            }
           },
         )
         .onPostgresChanges(
@@ -1516,7 +1511,6 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           schema: 'public',
           table: 'conversaciones_soporte',
           callback: (payload) {
-            print('💬 Conversación actualizada en tiempo real');
             _cargarMensajesNoLeidos();
           },
         )
@@ -1525,18 +1519,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   Future<void> _marcarMensajesComoLeidos() async {
     try {
-      final user = supabase.auth.currentUser;
-      if (user == null) return;
-
-      // Marcar todos los mensajes no leídos como leídos (donde el repartidor no es el remitente)
-      await supabase
-          .from('mensajes_soporte')
-          .update({'leido': true})
-          .eq('leido', false)
-          .neq('remitente_auth_id', user.id);
-
-      // Actualizar contador
-      _cargarMensajesNoLeidos();
+      await RepartidorChatSoporteService.marcarTodosLeidosEnMisConversaciones();
+      await _cargarMensajesNoLeidos();
     } catch (e) {
       print('Error al marcar mensajes como leídos: $e');
     }
@@ -1560,6 +1544,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           _repartidorId = response['id'].toString();
         });
         print('✅ Repartidor ID obtenido: $_repartidorId');
+        await RepartidorNotificacionesPushService.instance
+            .initForRepartidor(_repartidorId!);
       }
     } catch (e) {
       // Solo imprimir error si el widget aún está montado
@@ -1938,6 +1924,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         titulo,
         mensaje,
         numeroOrden,
+        notificacionId: fila?['id']?.toString(),
+        leidaEnPayload: fila?['leida'] == true,
+        createdAtIso: fila?['created_at']?.toString(),
+        desdeRealtime: false,
       );
 
       if (mounted) await _cargarOrdenes();
@@ -1966,6 +1956,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         fila?['titulo']?.toString() ?? tituloFallback,
         fila?['mensaje']?.toString() ?? mensajeFallback,
         '',
+        notificacionId: fila?['id']?.toString(),
+        leidaEnPayload: fila?['leida'] == true,
+        createdAtIso: fila?['created_at']?.toString(),
+        desdeRealtime: false,
       );
       await _cargarSaldo();
     } catch (e) {
@@ -1975,6 +1969,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   // Inicializar notificaciones locales
   Future<void> _inicializarNotificaciones() async {
+    _inicioSesionNotificacionesUtc = DateTime.now().toUtc();
     _localNotifications = FlutterLocalNotificationsPlugin();
 
     // Configuración para Android
@@ -2079,8 +2074,17 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             print('📦 $campoId esperado: ${_repartidorId.toString()}');
             print('📦 ¿Coinciden?: ${idNotif == _repartidorId.toString()}');
             
-            // Verificar si las notificaciones están habilitadas
-            _verificarYMostrarNotificacion(tipo, titulo, mensaje, numeroOrden, notificacionId: tipo == 'general' ? notificacionId : null);
+            final leida = notificacion['leida'] == true;
+            _verificarYMostrarNotificacion(
+              tipo,
+              titulo,
+              mensaje,
+              numeroOrden,
+              notificacionId: notificacionId.isNotEmpty ? notificacionId : null,
+              leidaEnPayload: leida,
+              createdAtIso: notificacion['created_at']?.toString(),
+              desdeRealtime: true,
+            );
           },
         )
         .subscribe((status, [error]) {
@@ -2105,13 +2109,76 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     print('✅ Suscrito a notificaciones de órdenes');
   }
 
+  bool _esNotificacionAnteriorASesion(String? createdAtIso) {
+    if (createdAtIso == null || createdAtIso.isEmpty) return false;
+    try {
+      final creada = DateTime.parse(createdAtIso).toUtc();
+      return creada.isBefore(
+        _inicioSesionNotificacionesUtc.subtract(const Duration(seconds: 15)),
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
   // Verificar configuración y mostrar notificación
-  Future<void> _verificarYMostrarNotificacion(String tipo, String titulo, String mensaje, String numeroOrden, {String? notificacionId}) async {
+  Future<void> _verificarYMostrarNotificacion(
+    String tipo,
+    String titulo,
+    String mensaje,
+    String numeroOrden, {
+    String? notificacionId,
+    bool? leidaEnPayload,
+    String? createdAtIso,
+    bool desdeRealtime = false,
+  }) async {
     try {
       print('🔍 Verificando configuración de notificaciones...');
       print('   - Tipo: $tipo');
       print('   - Título: $titulo');
       print('   - Mensaje: $mensaje');
+      print('   - ID notificación: $notificacionId');
+      print('   - Desde Realtime: $desdeRealtime');
+
+      if (leidaEnPayload == true) {
+        print('⏭️ Notificación ya leída en BD, sin push local');
+        return;
+      }
+
+      if (notificacionId != null && notificacionId.isNotEmpty) {
+        if (RepartidorNotificacionesPushService.instance
+            .yaSeMostroPushLocal(notificacionId)) {
+          print('⏭️ Push local ya mostrado para $notificacionId');
+          _notificacionesProcesadas.add(notificacionId);
+          return;
+        }
+
+        if (!desdeRealtime && _esNotificacionAnteriorASesion(createdAtIso)) {
+          print('⏭️ Notificación anterior a esta sesión — solo badge/lista');
+          await RepartidorNotificacionesPushService.instance
+              .marcarPushMostrado(notificacionId);
+          _notificacionesProcesadas.add(notificacionId);
+          return;
+        }
+
+        final tablaNotificaciones =
+            _esRecolector ? 'notificaciones_recolectores' : 'notificaciones_repartidores';
+        try {
+          final fila = await supabase
+              .from(tablaNotificaciones)
+              .select('leida')
+              .eq('id', notificacionId)
+              .maybeSingle();
+          if (fila != null && fila['leida'] == true) {
+            print('⏭️ Notificación $notificacionId leída en BD');
+            await RepartidorNotificacionesPushService.instance
+                .marcarPushMostrado(notificacionId);
+            return;
+          }
+        } catch (e) {
+          print('⚠️ No se pudo verificar leida en BD: $e');
+        }
+      }
       
       // Verificar si las notificaciones para repartidores están habilitadas
       final configService = ConfiguracionService();
@@ -2121,6 +2188,13 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       
       if (!notificacionesHabilitadas) {
         print('⚠️ Notificaciones para repartidores están deshabilitadas');
+        return;
+      }
+
+      final tituloLimpio = titulo.trim();
+      final mensajeLimpio = mensaje.trim();
+      if (tituloLimpio.isEmpty && mensajeLimpio.isEmpty) {
+        print('⏭️ Sin título ni mensaje, no se muestra push local');
         return;
       }
 
@@ -2148,7 +2222,17 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       }
       
       // Mostrar notificación
-      await _mostrarNotificacionPush(titulo, mensaje, numeroOrden);
+      await _mostrarNotificacionPush(
+        tituloLimpio.isNotEmpty ? tituloLimpio : 'Nueva actividad',
+        mensajeLimpio.isNotEmpty ? mensajeLimpio : tituloLimpio,
+        numeroOrden,
+      );
+
+      if (notificacionId != null && notificacionId.isNotEmpty) {
+        await RepartidorNotificacionesPushService.instance
+            .marcarPushMostrado(notificacionId);
+        _notificacionesProcesadas.add(notificacionId);
+      }
       
       print('✅ Notificación push mostrada, actualizando contador...');
       
@@ -2306,12 +2390,18 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               print('   - Creada: $createdAt');
               print('   - Leída: $leida');
               
-              // Marcar como procesada ANTES de mostrar (para evitar duplicados)
-              _notificacionesProcesadas.add(notifId);
               nuevasProcesadas++;
               
-              // Verificar y mostrar notificación (pasar notificacionId para tipo 'general')
-              await _verificarYMostrarNotificacion(tipo, titulo, mensaje, numeroOrden, notificacionId: tipo == 'general' ? notifId : null);
+              await _verificarYMostrarNotificacion(
+                tipo,
+                titulo,
+                mensaje,
+                numeroOrden,
+                notificacionId: notifId.isNotEmpty ? notifId : null,
+                leidaEnPayload: leida == true,
+                createdAtIso: createdAt,
+                desdeRealtime: false,
+              );
             }
             
             if (nuevasProcesadas > 0) {
@@ -2449,6 +2539,16 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       // Mantener solo las IDs que están realmente en la BD como no leídas
       _notificacionesProcesadas.removeWhere((id) => !idsNoLeidas.contains(id));
       print('🔄 Sincronizado set de procesadas: ${_notificacionesProcesadas.length} IDs');
+
+      if (!_hidratadoPushAlInicio && _repartidorId != null) {
+        _hidratadoPushAlInicio = true;
+        await RepartidorNotificacionesPushService.instance
+            .marcarExistentesSinPush(idsNoLeidas);
+        _notificacionesProcesadas.addAll(idsNoLeidas);
+        print(
+          '📲 Hidratadas ${idsNoLeidas.length} notificaciones pendientes (sin repetir push al reiniciar)',
+        );
+      }
       
       if (mounted) {
         setState(() {
@@ -3949,9 +4049,35 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     );
   }
 
+  Widget _buildChipTipoOrden(OrdenTipoTarjetaInfo tipoInfo) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: tipoInfo.colorAcento.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: tipoInfo.colorAcento, width: 1.2),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(tipoInfo.icono, size: 11, color: tipoInfo.colorAcento),
+          const SizedBox(width: 4),
+          Text(
+            tipoInfo.etiqueta,
+            style: TextStyle(
+              color: tipoInfo.colorAcento,
+              fontSize: 9,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildOrdenCard(Orden orden) {
-    // Si es remesa pura, usar tarjeta especial
-    if (_esRemesaPura(orden)) {
+    final tipoInfo = OrdenTipoTarjetaRepartidorUtil.infoDeOrden(orden);
+    if (tipoInfo.tipo == OrdenTipoTarjetaRepartidor.remesaPura) {
       return _buildRemesaCard(orden);
     }
     
@@ -3959,11 +4085,14 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     final esAtrasada = orden.fechaEstimadaEntrega != null && 
                       orden.fechaEstimadaEntrega!.isBefore(DateTime.now()) && 
                       orden.estado != 'ENTREGADO';
+    final fondoTarjeta = esUrgente
+        ? const Color(0xFFFFEBEE)
+        : tipoInfo.colorFondo;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: esUrgente ? const Color(0xFFFFEBEE) : const Color(0xFFE0E0E0),
+        color: fondoTarjeta,
         borderRadius: BorderRadius.circular(8),
         boxShadow: [
           BoxShadow(
@@ -3972,9 +4101,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             offset: const Offset(0, 3),
           ),
         ],
-        border: esUrgente 
+        border: esUrgente
             ? Border.all(color: const Color(0xFFDC2626), width: 2)
-            : Border.all(color: Colors.black, width: 2),
+            : Border.all(color: tipoInfo.colorAcento, width: 2),
       ),
       child: InkWell(
         onTap: () => _mostrarDetallesOrden(orden),
@@ -3993,7 +4122,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF1976D2),
+                          color: tipoInfo.colorAcento,
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
@@ -4005,6 +4134,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                           ),
                         ),
                       ),
+                      const SizedBox(width: 6),
+                      _buildChipTipoOrden(tipoInfo),
                       if (esUrgente) ...[
                         const SizedBox(width: 6),
                         Container(
@@ -4094,7 +4225,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                           ),
                         ),
                       // Chip de estado
-                      _buildStatusChip(orden.estado, esAtrasada),
+                      _buildStatusChip(
+                        OrdenRecogidaColaboradorUi.estadoVisibleRepartidor(orden),
+                        esAtrasada,
+                      ),
                     ],
                   ),
                 ],
@@ -4196,6 +4330,69 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   Icons.location_on, 
                   'Dirección de Recogida:', 
                   _formatearDireccionCompleta(orden),
+                ),
+              ] else if (OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(orden)) ...[
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF3E0),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFE65100), width: 1.5),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.storefront, color: const Color(0xFFE65100), size: 16),
+                          const SizedBox(width: 6),
+                          const Text(
+                            'Punto de recogida (colaborador)',
+                            style: TextStyle(
+                              color: Color(0xFFE65100),
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        OrdenRecogidaColaboradorUi.mensajeInfoTarjeta(orden),
+                        style: const TextStyle(color: Color(0xFF5D4037), fontSize: 11),
+                      ),
+                      if (OrdenRecogidaColaboradorUi.tieneDatosColaborador(orden)) ...[
+                        const SizedBox(height: 8),
+                        if ((orden.vendedorContactoNombre ?? '').trim().isNotEmpty)
+                          _buildInfoRow(
+                            Icons.person,
+                            'Colaborador:',
+                            orden.vendedorContactoNombre!.trim(),
+                          ),
+                        if ((orden.vendedorContactoTelefono ?? '').trim().isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          _buildInfoRow(
+                            Icons.phone,
+                            'Teléfono:',
+                            orden.vendedorContactoTelefono!.trim(),
+                          ),
+                        ],
+                        if ((orden.vendedorContactoEmail ?? '').trim().isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          _buildInfoRow(
+                            Icons.email,
+                            'Correo:',
+                            orden.vendedorContactoEmail!.trim(),
+                          ),
+                        ],
+                      ],
+                      const SizedBox(height: 6),
+                      const Text(
+                        'La dirección exacta del punto de recogida coordínala con el colaborador.',
+                        style: TextStyle(color: Color(0xFF666666), fontSize: 10),
+                      ),
+                    ],
+                  ),
                 ),
               ] else ...[
                 // Para órdenes de envío: mostrar emisor y destinatario
@@ -4371,9 +4568,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   Text(
                       orden.recogerEnSucursal
                           ? 'Entregar en Sucursal'
-                          : orden.tipoOrden == 'RECOGIDA'
-                              ? 'Recoger orden a más tardar ${_formatearFecha(orden.fechaEntrega)}'
-                              : 'Entregar orden a más tardar ${_formatearFecha(orden.fechaEntrega)}',
+                          : OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(orden)
+                              ? '${OrdenRecogidaColaboradorUi.etiquetaPlazo(orden)} ${_formatearFecha(orden.fechaEntrega)}'
+                              : orden.tipoOrden == 'RECOGIDA'
+                                  ? 'Recoger orden a más tardar ${_formatearFecha(orden.fechaEntrega)}'
+                                  : 'Entregar orden a más tardar ${_formatearFecha(orden.fechaEntrega)}',
                     style: TextStyle(
                         color: orden.recogerEnSucursal
                             ? const Color(0xFFDC2626) // Texto rojo fuerte para "Entregar en Sucursal"
@@ -4388,8 +4587,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 ),
               ),
 
-              // Tarjeta de contacto del vendedor: cuando la empresa entrega y hay datos de recogida
-              if (!orden.entregaPorVendedor &&
+              // Tarjeta de contacto del vendedor (fase de entrega normal, no duplicar en recogida pendiente)
+              if (!OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(orden) &&
+                  !orden.entregaPorVendedor &&
                   orden.vendedorContactoNombre != null &&
                   orden.vendedorContactoNombre!.isNotEmpty) ...[
                 const SizedBox(height: 10),
@@ -4450,8 +4650,35 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 ],
               ],
               
-              // Mensaje de bloqueo si está en POR ENVIAR (solo para órdenes de envío)
-              if (orden.estado == 'POR ENVIAR' && orden.tipoOrden != 'RECOGIDA') ...[
+              // Mensaje informativo en fase de recogida en colaborador
+              if (OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(orden)) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE8F5E9),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF4CAF50), width: 1.5),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.storefront, color: const Color(0xFF2E7D32), size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          OrdenRecogidaColaboradorUi.mensajeInfoTarjeta(orden),
+                          style: const TextStyle(
+                            color: Color(0xFF2E7D32),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ] else if (orden.estado == 'POR ENVIAR' && orden.tipoOrden != 'RECOGIDA') ...[
                 const SizedBox(height: 8),
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -4579,6 +4806,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         return const Color(0xFF2196F3);
       case 'POR ENVIAR':
         return const Color(0xFF9E9E9E); // Gris para "POR ENVIAR"
+      case 'POR RECOLECTAR':
+        return const Color(0xFFE65100);
+      case 'LISTO PARA RECOGIDA':
+        return const Color(0xFF2E7D32);
       case 'POR RECOGER':
         return const Color(0xFF9E9E9E); // Gris para "POR RECOGER"
       case 'CANCELADA':
@@ -4606,6 +4837,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         return Icons.local_shipping;
       case 'POR ENVIAR':
         return Icons.schedule;
+      case 'POR RECOLECTAR':
+        return Icons.storefront;
+      case 'LISTO PARA RECOGIDA':
+        return Icons.inventory_2;
       case 'POR RECOGER':
         return Icons.schedule; // Icono de reloj para "POR RECOGER"
       case 'CANCELADA':
@@ -5250,9 +5485,21 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     // Botones para repartidores (estados normales de envío)
     switch (orden.estado) {
       case 'POR ENVIAR':
-        // El repartidor NO puede cambiar órdenes de "POR ENVIAR" a "EN TRANSITO"
-        // Solo el admin o el sistema pueden hacerlo
-        // Esta orden está BLOQUEADA hasta que esté "EN TRANSITO"
+        if (OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(orden)) {
+          return ElevatedButton.icon(
+            onPressed: () => _confirmarRecogidaEnColaborador(orden),
+            icon: const Icon(Icons.check_circle_outline, size: 18),
+            label: const Text('Confirmar recogida en colaborador'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF2E7D32),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          );
+        }
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           decoration: BoxDecoration(
@@ -5810,6 +6057,102 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             : '✅ Orden marcada como "Listo para recoger" (se sincronizará cuando haya conexión)',
       );
       await _cargarOrdenes(preservarOrdenId: orden.id, preservarEstado: 'LISTO PARA RECOGER');
+    }
+  }
+
+  Future<void> _confirmarRecogidaEnColaborador(Orden orden) async {
+    if (!OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(orden)) {
+      _mostrarMensaje('Esta acción solo aplica mientras debes recoger en el colaborador.');
+      return;
+    }
+
+    try {
+      const nuevoEstado = 'EN REPARTO';
+      final ordenActualizada = Orden(
+        id: orden.id,
+        numeroOrden: orden.numeroOrden,
+        emisor: orden.emisor,
+        receptor: orden.receptor,
+        descripcion: orden.descripcion,
+        direccionDestino: orden.direccionDestino,
+        telefonoDestinatario: orden.telefonoDestinatario,
+        ciudadDestino: orden.ciudadDestino,
+        provinciaDestino: orden.provinciaDestino,
+        municipioDestino: orden.municipioDestino,
+        consejoPopularBatey: orden.consejoPopularBatey,
+        peso: orden.peso,
+        largo: orden.largo,
+        ancho: orden.ancho,
+        alto: orden.alto,
+        estado: nuevoEstado,
+        fechaCreacion: orden.fechaCreacion,
+        fechaEntrega: orden.fechaEntrega,
+        fechaEstimadaEntrega: orden.fechaEstimadaEntrega,
+        notas: orden.notas,
+        repartidor: orden.repartidor,
+        esUrgente: orden.esUrgente,
+        fotoEntrega: orden.fotoEntrega,
+        creadoPorNombre: orden.creadoPorNombre,
+        creadoPorEmail: orden.creadoPorEmail,
+        cantidadBultos: orden.cantidadBultos,
+        requierePago: orden.requierePago,
+        montoCobrar: orden.montoCobrar,
+        moneda: orden.moneda,
+        pagado: orden.pagado,
+        fechaPago: orden.fechaPago,
+        notasPago: orden.notasPago,
+        tieneRemesa: orden.tieneRemesa,
+        cantidadRemesa: orden.cantidadRemesa,
+        requiereFirma: orden.requiereFirma,
+        firmaUrl: orden.firmaUrl,
+        itemsAdicionales: orden.itemsAdicionales,
+        tenantId: orden.tenantId,
+        entregaPorVendedor: orden.entregaPorVendedor,
+        vendedorContactoNombre: orden.vendedorContactoNombre,
+        vendedorContactoTelefono: orden.vendedorContactoTelefono,
+        vendedorContactoEmail: orden.vendedorContactoEmail,
+        avisosRecogidaVendedor: orden.avisosRecogidaVendedor,
+      );
+      await OrdenCacheService.updateCachedOrder(ordenActualizada);
+
+      var actualizadoExitosamente = false;
+      try {
+        await supabase.from('ordenes').update({'estado': nuevoEstado}).eq('id', orden.id);
+        actualizadoExitosamente = true;
+        try {
+          await GoodBarberSyncService.sincronizarEstadoAGoodBarber(
+            supabase,
+            orden.id,
+            nuevoEstado,
+          );
+        } catch (e) {
+          print('⚠️ Error sincronizando estado con GoodBarber: $e');
+        }
+      } catch (e) {
+        print('⚠️ Actualización BD recogida colaborador: $e');
+      }
+
+      if (mounted) {
+        setState(() {
+          final index = _ordenes.indexWhere((o) => o.id == orden.id);
+          if (index != -1) {
+            _ordenes[index] = ordenActualizada;
+          }
+        });
+      }
+      if (nuevoEstado == 'EN REPARTO') {
+        _iniciarRastreoUbicacion();
+      }
+
+      _mostrarMensaje(
+        actualizadoExitosamente
+            ? '✅ Recogida confirmada. Ya puedes entregar al cliente.'
+            : '✅ Recogida registrada localmente (sincroniza al reconectar).',
+      );
+      await _cargarOrdenes(preservarOrdenId: orden.id, preservarEstado: nuevoEstado);
+    } catch (e) {
+      print('❌ Error confirmando recogida colaborador: $e');
+      _mostrarMensaje('No se pudo confirmar la recogida. Inténtalo de nuevo.');
     }
   }
 

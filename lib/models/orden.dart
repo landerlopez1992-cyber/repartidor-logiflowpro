@@ -158,6 +158,22 @@ class Orden {
     this.avisosRecogidaVendedor,
   });
 
+  /// Pedido de tienda web: `pagada` en BD a veces significa cobro del cliente, no pago al repartidor.
+  bool get esOrdenTiendaOnline {
+    final d = descripcion.toLowerCase();
+    final n = (notas ?? '').toLowerCase();
+    final np = (notasPago ?? '').toLowerCase();
+    return d.contains('tienda') ||
+        n.contains('tienda') ||
+        np.contains('tienda') ||
+        np.contains('zelle') ||
+        np.contains('wallet') ||
+        np.contains('billetera');
+  }
+
+  bool get visibleParaRepartidorLista =>
+      !entregaPorVendedor && (!pagada || esOrdenTiendaOnline);
+
   // Función auxiliar para parsear valores booleanos desde diferentes tipos
   static bool? _parseBool(dynamic value) {
     if (value == null) return null;
