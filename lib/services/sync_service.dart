@@ -8,6 +8,7 @@ import '../main.dart';
 import 'goodbarber_sync_service.dart';
 import 'offline_storage_service.dart';
 import 'ubicacion_offline_service.dart';
+import 'repartidor_pantallas_offline_service.dart';
 // (imports limpiados por lints)
 
 /// Servicio de sincronización offline/online
@@ -450,6 +451,7 @@ class SyncService {
     
     // GPS pendiente y luego fotos/firmas antes de estados de orden
     await UbicacionOfflineService.sincronizarPendientes();
+    await RepartidorPantallasOfflineService.sincronizarMensajesSoporte();
     await syncPendingPhotosAndSignatures();
     
     if (_pendingOperations.isEmpty) {
@@ -742,6 +744,16 @@ class SyncService {
           
           await _syncGoodBarberSiAplica(ordenId, data);
           return true;
+
+        case 'rpc_iniciar_recolecta':
+          if (!_isOnline) return false;
+          final ordenRpc = data['p_orden_id']?.toString() ?? ordenId;
+          final res = await supabase.rpc(
+            'repartidor_iniciar_recolecta_colaborador',
+            params: {'p_orden_id': ordenRpc},
+          );
+          final payload = res as Map<String, dynamic>? ?? {};
+          return payload['ok'] == true;
           
         default:
           print('⚠️ Tipo de operación desconocido: $type');

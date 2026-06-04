@@ -4,6 +4,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../main.dart';
+import '../services/repartidor_pantallas_offline_service.dart';
+import '../services/sync_service.dart';
+import '../services/network_timeout.dart';
 import '../models/orden.dart';
 import '../widgets/profile_avatar.dart';
 
@@ -145,17 +148,41 @@ class _MapaRepartidorScreenState extends State<MapaRepartidorScreen> {
 
   Future<void> _cargarUbicacionInicial() async {
     try {
-      final response = await supabase
-          .from('ubicaciones_repartidores')
-          .select('latitude, longitude, ubicacion_timestamp')
-          .eq('repartidor_id', _repartidorId!)
-          .order('ubicacion_timestamp', ascending: false)
-          .limit(1)
-          .maybeSingle();
+      final cached = await RepartidorPantallasOfflineService.cargarUbicacionMapa(_repartidorId!);
+      if (cached != null) {
+        final ubicacion = LatLng(cached.lat, cached.lng);
+        if (mounted) {
+          setState(() {
+            _ubicacionRepartidor = ubicacion;
+            _isLoading = false;
+            _error = SyncService().isOnline
+                ? null
+                : 'Sin conexión — última ubicación guardada';
+          });
+          _mapController.move(ubicacion, 15);
+        }
+        if (!SyncService().isOnline) return;
+      }
 
-      if (response != null && 
-          response['latitude'] != null && 
+      final response = await ejecutarConTimeout(
+        supabase
+            .from('ubicaciones_repartidores')
+            .select('latitude, longitude, ubicacion_timestamp')
+            .eq('repartidor_id', _repartidorId!)
+            .order('ubicacion_timestamp', ascending: false)
+            .limit(1)
+            .maybeSingle(),
+      );
+
+      if (response != null &&
+          response['latitude'] != null &&
           response['longitude'] != null) {
+        await RepartidorPantallasOfflineService.guardarUbicacionMapa(
+          _repartidorId!,
+          lat: (response['latitude'] as num).toDouble(),
+          lng: (response['longitude'] as num).toDouble(),
+          timestamp: response['ubicacion_timestamp']?.toString(),
+        );
         final ubicacion = LatLng(
           (response['latitude'] as num).toDouble(),
           (response['longitude'] as num).toDouble(),
@@ -175,7 +202,9 @@ class _MapaRepartidorScreenState extends State<MapaRepartidorScreen> {
         });
       } else {
         setState(() {
-          _error = 'No hay ubicación disponible para este repartidor';
+          _error = SyncService().isOnline
+              ? 'No hay ubicación disponible para este repartidor'
+              : 'Sin conexión — no hay ubicación guardada en el dispositivo';
           _isLoading = false;
         });
       }
@@ -190,30 +219,40 @@ class _MapaRepartidorScreenState extends State<MapaRepartidorScreen> {
 
   Future<void> _cargarUbicacionActual() async {
     if (_repartidorId == null) return;
+    if (!SyncService().isOnline) return;
 
     try {
-      final response = await supabase
-          .from('ubicaciones_repartidores')
-          .select('latitude, longitude, ubicacion_timestamp')
-          .eq('repartidor_id', _repartidorId!)
-          .order('ubicacion_timestamp', ascending: false)
-          .limit(1)
-          .maybeSingle();
+      final response = await ejecutarConTimeout(
+        supabase
+            .from('ubicaciones_repartidores')
+            .select('latitude, longitude, ubicacion_timestamp')
+            .eq('repartidor_id', _repartidorId!)
+            .order('ubicacion_timestamp', ascending: false)
+            .limit(1)
+            .maybeSingle(),
+      );
 
-      if (response != null && 
-          response['latitude'] != null && 
+      if (response != null &&
+          response['latitude'] != null &&
           response['longitude'] != null) {
         final nuevaUbicacion = LatLng(
           (response['latitude'] as num).toDouble(),
           (response['longitude'] as num).toDouble(),
         );
 
+        await RepartidorPantallasOfflineService.guardarUbicacionMapa(
+          _repartidorId!,
+          lat: nuevaUbicacion.latitude,
+          lng: nuevaUbicacion.longitude,
+          timestamp: response['ubicacion_timestamp']?.toString(),
+        );
+
         if (mounted) {
           setState(() {
             _ubicacionRepartidor = nuevaUbicacion;
+            _error = null;
           });
 
-          // Actualizar posición del mapa suavemente
           if (_ubicacionRepartidor != null) {
             _mapController.move(_ubicacionRepartidor!, _mapController.camera.zoom);
           }
@@ -226,6 +265,7 @@ class _MapaRepartidorScreenState extends State<MapaRepartidorScreen> {
 
   void _suscribirseARealtime() {
     if (_repartidorId == null) return;
+    if (!SyncService().isOnline) return;
 
     try {
       _channelUbicaciones = supabase

@@ -4,6 +4,10 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import '../main.dart';
 import '../config/app_colors.dart';
+import '../services/repartidor_pantallas_offline_service.dart';
+import '../services/sync_service.dart';
+import '../services/network_timeout.dart';
+import '../services/repartidor_chat_mensaje_sonido_service.dart';
 
 /// Pantalla de chat filtrado que muestra solo mensajes de un remitente específico
 class ChatSoporteFiltradoScreen extends StatefulWidget {
@@ -36,15 +40,22 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
   RealtimeChannel? _channel;
   XFile? _fotoSeleccionada; // Foto seleccionada pero no enviada aún
   bool _enviandoFoto = false; // Flag para evitar envíos dobles
+  bool _enviandoMensaje = false; // Evita doble envío (botón + Enter)
 
   @override
   void initState() {
     super.initState();
+    RepartidorChatMensajeSonidoService.conversacionActivaId =
+        widget.conversacionId;
     _inicializarChat();
   }
 
   @override
   void dispose() {
+    if (RepartidorChatMensajeSonidoService.conversacionActivaId ==
+        widget.conversacionId) {
+      RepartidorChatMensajeSonidoService.conversacionActivaId = null;
+    }
     _mensajeController.dispose();
     _scrollController.dispose();
     _channel?.unsubscribe();
@@ -88,14 +99,78 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     }
   }
 
+  String? _claveMensaje(Map<String, dynamic> m) {
+    final id = m['id']?.toString();
+    if (id != null && id.isNotEmpty) return 'id:$id';
+    final localId = m['local_id']?.toString();
+    if (localId != null && localId.isNotEmpty) return 'local:$localId';
+    return null;
+  }
+
+  bool _listaYaTieneMensaje(Map<String, dynamic> m) {
+    final clave = _claveMensaje(m);
+    if (clave != null) {
+      return _mensajes.any((x) => _claveMensaje(x) == clave);
+    }
+    final rem = m['remitente_auth_id']?.toString() ?? '';
+    final foto = m['foto_url']?.toString() ?? '';
+    final texto = m['mensaje']?.toString() ?? '';
+    final created = m['created_at']?.toString() ?? '';
+    if (rem.isEmpty) return false;
+    return _mensajes.any((x) {
+      if (x['remitente_auth_id']?.toString() != rem) return false;
+      if ((x['foto_url']?.toString() ?? '') != foto) return false;
+      if ((x['mensaje']?.toString() ?? '') != texto) return false;
+      if (created.isNotEmpty &&
+          (x['created_at']?.toString() ?? '') == created) {
+        return true;
+      }
+      return foto.isNotEmpty &&
+          texto.isNotEmpty &&
+          (x['mensaje']?.toString() ?? '') == texto &&
+          (x['foto_url']?.toString() ?? '') == foto;
+    });
+  }
+
+  Map<String, dynamic> _enriquecerMensaje(Map<String, dynamic> mensaje) {
+    final user = supabase.auth.currentUser;
+    final copia = Map<String, dynamic>.from(mensaje);
+    if (mensaje['remitente_auth_id'] == user?.id) {
+      copia['remitente_nombre'] = _nombreRepartidor;
+      copia['remitente_rol'] = 'REPARTIDOR';
+    } else {
+      copia['remitente_nombre'] = widget.nombreRemitente;
+      copia['remitente_rol'] = widget.rolRemitente;
+      copia['remitente_foto'] = widget.fotoRemitente;
+    }
+    return copia;
+  }
+
+  void _agregarMensajeSiNoExiste(Map<String, dynamic> mensaje) {
+    if (!mounted || _listaYaTieneMensaje(mensaje)) return;
+    setState(() {
+      _mensajes = [..._mensajes, _enriquecerMensaje(mensaje)];
+    });
+  }
+
   Future<void> _cargarMensajes() async {
+    final cached = await RepartidorPantallasOfflineService.cargarMensajesChat(widget.conversacionId);
+    if (cached != null && cached.isNotEmpty && mounted) {
+      setState(() => _mensajes = cached);
+    }
+
+    if (!SyncService().isOnline) return;
+
     try {
-      // Cargar todos los mensajes de la conversación
-      final todosMensajes = await supabase
-          .from('mensajes_soporte')
-          .select('*')
-          .eq('conversacion_id', widget.conversacionId)
-          .order('created_at', ascending: true);
+      final todosMensajesRaw = await ejecutarConTimeout(
+        supabase
+            .from('mensajes_soporte')
+            .select('*')
+            .eq('conversacion_id', widget.conversacionId)
+            .order('created_at', ascending: true),
+      );
+      if (todosMensajesRaw == null) return;
+      final todosMensajes = todosMensajesRaw as List;
 
       final user = supabase.auth.currentUser;
       
@@ -127,6 +202,11 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
         _mensajes = mensajesEnriquecidos;
       });
 
+      await RepartidorPantallasOfflineService.guardarMensajesChat(
+        widget.conversacionId,
+        mensajesEnriquecidos,
+      );
+
       await _marcarComoLeidos();
     } catch (e) {
       print('❌ Error al cargar mensajes: $e');
@@ -148,31 +228,28 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
           callback: (payload) async {
             final nuevoMensaje = Map<String, dynamic>.from(payload.newRecord);
             final user = supabase.auth.currentUser;
-            
-            // Solo agregar si es del remitente seleccionado o del repartidor
-            if (nuevoMensaje['remitente_auth_id'] == widget.remitenteAuthId ||
-                nuevoMensaje['remitente_auth_id'] == user?.id) {
-              
-              if (nuevoMensaje['remitente_auth_id'] == user?.id) {
-                nuevoMensaje['remitente_nombre'] = _nombreRepartidor;
-                nuevoMensaje['remitente_rol'] = 'REPARTIDOR';
-              } else {
-                nuevoMensaje['remitente_nombre'] = widget.nombreRemitente;
-                nuevoMensaje['remitente_rol'] = widget.rolRemitente;
-                nuevoMensaje['remitente_foto'] = widget.fotoRemitente;
-              }
 
-              if (mounted) {
-                setState(() {
-                  _mensajes.add(nuevoMensaje);
-                });
-                Future.delayed(const Duration(milliseconds: 100), () {
-                  _scrollToBottom();
-                });
-                if (user != null && nuevoMensaje['remitente_auth_id'] != user.id) {
-                  _marcarComoLeidos();
-                }
-              }
+            final remitenteId = nuevoMensaje['remitente_auth_id']?.toString();
+            if (remitenteId != widget.remitenteAuthId &&
+                remitenteId != user?.id) {
+              return;
+            }
+
+            // Los envíos propios ya se reflejan con insert + _cargarMensajes (evita duplicado)
+            if (user != null && remitenteId == user.id) {
+              return;
+            }
+
+            if (_listaYaTieneMensaje(nuevoMensaje)) {
+              return;
+            }
+
+            if (mounted) {
+              _agregarMensajeSiNoExiste(nuevoMensaje);
+              Future.delayed(const Duration(milliseconds: 100), () {
+                _scrollToBottom();
+              });
+              _marcarComoLeidos();
             }
           },
         )
@@ -272,15 +349,13 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     final user = supabase.auth.currentUser;
     if (user == null) return;
 
-    // Evitar envíos dobles
-    if (_enviandoFoto) {
-      print('⚠️ Ya se está enviando una foto, ignorando...');
+    if (_enviandoFoto || _enviandoMensaje) {
+      print('⚠️ Ya hay un envío en curso, ignorando foto duplicada...');
       return;
     }
 
-    setState(() {
-      _enviandoFoto = true;
-    });
+    _enviandoFoto = true;
+    if (mounted) setState(() {});
 
     try {
       // Mostrar indicador de carga
@@ -356,13 +431,11 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
       }
 
       await supabase.from('mensajes_soporte').insert(datosMensaje);
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        // Limpiar foto y texto después de enviar exitosamente
         setState(() {
           _fotoSeleccionada = null;
-          _enviandoFoto = false;
         });
         _mensajeController.clear();
         await _cargarMensajes();
@@ -393,18 +466,21 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     final user = supabase.auth.currentUser;
     if (user == null) return;
 
+    if (_enviandoFoto || _enviandoMensaje) return;
+
     // Si hay foto seleccionada, enviarla primero
     if (_fotoSeleccionada != null) {
       await _enviarFoto(_fotoSeleccionada!);
-      // La foto y el texto ya se limpian dentro de _enviarFoto
-      return; // Salir después de enviar la foto
+      return;
     }
 
-    // Si no hay foto, enviar mensaje de texto normal
     if (_mensajeController.text.trim().isEmpty) return;
 
     final mensaje = _mensajeController.text.trim();
     _mensajeController.clear();
+
+    _enviandoMensaje = true;
+    if (mounted) setState(() {});
 
     try {
       // Obtener tenant_id
@@ -440,17 +516,66 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
         datosMensaje['tenant_id'] = tenantId;
       }
 
-      await supabase.from('mensajes_soporte').insert(datosMensaje);
+      final localId = DateTime.now().millisecondsSinceEpoch.toString();
+      final localMsg = {
+        ...datosMensaje,
+        'local_id': localId,
+        'remitente_nombre': _nombreRepartidor,
+        'remitente_rol': 'REPARTIDOR',
+        'created_at': DateTime.now().toIso8601String(),
+        'pending_local': true,
+      };
+
+      if (!SyncService().isOnline) {
+        await RepartidorPantallasOfflineService.encolarMensajeSoporte(datosMensaje);
+        if (mounted) {
+          _agregarMensajeSiNoExiste(localMsg);
+          _scrollToBottom();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Mensaje guardado. Se enviará al reconectar.'),
+              backgroundColor: Color(0xFFFF9800),
+            ),
+          );
+        }
+        return;
+      }
+
+      try {
+        await supabase.from('mensajes_soporte').insert(datosMensaje);
+      } catch (e) {
+        if (RepartidorPantallasOfflineService.esErrorDeRed(e)) {
+          await RepartidorPantallasOfflineService.encolarMensajeSoporte(datosMensaje);
+          if (mounted) {
+            _agregarMensajeSiNoExiste(localMsg);
+            _scrollToBottom();
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Sin conexión: mensaje en cola.'),
+                backgroundColor: Color(0xFFFF9800),
+              ),
+            );
+          }
+          return;
+        }
+        rethrow;
+      }
       await _cargarMensajes();
       _scrollToBottom();
     } catch (e) {
       print('❌ Error al enviar mensaje: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('⚠️ Error: ${e.toString()}'),
-          backgroundColor: Colors.orange,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('⚠️ Error: ${e.toString()}'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _enviandoMensaje = false);
+      }
     }
   }
 
@@ -581,6 +706,8 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                           itemCount: _mensajes.length,
                           itemBuilder: (context, index) {
                             final mensaje = _mensajes[index];
+                            final msgKey = mensaje['id']?.toString() ??
+                                'idx_$index';
                             final user = supabase.auth.currentUser;
                             final esMio = mensaje['remitente_auth_id'] == user?.id;
                             final nombreRemitente = mensaje['remitente_nombre'] ?? 
@@ -592,15 +719,18 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                             final fotoRemitente = mensaje['remitente_foto'];
                             final fotoUrl = mensaje['foto_url'];
 
-                            return _buildMensajeBurbuja(
-                              mensaje['mensaje'],
-                              esMio,
-                              nombreRemitente,
-                              esAdminMsg,
-                              esEmpleadoMsg,
-                              fotoRemitente,
-                              DateTime.parse(mensaje['created_at']),
-                              fotoUrl,
+                            return KeyedSubtree(
+                              key: ValueKey('msg_$msgKey'),
+                              child: _buildMensajeBurbuja(
+                                mensaje['mensaje'],
+                                esMio,
+                                nombreRemitente,
+                                esAdminMsg,
+                                esEmpleadoMsg,
+                                fotoRemitente,
+                                DateTime.parse(mensaje['created_at']),
+                                fotoUrl,
+                              ),
                             );
                           },
                         ),
@@ -724,7 +854,9 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                                 ),
                                 maxLines: null,
                                 textCapitalization: TextCapitalization.sentences,
-                                onSubmitted: (_) => _enviarMensaje(),
+                                onSubmitted: (_enviandoFoto || _enviandoMensaje)
+                                    ? null
+                                    : (_) => _enviarMensaje(),
                               ),
                             ),
                             const SizedBox(width: 12),
@@ -732,7 +864,9 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                               color: AppColors.primary,
                               borderRadius: BorderRadius.circular(24),
                               child: InkWell(
-                                onTap: _enviarMensaje,
+                                onTap: (_enviandoFoto || _enviandoMensaje)
+                                    ? null
+                                    : _enviarMensaje,
                                 borderRadius: BorderRadius.circular(24),
                                 child: Container(
                                   width: 48,
@@ -929,8 +1063,11 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                         ),
                         const SizedBox(height: 8),
                       ],
-                      // Mostrar texto del mensaje
-                      if (mensaje.isNotEmpty)
+                      // Texto: omitir placeholder si ya hay imagen
+                      if (mensaje.isNotEmpty &&
+                          !(fotoUrl != null &&
+                              fotoUrl.isNotEmpty &&
+                              (mensaje == '📷 Foto' || mensaje == '📷 foto')))
                         Text(
                           mensaje,
                           style: TextStyle(

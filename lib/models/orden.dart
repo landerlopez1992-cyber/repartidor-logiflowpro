@@ -174,6 +174,133 @@ class Orden {
   bool get visibleParaRepartidorLista =>
       !entregaPorVendedor && (!pagada || esOrdenTiendaOnline);
 
+  /// Lista tras cargar desde BD: master ve todo el tenant (salvo excepciones operativas).
+  bool incluirEnListaCargada({
+    required bool esMaster,
+    required bool recogerEnSucursalSoloMaster,
+  }) {
+    if (entregaPorVendedor) return false;
+    if (!esMaster) return visibleParaRepartidorLista;
+    if (tipoOrden == 'RECOGIDA') return false;
+    if (recogerEnSucursal && !recogerEnSucursalSoloMaster) return false;
+    return true;
+  }
+
+  static String _txtBusqueda(String? v) => (v ?? '').trim();
+
+  static String _numBusqueda(num? n) {
+    if (n == null) return '';
+    final s = n.toString();
+    return s.endsWith('.0') ? s.substring(0, s.length - 2) : s;
+  }
+
+  static String _fechaBusqueda(DateTime? d) {
+    if (d == null) return '';
+    final dd = d.day.toString().padLeft(2, '0');
+    final mm = d.month.toString().padLeft(2, '0');
+    final yyyy = d.year.toString();
+    return '$dd/$mm/$yyyy $dd-$mm-$yyyy $yyyy-$mm-$dd $mm/$yyyy';
+  }
+
+  /// Texto agregado con todos los datos útiles para el buscador de la pantalla principal.
+  String buildTextoBusqueda({String? textoSucursalExtra}) {
+    final partes = <String>[
+      id,
+      numeroOrden,
+      _txtBusqueda(numeroRemesa),
+      emisor,
+      receptor,
+      descripcion,
+      direccionDestino,
+      _txtBusqueda(telefonoDestinatario),
+      _txtBusqueda(ciudadDestino),
+      _txtBusqueda(provinciaDestino),
+      _txtBusqueda(municipioDestino),
+      _txtBusqueda(consejoPopularBatey),
+      estado,
+      _txtBusqueda(repartidor),
+      _txtBusqueda(entregadoPor),
+      _txtBusqueda(notas),
+      _txtBusqueda(notasPago),
+      _txtBusqueda(creadoPorNombre),
+      _txtBusqueda(creadoPorEmail),
+      _txtBusqueda(vendedorContactoNombre),
+      _txtBusqueda(vendedorContactoTelefono),
+      _txtBusqueda(vendedorContactoEmail),
+      _txtBusqueda(ciPasaporteDestinatario),
+      _txtBusqueda(cubatransModoTransporte),
+      _txtBusqueda(tipoOrden),
+      _txtBusqueda(tenantId),
+      _txtBusqueda(sucursalId),
+      moneda,
+      _txtBusqueda(monedaPrecioTotalEnvio),
+      _numBusqueda(montoCobrar),
+      _numBusqueda(precioTotalEnvio),
+      _numBusqueda(cantidadRemesa),
+      _numBusqueda(peso),
+      _numBusqueda(largo),
+      _numBusqueda(ancho),
+      _numBusqueda(alto),
+      cantidadBultos.toString(),
+      _fechaBusqueda(fechaCreacion),
+      _fechaBusqueda(fechaEntrega),
+      _fechaBusqueda(fechaEstimadaEntrega),
+      _fechaBusqueda(fechaPago),
+      if (goodbarberOrderId != null) goodbarberOrderId.toString(),
+      if (ordenRuta != null) ordenRuta.toString(),
+      if (textoSucursalExtra != null && textoSucursalExtra.isNotEmpty)
+        textoSucursalExtra,
+      pagado ? 'pagado' : '',
+      pagada ? 'pagada' : '',
+      requierePago ? 'requiere pago contra entrega' : '',
+      tieneRemesa ? 'remesa' : '',
+      recogerEnSucursal ? 'recoger sucursal' : '',
+      esUrgente ? 'urgente' : '',
+    ];
+
+    final items = itemsAdicionales;
+    if (items != null) {
+      for (final item in items) {
+        if (item is Map) {
+          for (final value in item.values) {
+            if (value != null) partes.add(value.toString());
+          }
+        }
+      }
+    }
+
+    final avisos = avisosRecogidaVendedor;
+    if (avisos != null) {
+      for (final aviso in avisos) {
+        if (aviso is Map) {
+          for (final value in aviso.values) {
+            if (value != null) partes.add(value.toString());
+          }
+        }
+      }
+    }
+
+    return partes.where((p) => p.isNotEmpty).join(' ');
+  }
+
+  /// Búsqueda flexible: texto, números parciales (teléfono, orden, precio) y fechas.
+  bool coincideConBusqueda(String queryRaw, {String? textoSucursalExtra}) {
+    final query = queryRaw.trim().toLowerCase();
+    if (query.isEmpty) return true;
+
+    final haystack = buildTextoBusqueda(textoSucursalExtra: textoSucursalExtra)
+        .toLowerCase();
+    if (haystack.contains(query)) return true;
+
+    final qNum = query.replaceAll(RegExp(r'[^0-9]'), '');
+    if (qNum.length >= 2) {
+      final hayNum = haystack.replaceAll(RegExp(r'[^0-9]'), '');
+      if (hayNum.contains(qNum)) return true;
+    }
+
+    return false;
+  }
+
   // Función auxiliar para parsear valores booleanos desde diferentes tipos
   static bool? _parseBool(dynamic value) {
     if (value == null) return null;

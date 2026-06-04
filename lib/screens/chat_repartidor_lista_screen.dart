@@ -3,6 +3,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../main.dart';
 import '../config/app_colors.dart';
 import '../services/repartidor_chat_soporte_service.dart';
+import '../services/repartidor_pantallas_offline_service.dart';
+import '../services/sync_service.dart';
+import '../services/network_timeout.dart';
 import 'chat_soporte_filtrado_screen.dart';
 
 class ChatRepartidorListaScreen extends StatefulWidget {
@@ -108,13 +111,35 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
       return;
     }
 
+    final user = supabase.auth.currentUser;
+    if (user != null) {
+      final cachedConv = await RepartidorPantallasOfflineService.cargarConversacionesChat(user.id);
+      if (cachedConv != null && cachedConv.isNotEmpty && mounted) {
+        setState(() {
+          _conversaciones = cachedConv;
+          _cargando = false;
+        });
+      }
+    }
+
+    if (!SyncService().isOnline) {
+      if (mounted) setState(() => _cargando = false);
+      return;
+    }
+
     try {
-      // Obtener todos los mensajes de la conversación
-      final mensajes = await supabase
-          .from('mensajes_soporte')
-          .select('*')
-          .eq('conversacion_id', _conversacionId!)
-          .order('created_at', ascending: false);
+      final mensajesRaw = await ejecutarConTimeout(
+        supabase
+            .from('mensajes_soporte')
+            .select('*')
+            .eq('conversacion_id', _conversacionId!)
+            .order('created_at', ascending: false),
+      );
+      if (mensajesRaw == null) {
+        if (mounted) setState(() => _cargando = false);
+        return;
+      }
+      final mensajes = mensajesRaw as List;
 
       // Agrupar mensajes por remitente (admin o empleado)
       final Map<String, Map<String, dynamic>> conversacionesMap = {};
@@ -182,6 +207,12 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
         _conversaciones = conversacionesList;
         _cargando = false;
       });
+      if (user != null) {
+        await RepartidorPantallasOfflineService.guardarConversacionesChat(
+          user.id,
+          conversacionesList,
+        );
+      }
     } catch (e) {
       print('❌ Error cargando conversaciones: $e');
       setState(() => _cargando = false);

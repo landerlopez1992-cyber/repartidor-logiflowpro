@@ -20,8 +20,10 @@ import '../services/goodbarber_sync_service.dart';
 import '../main.dart';
 import '../utils/orden_recogida_colaborador_ui.dart';
 import '../utils/remesa_pura_entrega_ui.dart';
+import '../utils/entrega_foto_util.dart';
 import '../config/app_colors.dart';
 import '../widgets/volonex_dialog.dart';
+import '../widgets/foto_entrega_preview.dart';
 
 class DetalleOrdenScreen extends StatefulWidget {
   final Orden orden;
@@ -55,7 +57,8 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
   void initState() {
     super.initState();
     _ordenActual = widget.orden; // Copiar la orden inicial
-    _fotoEntregaUrl = widget.orden.fotoEntrega; // Inicializar con la foto existente
+    _fotoEntregaUrl = widget.orden.fotoEntrega;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _inicializarFotoDesdeCache());
     _firmaUrl = widget.orden.firmaUrl; // Inicializar con la firma existente
     _cargarConfiguracionFoto();
     
@@ -769,6 +772,43 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     }
   }
 
+  Future<void> _inicializarFotoDesdeCache() async {
+    final url = await EntregaFotoUtil.resolverUrlFoto(_ordenActual);
+    if (!mounted || !EntregaFotoUtil.urlTieneFoto(url)) return;
+    _aplicarFotoAlEstado(url!);
+  }
+
+  bool _tieneFotoEntregaResuelta() =>
+      EntregaFotoUtil.urlTieneFoto(_fotoEntregaUrl) ||
+      EntregaFotoUtil.ordenTieneFoto(_ordenActual);
+
+  void _aplicarFotoAlEstado(String url) {
+    _fotoEntregaUrl = url;
+    _ordenActual = EntregaFotoUtil.aplicarFotoAOrden(_ordenActual, url);
+    EntregaFotoUtil.guardarFotoEnCache(_ordenActual, url);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _resolverFotoEntregaDesdeCache() async {
+    final url = await EntregaFotoUtil.resolverUrlFoto(_ordenActual);
+    if (EntregaFotoUtil.urlTieneFoto(url)) {
+      _aplicarFotoAlEstado(url!);
+    }
+  }
+
+  /// Una sola solicitud de foto al marcar entregado (online u offline).
+  Future<bool> _asegurarFotoEntregaObligatoria() async {
+    if (!RemesaPuraEntregaUi.exigeFotoEntrega(_ordenActual, _fotoEntregaObligatoria)) {
+      return true;
+    }
+    await _resolverFotoEntregaDesdeCache();
+    if (_tieneFotoEntregaResuelta()) return true;
+
+    await _tomarFotoEntregaConSelector();
+    await _resolverFotoEntregaDesdeCache();
+    return _tieneFotoEntregaResuelta();
+  }
+
   String _textoListoEnColaborador(dynamic raw) {
     if (raw == null) return '';
     final s = raw.toString();
@@ -782,8 +822,10 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
 
   /// Avisos de colaboradores: parte lista para recogida (no implica cambio de estado de la orden).
   Widget _buildAvisosRecogidaColaboradoresBanner() {
-    final list = _ordenActual.avisosRecogidaVendedor;
-    if (list == null || list.isEmpty) return const SizedBox.shrink();
+    if (!OrdenRecogidaColaboradorUi.mostrarBannerAvisosColaborador(_ordenActual)) {
+      return const SizedBox.shrink();
+    }
+    final list = _ordenActual.avisosRecogidaVendedor!;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Container(
@@ -906,7 +948,26 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           children: [
             // Card principal con información básica
             _buildInfoCard(),
-            _buildAvisosRecogidaColaboradoresBanner(),
+            if (_tieneFotoEntregaResuelta()) ...[
+              const SizedBox(height: 12),
+              Center(
+                child: Card(
+                  elevation: 2,
+                  color: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: FotoEntregaPreview(
+                      fotoUrl: _fotoEntregaUrl ?? _ordenActual.fotoEntrega,
+                      ancho: 88,
+                      alto: 88,
+                      mostrarEtiqueta: true,
+                      alineacion: Alignment.center,
+                    ),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             
             // 🔥 REGLA: Para órdenes de GoodBarber con pickup, mostrar como orden normal (sin tarjeta especial)
@@ -915,7 +976,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             _buildContactCard(),
             const SizedBox(height: 12),
             
-            if (OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(_ordenActual) &&
+            if (OrdenRecogidaColaboradorUi.mostrarBloquePuntoColaborador(_ordenActual) &&
                 OrdenRecogidaColaboradorUi.tieneDatosColaborador(_ordenActual)) ...[
               _buildColaboradorRecogidaCard(),
               const SizedBox(height: 12),
@@ -945,17 +1006,6 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             _buildStatusHistoryCard(),
             const SizedBox(height: 12),
 
-            if (!OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(_ordenActual) &&
-                !_ordenActual.entregaPorVendedor &&
-                (_ordenActual.vendedorContactoNombre != null ||
-                    (_ordenActual.vendedorContactoTelefono != null &&
-                        _ordenActual.vendedorContactoTelefono!.trim().isNotEmpty) ||
-                    (_ordenActual.vendedorContactoEmail != null &&
-                        _ordenActual.vendedorContactoEmail!.trim().isNotEmpty))) ...[
-              _buildColaboradorRecogidaCard(),
-              const SizedBox(height: 12),
-            ],
-            
             // 🔥 RECUADRO INFORMATIVO ESPECIAL: Proceso de recogida en sucursal (solo para órdenes normales de VolonexPro+)
             if (_ordenActual.goodbarberOrderId == null && 
                 _ordenActual.recogerEnSucursal && 
@@ -1631,7 +1681,13 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
 
     if (!entregarADestinatario) return;
 
-    // Entrega final al destinatario (domicilio o en sucursal): RMSA e ID, sin firma ni foto
+    // Foto obligatoria (una sola vez; mismo flujo online/offline)
+    if (!await _asegurarFotoEntregaObligatoria()) {
+      _mostrarMensaje('❌ Se requiere la foto de entrega para completar la entrega.');
+      return;
+    }
+
+    // Entrega final al destinatario (domicilio o en sucursal): RMSA e ID
     final numeroRemesa = _ordenActual.numeroRemesa ?? _ordenActual.numeroOrden;
     final nombreDestinatario = _ordenActual.receptor;
     
@@ -1738,40 +1794,6 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           }
         }
       }
-    }
-    
-    // Foto de entrega: no aplica a remesas puras
-    if (RemesaPuraEntregaUi.exigeFotoEntrega(_ordenActual, _fotoEntregaObligatoria) &&
-        (_fotoEntregaUrl == null || _fotoEntregaUrl!.isEmpty)) {
-      print('📷 PASO 4: Foto obligatoria pero no tomada');
-      
-      // Usar el método existente que maneja todo el flujo de foto
-      await _tomarFotoEntregaConSelector();
-      
-      // Verificar que la foto se capturó correctamente
-      if (_fotoEntregaUrl == null || _fotoEntregaUrl!.isEmpty) {
-        print('❌ Error: La foto no se capturó correctamente');
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('❌ No se pudo obtener la foto. Intenta de nuevo.'),
-            backgroundColor: Color(0xFFDC2626),
-          ),
-        );
-        return;
-      }
-      
-      // 🔒 CRÍTICO: Actualizar _ordenActual con la foto capturada
-      // NO recargar desde BD porque puede sobrescribir la foto local
-      try {
-        final ordenJson = _ordenActual.toJson();
-        ordenJson['foto_entrega'] = _fotoEntregaUrl;
-        _ordenActual = Orden.fromJson(ordenJson);
-        print('✅ _ordenActual actualizada con foto: $_fotoEntregaUrl');
-      } catch (e) {
-        print('⚠️ Error actualizando _ordenActual con foto: $e');
-      }
-      
-      print('✅ Foto capturada exitosamente para remesa: $_fotoEntregaUrl');
     }
     
     // Confirmación final
@@ -2364,10 +2386,8 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(_ordenActual)
-                  ? 'Recoge el pedido solo en el punto del colaborador. La dirección del cliente se mostrará después de confirmar la recogida.'
-                  : 'Coordina con el colaborador para recoger el pedido en el punto acordado.',
-              style: TextStyle(fontSize: 13, color: const Color(0xFF666666)),
+              OrdenRecogidaColaboradorUi.mensajeInfoTarjeta(_ordenActual),
+              style: const TextStyle(fontSize: 13, color: Color(0xFF666666)),
             ),
             if (nombre != null && nombre.isNotEmpty) ...[
               const SizedBox(height: 12),
@@ -2425,12 +2445,14 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               '#${widget.orden.numeroOrden.isNotEmpty ? widget.orden.numeroOrden : (widget.orden.id.length > 8 ? widget.orden.id.substring(0, 8) : widget.orden.id)}'
             ),
             const SizedBox(height: 8),
-            _buildInfoRow(
-              Icons.person, 
-              'Emisor', 
-              widget.orden.emisor.isNotEmpty ? widget.orden.emisor : 'No especificado'
-            ),
-            const SizedBox(height: 8),
+            if (!OrdenRecogidaColaboradorUi.ocultarDatosDestinatario(_ordenActual)) ...[
+              _buildInfoRow(
+                Icons.person,
+                'Emisor',
+                widget.orden.emisor.isNotEmpty ? widget.orden.emisor : 'No especificado',
+              ),
+              const SizedBox(height: 8),
+            ],
             _buildInfoRow(Icons.schedule, 'Fecha de Creación', _formatearFecha(widget.orden.fechaCreacion)),
             if (widget.orden.fechaEntrega != null) ...[
               const SizedBox(height: 8),
@@ -3878,9 +3900,13 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
         _isLoading = true;
       });
     }
+
+    await _resolverFotoEntregaDesdeCache();
     
-    // Guardar la foto y firma actuales antes de recargar
-    final fotoAntesDeRecargar = _fotoEntregaUrl;
+    // Guardar la foto y firma actuales antes de recargar (incluye caché/offline)
+    final fotoAntesDeRecargar = EntregaFotoUtil.urlTieneFoto(_fotoEntregaUrl)
+        ? _fotoEntregaUrl
+        : _ordenActual.fotoEntrega;
     final firmaAntesDeRecargar = _firmaUrl;
     
     // Recargar orden para tener datos más recientes CON TIMEOUT Y MANEJO DE ERRORES DE RED
@@ -4085,20 +4111,9 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     
     // 🔒 CRÍTICO: Restaurar la foto y firma que se subieron localmente
     // Preservar fotos locales (local://) - son críticas para el flujo offline
-    if (fotoAntesDeRecargar != null && fotoAntesDeRecargar.isNotEmpty) {
-      // Si es foto local, SIEMPRE preservarla
-      if (fotoAntesDeRecargar.startsWith('local://')) {
-        print('🔒 Preservando foto local después de recargar: $fotoAntesDeRecargar');
-        _fotoEntregaUrl = fotoAntesDeRecargar;
-        // No modificar _ordenActual directamente (es inmutable)
-      } else {
-        // Si es foto de BD, solo actualizar si no hay foto local actual
-        if (_fotoEntregaUrl == null || 
-            _fotoEntregaUrl!.isEmpty || 
-            !_fotoEntregaUrl!.startsWith('local://')) {
-          _fotoEntregaUrl = fotoAntesDeRecargar;
-        }
-      }
+    if (EntregaFotoUtil.urlTieneFoto(fotoAntesDeRecargar)) {
+      print('🔒 Preservando foto después de recargar: $fotoAntesDeRecargar');
+      _aplicarFotoAlEstado(fotoAntesDeRecargar!);
     }
     
     // Similar para la firma
@@ -4132,18 +4147,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           final file = File(filePath);
           if (await file.exists()) {
             print('🔒 Restaurando foto local desde storage después de recargar: $filePath');
-            final fotoLocalUrl = 'local://$filePath';
-            _fotoEntregaUrl = fotoLocalUrl;
-            
-            // 🔒 CRÍTICO: Actualizar también _ordenActual
-            try {
-              final ordenJson = _ordenActual.toJson();
-              ordenJson['foto_entrega'] = fotoLocalUrl;
-              _ordenActual = Orden.fromJson(ordenJson);
-              print('✅ _ordenActual actualizada con foto restaurada: $fotoLocalUrl');
-            } catch (e) {
-              print('⚠️ Error actualizando _ordenActual con foto restaurada: $e');
-            }
+            _aplicarFotoAlEstado('local://$filePath');
           }
         }
       } catch (e) {
@@ -4162,7 +4166,13 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     print('🔍 DEBUG - Requiere firma: ${_ordenActual.requiereFirma}');
     print('🔍 DEBUG - Tiene firma: ${_firmaUrl != null && _firmaUrl!.isNotEmpty}');
     print('🔍 DEBUG - Foto obligatoria: $_fotoEntregaObligatoria');
-    print('🔍 DEBUG - Tiene foto: ${_fotoEntregaUrl != null && _fotoEntregaUrl!.isNotEmpty}');
+    print('🔍 DEBUG - Tiene foto: ${_tieneFotoEntregaResuelta()}');
+
+    // Foto obligatoria: una sola vez (mismo flujo online/offline)
+    if (!await _asegurarFotoEntregaObligatoria()) {
+      _mostrarMensaje('❌ Se requiere la foto de entrega para marcar como entregada.');
+      return;
+    }
     
     // 🔄 FLUJO SECUENCIAL DE VALIDACIÓN Y ACCIONES
     
@@ -4222,108 +4232,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       print('✅ Pago validado y cobrado');
     }
     
-    // PASO 3: Obtener FOTO (si es obligatoria) - PRIMERO LA FOTO, LUEGO LA FIRMA
-    // 🔒 CRÍTICO: Verificar tanto _fotoEntregaUrl como _ordenActual.fotoEntrega
-    // porque pueden estar desincronizados después de recargas
-    // También verificar en caché y pending_photos si no está en estado local
-    bool tieneFoto = (_fotoEntregaUrl != null && _fotoEntregaUrl!.isNotEmpty) ||
-                      (_ordenActual.fotoEntrega != null && _ordenActual.fotoEntrega!.isNotEmpty);
-    
-    // Si no tiene foto en estado local, verificar en caché y pending_photos
-    if (!tieneFoto) {
-      try {
-        // Verificar en caché
-        final ordenCache = await OrdenCacheService.getCachedOrderById(_ordenActual.id);
-        if (ordenCache != null && ordenCache.fotoEntrega != null && ordenCache.fotoEntrega!.isNotEmpty) {
-          // Sincronizar desde caché
-          _fotoEntregaUrl = ordenCache.fotoEntrega;
-          try {
-            final ordenJson = _ordenActual.toJson();
-            ordenJson['foto_entrega'] = ordenCache.fotoEntrega;
-            _ordenActual = Orden.fromJson(ordenJson);
-            tieneFoto = true;
-            print('✅ Foto encontrada en caché y sincronizada: ${ordenCache.fotoEntrega}');
-          } catch (e) {
-            print('⚠️ Error sincronizando foto desde caché: $e');
-          }
-        }
-        
-        // Si aún no tiene foto, verificar en pending_photos
-        if (!tieneFoto) {
-          final offlineStorage = OfflineStorageService();
-          final pendingPhotos = await offlineStorage.getPendingPhotos();
-          final fotoPendiente = pendingPhotos.firstWhere(
-            (photo) => photo['orden_id'] == _ordenActual.id,
-            orElse: () => <String, dynamic>{},
-          );
-          
-          if (fotoPendiente.isNotEmpty && fotoPendiente['file_path'] != null) {
-            final filePath = fotoPendiente['file_path'] as String;
-            final file = File(filePath);
-            if (await file.exists()) {
-              final fotoLocalUrl = 'local://$filePath';
-              _fotoEntregaUrl = fotoLocalUrl;
-              try {
-                final ordenJson = _ordenActual.toJson();
-                ordenJson['foto_entrega'] = fotoLocalUrl;
-                _ordenActual = Orden.fromJson(ordenJson);
-                tieneFoto = true;
-                print('✅ Foto encontrada en pending_photos y sincronizada: $fotoLocalUrl');
-              } catch (e) {
-                print('⚠️ Error sincronizando foto desde pending_photos: $e');
-              }
-            }
-          }
-        }
-      } catch (e) {
-        print('⚠️ Error verificando foto en caché/pending_photos: $e');
-      }
-    }
-    
-    if (_fotoEntregaObligatoria && !tieneFoto) {
-      print('📷 PASO 3: Foto obligatoria pero no tomada, pidiendo foto directamente...');
-      print('📷 DEBUG - _fotoEntregaUrl: $_fotoEntregaUrl');
-      print('📷 DEBUG - _ordenActual.fotoEntrega: ${_ordenActual.fotoEntrega}');
-      
-      // 🔒 CRÍTICO: Pedir foto directamente en el flujo, no mostrar error
-      await _tomarFotoEntregaConSelector();
-      
-      // 🔒 CRÍTICO: Sincronizar _fotoEntregaUrl y _ordenActual después de tomar foto
-      // Verificar nuevamente después de tomar la foto
-      final fotoDespues = (_fotoEntregaUrl != null && _fotoEntregaUrl!.isNotEmpty) ||
-                          (_ordenActual.fotoEntrega != null && _ordenActual.fotoEntrega!.isNotEmpty);
-      
-      if (!fotoDespues) {
-        print('❌ Error: La foto no se capturó correctamente');
-        _mostrarMensaje('❌ No se pudo obtener la foto. Intenta de nuevo.');
-        return;
-      }
-      
-      // 🔒 CRÍTICO: Sincronizar ambos valores
-      if (_fotoEntregaUrl != null && _fotoEntregaUrl!.isNotEmpty) {
-        // Si _fotoEntregaUrl tiene valor, actualizar _ordenActual
-        try {
-          final ordenJson = _ordenActual.toJson();
-          ordenJson['foto_entrega'] = _fotoEntregaUrl;
-          _ordenActual = Orden.fromJson(ordenJson);
-          print('✅ _ordenActual actualizada con foto desde _fotoEntregaUrl: $_fotoEntregaUrl');
-        } catch (e) {
-          print('⚠️ Error actualizando _ordenActual con foto: $e');
-        }
-      } else if (_ordenActual.fotoEntrega != null && _ordenActual.fotoEntrega!.isNotEmpty) {
-        // Si _ordenActual tiene valor, actualizar _fotoEntregaUrl
-        _fotoEntregaUrl = _ordenActual.fotoEntrega;
-        print('✅ _fotoEntregaUrl actualizada desde _ordenActual: $_fotoEntregaUrl');
-      }
-      
-      print('✅ Foto capturada exitosamente: $_fotoEntregaUrl');
-    } else {
-      print('✅ Foto validada (ya existe o no es obligatoria)');
-      print('📷 DEBUG - _fotoEntregaUrl: $_fotoEntregaUrl');
-      print('📷 DEBUG - _ordenActual.fotoEntrega: ${_ordenActual.fotoEntrega}');
-    }
-    
-    // PASO 4: Obtener FIRMA (si requiere) - DESPUÉS DE LA FOTO
+    // PASO 3: FIRMA (la foto ya se validó al inicio del flujo)
     // 🔒 CRÍTICO: Verificar tanto _firmaUrl como _ordenActual.firmaUrl
     // porque pueden estar desincronizados después de recargas
     // También verificar en caché y pending_signatures si no está en estado local
@@ -6135,6 +6044,11 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       return;
     }
 
+    await _resolverFotoEntregaDesdeCache();
+    if (_tieneFotoEntregaResuelta()) {
+      return;
+    }
+
     final estadoValido = _ordenActual.estado == 'EN REPARTO' ||
         (_ordenActual.estado == 'LISTO PARA RECOGER' && _ordenActual.recogerEnSucursal);
     
@@ -6299,132 +6213,45 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               print('✅ Foto subida exitosamente (online)');
               
               if (mounted) {
-                // 🔒 CRÍTICO: Actualizar tanto _fotoEntregaUrl como _ordenActual
-                try {
-                  final ordenJson = _ordenActual.toJson();
-                  ordenJson['foto_entrega'] = imageUrl;
-                  final ordenActualizada = Orden.fromJson(ordenJson);
-                  
-                  setState(() {
-                    _fotoEntregaUrl = imageUrl;
-                    _ordenActual = ordenActualizada; // 🔒 Sincronizar _ordenActual
-                    _isLoading = false;
-                  });
-                  
-                  // Actualizar caché también
-                  await OrdenCacheService.updateCachedOrder(ordenActualizada);
-                  print('✅ _ordenActual y caché actualizados con foto: $imageUrl');
-                } catch (e) {
-                  print('⚠️ Error actualizando _ordenActual con foto: $e');
-                  setState(() {
-                    _fotoEntregaUrl = imageUrl;
-                    _isLoading = false;
-                  });
-                }
-                
+                _aplicarFotoAlEstado(imageUrl);
+                setState(() => _isLoading = false);
                 _mostrarMensaje('✅ Foto subida exitosamente');
               }
             } catch (uploadError) {
               print('⚠️ Error subiendo foto, agregando a cola: $uploadError');
-              // Si falla, agregar a cola de sincronización
               await syncService.addOperation(
                 type: 'upload_photo',
                 ordenId: widget.orden.id,
                 data: {
                   'photo_base64': photoBase64,
-                  'file_path': image.path, // 🔒 CRÍTICO: Incluir ruta del archivo para sincronización
+                  'file_path': image.path,
                 },
               );
-              
-              // 🔒 CRÍTICO: Actualizar caché local de la orden con la foto local
-              try {
-                final ordenJson = _ordenActual.toJson();
-                ordenJson['foto_entrega'] = 'local://${image.path}';
-                final ordenActualizada = Orden.fromJson(ordenJson);
-                await OrdenCacheService.updateCachedOrder(ordenActualizada);
-                print('💾 Orden actualizada en caché local con foto: ${image.path}');
-              } catch (e) {
-                print('⚠️ Error actualizando caché local con foto: $e');
-              }
-              
-              // 🔒 CRÍTICO: Actualizar _ordenActual también
+
               final fotoLocalUrl = 'local://${image.path}';
-              try {
-                final ordenJson = _ordenActual.toJson();
-                ordenJson['foto_entrega'] = fotoLocalUrl;
-                final ordenActualizada = Orden.fromJson(ordenJson);
-                
-                if (mounted) {
-                  setState(() {
-                    _fotoEntregaUrl = fotoLocalUrl;
-                    _ordenActual = ordenActualizada; // 🔒 Sincronizar _ordenActual
-                    _isLoading = false;
-                  });
-                  print('✅ _ordenActual y _fotoEntregaUrl actualizados con foto local: $fotoLocalUrl');
-                }
-              } catch (e) {
-                print('⚠️ Error actualizando _ordenActual con foto: $e');
-                if (mounted) {
-                  setState(() {
-                    _fotoEntregaUrl = fotoLocalUrl;
-                    _isLoading = false;
-                  });
-                }
-              }
-              
               if (mounted) {
-                _mostrarMensaje('✅ Foto guardada (se sincronizará cuando haya conexión) - Puedes continuar con la entrega');
+                _aplicarFotoAlEstado(fotoLocalUrl);
+                setState(() => _isLoading = false);
+                _mostrarMensaje(
+                  '✅ Foto guardada (se sincronizará cuando haya conexión) - Puedes continuar con la entrega',
+                );
               }
             }
           } else {
-            // Sin conexión, agregar a cola directamente
             print('📴 Sin conexión - Agregando foto a cola de sincronización');
             await syncService.addOperation(
               type: 'upload_photo',
               ordenId: widget.orden.id,
               data: {
                 'photo_base64': photoBase64,
-                'file_path': image.path, // 🔒 CRÍTICO: Incluir ruta del archivo para sincronización
+                'file_path': image.path,
               },
             );
-            
-            // 🔒 CRÍTICO: Actualizar caché local de la orden con la foto local
-            try {
-              final ordenJson = _ordenActual.toJson();
-              ordenJson['foto_entrega'] = 'local://${image.path}';
-              final ordenActualizada = Orden.fromJson(ordenJson);
-              await OrdenCacheService.updateCachedOrder(ordenActualizada);
-              print('💾 Orden actualizada en caché local con foto: ${image.path}');
-            } catch (e) {
-              print('⚠️ Error actualizando caché local con foto: $e');
-            }
-            
-            // 🔒 CRÍTICO: Actualizar _ordenActual también
+
             final fotoLocalUrl = 'local://${image.path}';
-            try {
-              final ordenJson = _ordenActual.toJson();
-              ordenJson['foto_entrega'] = fotoLocalUrl;
-              final ordenActualizada = Orden.fromJson(ordenJson);
-              
-              if (mounted) {
-                setState(() {
-                  _fotoEntregaUrl = fotoLocalUrl;
-                  _ordenActual = ordenActualizada; // 🔒 Sincronizar _ordenActual
-                  _isLoading = false;
-                });
-                print('✅ _ordenActual y _fotoEntregaUrl actualizados con foto local (offline): $fotoLocalUrl');
-              }
-            } catch (e) {
-              print('⚠️ Error actualizando _ordenActual con foto: $e');
-              if (mounted) {
-                setState(() {
-                  _fotoEntregaUrl = fotoLocalUrl;
-                  _isLoading = false;
-                });
-              }
-            }
-            
             if (mounted) {
+              _aplicarFotoAlEstado(fotoLocalUrl);
+              setState(() => _isLoading = false);
               _mostrarMensaje('✅ Foto guardada (modo offline) - Puedes continuar con la entrega');
             }
           }

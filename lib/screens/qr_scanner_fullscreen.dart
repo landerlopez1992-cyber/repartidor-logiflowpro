@@ -8,6 +8,7 @@ import '../services/goodbarber_sync_service.dart';
 import '../services/email_service.dart';
 import '../services/sync_service.dart';
 import '../services/orden_cache_service.dart';
+import '../services/orden_estado_sync_helper.dart';
 import '../services/configuracion_service.dart';
 import 'detalle_orden_screen.dart';
 
@@ -783,66 +784,13 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
 
   Future<void> _recibirOrden(Orden orden) async {
     try {
-      final syncService = SyncService();
-      final updateData = <String, dynamic>{'estado': 'EN REPARTO'};
-
-      bool actualizadoExitosamente = false;
-
-      // ✅ OFFLINE-FIRST: actualizar local inmediato
-      try {
-        orden.estado = 'EN REPARTO';
-        await OrdenCacheService.updateCachedOrder(orden);
-        print('💾 Orden actualizada en caché local: EN TRANSITO → EN REPARTO');
-      } catch (e) {
-        print('⚠️ Error actualizando caché local EN REPARTO (QR): $e');
-      }
-
-      // Intentar BD solo si hay conectividad (si falla DNS, se encola)
-      if (syncService.isOnline) {
-        try {
-          await supabase.from('ordenes').update(updateData).eq('id', orden.id);
-          actualizadoExitosamente = true;
-          print('✅ Orden marcada como EN REPARTO en Supabase (online)');
-        } catch (e) {
-          final errorString = e.toString();
-          if (errorString.contains('Failed host lookup') ||
-              errorString.contains('SocketException') ||
-              errorString.contains('ClientException')) {
-            print('📴 Sin conexión real a Supabase (QR) - Encolando EN REPARTO');
-            actualizadoExitosamente = false;
-          } else {
-            rethrow;
-          }
-        }
-      } else {
-        print('📴 Sin conexión - Encolando EN REPARTO');
-      }
-
-      if (!actualizadoExitosamente) {
-        try {
-          await syncService.addOperation(
-            type: 'update_orden_estado',
-            ordenId: orden.id,
-            data: updateData,
-          );
-          print('📝 Operación EN REPARTO agregada a cola de sincronización');
-        } catch (e) {
-          print('⚠️ Error encolando EN REPARTO (QR): $e');
-        }
-      }
-
-      // Sincronizar con GoodBarber si la orden está vinculada (solo si se actualizó exitosamente)
-      if (actualizadoExitosamente) {
-        try {
-          await GoodBarberSyncService.sincronizarEstadoAGoodBarber(
-            supabase,
-            orden.id,
-            'EN REPARTO',
-          );
-        } catch (e) {
-          print('⚠️ Error sincronizando estado con GoodBarber: $e');
-        }
-      }
+      orden.estado = 'EN REPARTO';
+      final syncResult = await OrdenEstadoSyncHelper.persistirCambioEstado(
+        ordenId: orden.id,
+        ordenEnCache: orden,
+        updateData: const {'estado': 'EN REPARTO'},
+      );
+      final actualizadoExitosamente = syncResult.persistedToDb;
 
       // Mostrar icono de confirmación
       if (!mounted) return;

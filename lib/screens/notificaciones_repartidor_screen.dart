@@ -4,6 +4,9 @@ import '../main.dart';
 import '../models/orden.dart';
 import '../constants/repartidor_notificacion_tipos.dart';
 import '../services/repartidor_notificaciones_push_service.dart';
+import '../services/repartidor_pantallas_offline_service.dart';
+import '../services/sync_service.dart';
+import '../services/network_timeout.dart';
 import 'detalle_orden_screen.dart';
 
 class NotificacionesRepartidorScreen extends StatefulWidget {
@@ -150,10 +153,26 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
       return;
     }
 
-    try {
+    final cached = await RepartidorPantallasOfflineService.cargarNotificaciones(_repartidorId!);
+    if (cached != null && mounted) {
       setState(() {
-        _isLoading = true;
+        _notificacionesOrdenes = cached.ordenes;
+        _notificacionesPagos = cached.pagos;
+        _notificacionesGenerales = cached.generales;
+        _isLoading = false;
       });
+    }
+
+    final syncService = SyncService();
+    if (!syncService.isOnline) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
+
+    try {
+      if (cached == null) {
+        setState(() => _isLoading = true);
+      }
 
       // CRÍTICO: Si es recolector, cargar de notificaciones_recolectores, si no, de notificaciones_repartidores
       final tablaNotificaciones = _esRecolector ? 'notificaciones_recolectores' : 'notificaciones_repartidores';
@@ -168,14 +187,21 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
       print('   - Es recolector: $_esRecolector');
       print('   - Tabla: $tablaNotificaciones');
       
-      final ordenesResponse = await supabase
-          .from(tablaNotificaciones)
-          .select('id, tipo, titulo, mensaje, created_at, leida, orden_id, numero_orden')
-          .eq(campoId, _repartidorId!)
-          .inFilter('tipo', RepartidorNotificacionTipos.tiposOrdenNueva)
-          .eq('leida', false) // CRÍTICO: Solo no leídas
-          .order('created_at', ascending: false) // Más recientes primero
-          .limit(100); // Aumentar límite para mostrar más notificaciones
+      final ordenesResponseRaw = await ejecutarConTimeout(
+        supabase
+            .from(tablaNotificaciones)
+            .select('id, tipo, titulo, mensaje, created_at, leida, orden_id, numero_orden')
+            .eq(campoId, _repartidorId!)
+            .inFilter('tipo', RepartidorNotificacionTipos.tiposOrdenNueva)
+            .eq('leida', false)
+            .order('created_at', ascending: false)
+            .limit(100),
+      );
+      if (ordenesResponseRaw == null) {
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+      final ordenesResponse = List<Map<String, dynamic>>.from(ordenesResponseRaw as List);
       
       print('📊 Notificaciones de órdenes NO LEÍDAS encontradas: ${ordenesResponse.length}');
       
@@ -266,6 +292,13 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
           _notificacionesGenerales = List<Map<String, dynamic>>.from(generalesResponse);
           _isLoading = false;
         });
+
+        await RepartidorPantallasOfflineService.guardarNotificaciones(
+          _repartidorId!,
+          ordenes: ordenesConDatos,
+          pagos: List<Map<String, dynamic>>.from(pagosResponse),
+          generales: List<Map<String, dynamic>>.from(generalesResponse),
+        );
         
         print('✅ Notificaciones cargadas:');
         print('   - Órdenes: ${_notificacionesOrdenes.length}');
@@ -276,6 +309,11 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
       print('❌ Error al cargar notificaciones: $e');
       if (mounted) {
         setState(() {
+          if (cached != null) {
+            _notificacionesOrdenes = cached.ordenes;
+            _notificacionesPagos = cached.pagos;
+            _notificacionesGenerales = cached.generales;
+          }
           _isLoading = false;
         });
       }

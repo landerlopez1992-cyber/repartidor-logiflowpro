@@ -57,6 +57,7 @@ dependencies:
   # Notificaciones push locales
   flutter_local_notifications: ^17.2.2
   vibration: ^3.1.4
+  audioplayers: ^6.1.0
   
   # Permisos (para ubicación en segundo plano)
   permission_handler: ^11.3.1
@@ -123,6 +124,7 @@ flutter:
     - assets/logo_julio_icon.png
     - assets/logiflow_pro_logo.png
     - assets/www.logiflowpro.com.png
+    - assets/sounds/chat_mensaje.mp3
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

@@ -79,7 +79,7 @@ class OrdenRecogidaColaboradorUi {
     if (colaboradorMarcoListo(orden)) {
       return 'El colaborador indicó que está listo. Pulsa «Iniciar recolecta» cuando salgas hacia su punto.';
     }
-    return 'Debes recoger este pedido en el colaborador. La entrega al cliente será después de la recogida.';
+    return 'Recoge en el punto del colaborador. El cliente final y su dirección se mostrarán después de confirmar la recogida.';
   }
 
   static String etiquetaPlazo(Orden orden) {
@@ -103,4 +103,28 @@ class OrdenRecogidaColaboradorUi {
 
   static bool puedeConfirmarRecogida(Orden orden) =>
       enFaseRecogidaColaborador(orden) && repartidorInicioRecolecta(orden);
+
+  /// Mientras el repartidor debe recoger en el colaborador: sin datos del cliente final.
+  static bool ocultarDatosDestinatario(Orden orden) =>
+      esRecogidaColaborador(orden) && enFaseRecogidaColaborador(orden);
+
+  /// Tras confirmar recogida (EN REPARTO, etc.): sin colaborador ni avisos de recogida.
+  static bool ocultarDatosColaboradorYAvisos(Orden orden) =>
+      esRecogidaColaborador(orden) && !enFaseRecogidaColaborador(orden);
+
+  static bool mostrarBloquePuntoColaborador(Orden orden) =>
+      esRecogidaColaborador(orden) && enFaseRecogidaColaborador(orden);
+
+  static bool mostrarBloqueDestinatario(Orden orden) =>
+      !ocultarDatosDestinatario(orden);
+
+  /// Tarjeta azul «Recoger en el vendedor» en lista (órdenes que no son recogida colaborador).
+  static bool mostrarTarjetaContactoVendedorEnLista(Orden orden) {
+    if (esRecogidaColaborador(orden)) return false;
+    if (orden.entregaPorVendedor) return false;
+    return tieneDatosColaborador(orden);
+  }
+
+  /// Evita bloque grande de avisos en detalle; el estado y el mensaje en tarjeta bastan.
+  static bool mostrarBannerAvisosColaborador(Orden orden) => false;
 }

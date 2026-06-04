@@ -14,11 +14,43 @@ class OrdenCacheService {
   /// 🔒 OFFLINE-FIRST: NO sobrescribir órdenes con cambios de estado locales hasta que se sincronicen
   /// 🔒 OFFLINE-FIRST: Preservar foto/firma locales con subida pendiente
   /// RETORNA: La lista fusionada de órdenes (con cambios locales preservados si aplica)
+  /// Evita vaciar la lista en pantalla cuando la red falla o el servidor devuelve 0 filas.
+  static List<Orden> resolveOrdersForDisplay({
+    required List<Orden> fused,
+    required List<Orden> cached,
+    required List<Orden> onScreen,
+    int serverCount = -1,
+  }) {
+    if (fused.isNotEmpty) return fused;
+    if (onScreen.isNotEmpty) {
+      print('🔒 Pantalla: respuesta vacía — se mantienen ${onScreen.length} órdenes en UI');
+      return onScreen;
+    }
+    if (cached.isNotEmpty) {
+      print('🔒 Pantalla: respuesta vacía — se usan ${cached.length} órdenes del caché');
+      return cached;
+    }
+    if (serverCount == 0) {
+      print('🔒 Servidor y caché vacíos — lista vacía');
+    }
+    return fused;
+  }
+
   static Future<List<Orden>> cacheOrders(List<Orden> ordenes, {bool preserveLocalChanges = true}) async {
     try {
+      final ordenesServidor = List<Orden>.from(ordenes);
+
       // 🔒 OFFLINE-FIRST: Si preserveLocalChanges es true, fusionar con caché existente
       if (preserveLocalChanges) {
         final ordenesCached = await getCachedOrders();
+
+        // Nunca persistir una respuesta vacía sobre un caché con órdenes (fallo de red / timeout parcial)
+        if (ordenesServidor.isEmpty && ordenesCached.isNotEmpty) {
+          print(
+            '🔒 cacheOrders: servidor devolvió 0 órdenes — se preserva caché (${ordenesCached.length})',
+          );
+          return ordenesCached;
+        }
         final ordenesCachedMap = {for (final orden in ordenesCached) orden.id: orden};
         
         // Obtener operaciones pendientes de sincronización para verificar qué órdenes tienen cambios locales
@@ -85,7 +117,7 @@ class OrdenCacheService {
         final ordenesFusionadas = <Orden>[];
         final idsProcesados = <String>{};
         
-        for (var ordenSupabase in ordenes) {
+        for (var ordenSupabase in ordenesServidor) {
           idsProcesados.add(ordenSupabase.id);
           
           // Si esta orden tiene cambios locales pendientes, usar la versión del caché
@@ -154,6 +186,23 @@ class OrdenCacheService {
         }
         
         ordenes = ordenesFusionadas;
+      } else if (ordenesServidor.isEmpty) {
+        final ordenesCached = await getCachedOrders();
+        if (ordenesCached.isNotEmpty) {
+          print(
+            '🔒 cacheOrders (sin merge): servidor vacío — se preserva caché (${ordenesCached.length})',
+          );
+          return ordenesCached;
+        }
+      }
+
+      // No guardar lista vacía si antes había datos (logout usa clearCache)
+      if (ordenes.isEmpty) {
+        final existente = await getCachedOrders();
+        if (existente.isNotEmpty) {
+          print('🔒 cacheOrders: no se sobrescribe caché con lista vacía');
+          return existente;
+        }
       }
       
       final prefs = await SharedPreferences.getInstance();

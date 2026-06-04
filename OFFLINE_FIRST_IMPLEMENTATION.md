@@ -3,7 +3,9 @@
 ## ✅ Características Implementadas
 
 ### 1. **Almacenamiento Local Completo**
-- ✅ Todas las órdenes se guardan en caché local (SQLite)
+- ✅ Órdenes en caché local (**SharedPreferences** + merge con cola de sync)
+- ✅ Fotos/firmas en **SQLite** (`offline_data.db`)
+- ✅ GPS, notificaciones, chat y mapa con caché (`repartidor_pantallas_offline_service.dart`)
 - ✅ Fotos de entrega se guardan en archivos locales
 - ✅ Firmas se guardan en archivos locales
 - ✅ Todos los cambios de estado se guardan localmente primero
@@ -191,27 +193,22 @@ await ErrorHandlerService.showSuccessModal(
 );
 ```
 
-## 📝 Funciones que Necesitan Mejora
+## 📝 Estado offline (actualizado)
 
-Para que **TODAS** las funciones funcionen completamente offline, deben seguir el patrón offline-first:
+### Funciones con patrón offline-first:
+- ✅ Cambios de estado vía `OrdenEstadoSyncHelper` (lista, detalle, QR, ruta)
+- ✅ Fotos y firmas + cola `SyncService`
+- ✅ GPS en cola (`ubicacion_offline_service.dart`)
+- ✅ Chat soporte: lectura en caché + envío en cola
+- ✅ Notificaciones: caché + timeout de red
+- ✅ Mapa repartidor: última ubicación en caché
+- ✅ Iniciar recolecta colaborador: cola `rpc_iniciar_recolecta`
+- ✅ Notificaciones email/WhatsApp: trigger BD (no duplicar desde app)
 
-### Funciones Críticas que ya funcionan offline:
-- ✅ Tomar foto de entrega (`_tomarFotoEntrega`)
-- ✅ Capturar firma (`_capturarFirma`)
-- ✅ Marcar orden como entregada (parcial - necesita mejoras)
-
-### Funciones que necesitan mejoras:
-- ⚠️ Cambiar estado de orden (EN REPARTO, ENTREGADO, etc.)
-- ⚠️ Marcar remesa como entregada
-- ⚠️ Registrar cobro de remesa
-- ⚠️ Actualizar información de orden
-
-## 🚀 Próximos Pasos
-
-1. **Modificar todas las funciones de cambio de estado** para seguir el patrón offline-first
-2. **Asegurar que todas las fotos y firmas se guarden localmente** antes de intentar subirlas
-3. **Mejorar la carga de órdenes** para priorizar caché local
-4. **Agregar indicadores visuales** cuando hay operaciones pendientes de sincronizar
+### Limitaciones conocidas:
+- ⚠️ **Primer login** requiere internet
+- ⚠️ **Ruta optimizada / tiles del mapa** requieren red para datos nuevos
+- ⚠️ Marcar notificación como leída offline: se aplica al reconectar (sin cola dedicada aún)
 
 ## ⚠️ Notas Importantes
 

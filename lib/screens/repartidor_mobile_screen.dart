@@ -20,6 +20,8 @@ import '../services/sync_service.dart';
 import '../services/orden_cache_service.dart';
 import '../services/orden_estado_sync_helper.dart';
 import '../services/ubicacion_offline_service.dart';
+import '../services/repartidor_pantallas_offline_service.dart';
+import '../services/network_timeout.dart';
 import '../services/offline_storage_service.dart';
 import '../services/connectivity_assistant_service.dart';
 import '../services/shorebird_service.dart';
@@ -38,10 +40,13 @@ import '../constants/repartidor_notificacion_tipos.dart';
 import '../services/repartidor_notificacion_service.dart';
 import '../services/repartidor_notificaciones_push_service.dart';
 import '../services/repartidor_chat_soporte_service.dart';
+import '../services/repartidor_chat_mensaje_sonido_service.dart';
 import '../utils/orden_tipo_tarjeta_repartidor.dart';
 import '../utils/orden_recogida_colaborador_ui.dart';
 import '../utils/remesa_pura_entrega_ui.dart';
 import '../widgets/volonex_dialog.dart';
+import '../utils/entrega_foto_util.dart';
+import '../widgets/foto_entrega_preview.dart';
 import '../utils/repartidor_nombre_util.dart';
 
 class RepartidorMobileScreen extends StatefulWidget {
@@ -634,6 +639,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   }
 
   Future<void> _cargarOrdenes({String? preservarOrdenId, String? preservarEstado}) async {
+    List<Orden> ordenesRespaldoCache = [];
+    List<Orden> ordenesRespaldoPantalla = [];
     try {
       print('');
       print('🔄 ========================================');
@@ -703,6 +710,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       // Esto asegura que si no hay internet, las tarjetas se muestren AL INSTANTE
       final syncService = SyncService();
       final ordenesCache = await OrdenCacheService.getCachedOrders();
+      ordenesRespaldoCache = List<Orden>.from(ordenesCache);
+      ordenesRespaldoPantalla = List<Orden>.from(_ordenes);
       
       if (ordenesCache.isNotEmpty) {
         print('💾 ✅ Caché encontrado: ${ordenesCache.length} órdenes - Mostrando INMEDIATAMENTE');
@@ -713,6 +722,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             _ordenesFiltradasCache = null;
             _cacheKeyFiltradas = null;
           });
+          ordenesRespaldoPantalla = List<Orden>.from(ordenesCache);
         }
         
         // Si hay conexión, intentar actualizar en segundo plano
@@ -728,11 +738,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       } else {
         // No hay caché
         if (!syncService.isOnline) {
-          print('📴 Sin caché ni conexión — lista vacía sin bloquear UI');
+          print('📴 Sin caché ni conexión — se mantienen órdenes en pantalla si existen');
           if (mounted) {
             setState(() {
               _isLoading = false;
-              _ordenes = [];
             });
           }
           return;
@@ -1135,10 +1144,13 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                     rethrow;
                   }
                 })
-                .where((orden) => orden.visibleParaRepartidorLista)
+                .where((orden) => orden.incluirEnListaCargada(
+                      esMaster: _esRepartidorMaster,
+                      recogerEnSucursalSoloMaster: _recogerEnSucursalSoloMaster,
+                    ))
                 .toList();
             
-            print('📦 Órdenes cargadas (sin pagadas): ${ordenesCargadas.length}');
+            print('📦 Órdenes cargadas tras filtro visibilidad: ${ordenesCargadas.length}');
             for (var orden in ordenesCargadas) {
               print('   - Orden #${orden.numeroOrden}: estado=${orden.estado}, recogerEnSucursal=${orden.recogerEnSucursal}, tipoOrden=${orden.tipoOrden}');
             }
@@ -1154,11 +1166,19 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             
             // 🔒 CRÍTICO: Guardar en caché local Y usar la lista fusionada retornada
             final ordenesFusionadas = await OrdenCacheService.cacheOrders(ordenesCargadas);
+            final listaFinal = !syncService.isOnline && ordenesRespaldoCache.isNotEmpty
+                ? ordenesRespaldoCache
+                : OrdenCacheService.resolveOrdersForDisplay(
+                    fused: ordenesFusionadas,
+                    cached: ordenesRespaldoCache,
+                    onScreen: ordenesRespaldoPantalla,
+                    serverCount: ordenesCargadas.length,
+                  );
             
             if (mounted) {
             setState(() {
               // 🔒 USAR la lista fusionada en lugar de la lista de Supabase directamente
-              _ordenes = ordenesFusionadas;
+              _ordenes = listaFinal;
               _isLoading = false;
               _ordenesFiltradasCache = null; // Invalidar caché cuando cambien las órdenes
               _cacheKeyFiltradas = null;
@@ -1168,8 +1188,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           }
           
           // Para recolectores y repartidores master, continuar con la consulta original
-          final response = await query
-              .limit(100); // Aumentar límite para incluir entregadas
+          final response = await query.limit(
+              _esRepartidorMaster ? 500 : 100,
+            );
 
           // 🔍 DIAGNÓSTICO: Verificar remesas puras en la respuesta
           if (_esRepartidorMaster) {
@@ -1289,45 +1310,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 
                 return orden;
               })
-              .where((orden) {
-                if (!orden.visibleParaRepartidorLista && !(_esRepartidorMaster && orden.tieneRemesa)) {
-                  return false;
-                }
-                // Para repartidores master, excluir órdenes de RECOGIDA (mantener null y ENVIO)
-                if (_esRepartidorMaster && orden.tipoOrden == 'RECOGIDA') {
-                  return false;
-                }
-                
-                // CRÍTICO: Para repartidores master, INCLUIR explícitamente remesas puras
-                // Remesa pura = tiene_remesa = true, peso = 0 o null, sin items adicionales
-                if (_esRepartidorMaster && orden.tieneRemesa) {
-                  final peso = orden.peso ?? 0.0;
-                  final tieneItemsAdicionales = orden.itemsAdicionales != null && 
-                                                orden.itemsAdicionales is List && 
-                                                (orden.itemsAdicionales as List).isNotEmpty;
-                  final esRemesaPura = peso <= 0 && !tieneItemsAdicionales;
-                  
-                  if (esRemesaPura) {
-                    // Es remesa pura - SIEMPRE incluirla para masters (sin importar pagada)
-                    print('✅ [FILTRO MASTER] Remesa pura detectada: #${orden.numeroOrden} - INCLUIDA');
-                    return true;
-                  }
-                }
-                
-                // CRÍTICO: Filtrado de órdenes de recogida en sucursal según interruptor:
-                // - Si interruptor ACTIVO: Master puede verlas
-                // - Si interruptor DESACTIVO: NADIE puede verlas (ni Master)
-                if (orden.recogerEnSucursal) {
-                  if (!_recogerEnSucursalSoloMaster) {
-                    // Interruptor DESACTIVO: NADIE ve estas órdenes (ni Master)
-                    print('⚠️ [FILTRO MASTER] Orden #${orden.numeroOrden} con recoger_en_sucursal = true pero interruptor DESACTIVO - Excluyendo (NADIE la ve)');
-                    return false;
-                  }
-                  // Interruptor ACTIVO: Master puede verla (continuar)
-                }
-                
-                return orden.visibleParaRepartidorLista;
-              })
+              .where((orden) => orden.incluirEnListaCargada(
+                    esMaster: _esRepartidorMaster,
+                    recogerEnSucursalSoloMaster: _recogerEnSucursalSoloMaster,
+                  ))
               .toList();
           
           print('📦 Órdenes cargadas: ${ordenesCargadas.length} (excluyendo ${(response as List).length - ordenesCargadas.length} pagadas)');
@@ -1390,11 +1376,19 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           // 🔒 CRÍTICO: Guardar en caché local Y usar la lista fusionada retornada
           // que ya tiene los cambios locales preservados
           final ordenesFusionadas = await OrdenCacheService.cacheOrders(ordenesCargadas);
+          final listaFinal = !syncService.isOnline && ordenesRespaldoCache.isNotEmpty
+              ? ordenesRespaldoCache
+              : OrdenCacheService.resolveOrdersForDisplay(
+                  fused: ordenesFusionadas,
+                  cached: ordenesRespaldoCache,
+                  onScreen: ordenesRespaldoPantalla,
+                  serverCount: ordenesCargadas.length,
+                );
 
           if (mounted) {
             setState(() {
               // 🔒 USAR la lista fusionada en lugar de la lista de Supabase directamente
-              _ordenes = ordenesFusionadas;
+              _ordenes = listaFinal;
               _isLoading = false;
               _ordenesFiltradasCache = null; // Invalidar caché cuando cambien las órdenes
               _cacheKeyFiltradas = null;
@@ -1403,23 +1397,33 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             _verificarYActivarRastreo();
           }
 
-          print('✅ Órdenes cargadas desde Supabase: ${ordenesCargadas.length}');
+          print('✅ Órdenes cargadas desde Supabase: ${ordenesCargadas.length} (UI: ${listaFinal.length})');
         } catch (e) {
+          if (e.toString().contains('TimeoutException')) {
+            print('⏱️ Timeout cargando órdenes desde Supabase — se usa caché');
+          }
           print('⚠️ Error cargando desde Supabase: $e');
           // Si ya tenemos datos en caché (cargados al inicio), no hacer nada más
           // Si NO teníamos datos en caché, cargar ahora
           if (_ordenes.isEmpty) {
             print('📴 No había caché al inicio, cargando ahora...');
-            final ordenesCache = await OrdenCacheService.getCachedOrders();
+            final ordenesCacheRecuperadas = await OrdenCacheService.getCachedOrders();
+            final recuperadas = OrdenCacheService.resolveOrdersForDisplay(
+              fused: ordenesCacheRecuperadas,
+              cached: ordenesRespaldoCache,
+              onScreen: ordenesRespaldoPantalla,
+            );
             if (mounted) {
               setState(() {
-                _ordenes = ordenesCache;
+                _ordenes = recuperadas;
                 _isLoading = false;
               });
               // Verificar y activar rastreo si hay órdenes en "EN REPARTO"
               _verificarYActivarRastreo();
             }
-            _mostrarMensaje('⚠️ Sin conexión - Mostrando órdenes en caché');
+            if (recuperadas.isNotEmpty) {
+              _mostrarMensaje('⚠️ Sin conexión - Mostrando órdenes en caché');
+            }
           } else {
             print('✅ Ya teníamos datos en caché, no es necesario recargar');
             if (mounted) {
@@ -1438,10 +1442,15 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       print('❌ Error al cargar órdenes: $e');
       // Intentar cargar desde caché como último recurso
       try {
-        final ordenesCache = await OrdenCacheService.getCachedOrders();
+        final ordenesCacheRecuperadas = await OrdenCacheService.getCachedOrders();
+        final recuperadas = OrdenCacheService.resolveOrdersForDisplay(
+          fused: ordenesCacheRecuperadas,
+          cached: ordenesRespaldoCache,
+          onScreen: ordenesRespaldoPantalla,
+        );
         if (mounted) {
           setState(() {
-            _ordenes = ordenesCache;
+            _ordenes = recuperadas;
             _isLoading = false;
           });
         }
@@ -1488,9 +1497,13 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           event: PostgresChangeEvent.insert,
           schema: 'public',
           table: 'mensajes_soporte',
-          callback: (payload) {
+          callback: (payload) async {
             final user = supabase.auth.currentUser;
             if (user == null) return;
+
+            _conversacionesSoporteIds =
+                await RepartidorChatSoporteService.idsConversacionesRepartidor();
+
             final convId = payload.newRecord['conversacion_id']?.toString();
             if (!RepartidorChatSoporteService.perteneceAMisConversaciones(
               convId,
@@ -1499,10 +1512,38 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               return;
             }
             if (payload.newRecord['remitente_auth_id'] == user.id) return;
-            final preview = RepartidorChatSoporteService.textoPreview(
-              Map<String, dynamic>.from(payload.newRecord),
-            );
+
+            final record = Map<String, dynamic>.from(payload.newRecord);
+            final preview = RepartidorChatSoporteService.textoPreview(record);
             if (preview.isEmpty) return;
+
+            var titulo = 'Tu empresa';
+            try {
+              final remitenteId =
+                  record['remitente_auth_id']?.toString() ?? '';
+              if (remitenteId.isNotEmpty) {
+                final data = await supabase
+                    .from('usuarios')
+                    .select('nombre, rol')
+                    .eq('auth_id', remitenteId)
+                    .maybeSingle();
+                if (data != null) {
+                  final rol = data['rol']?.toString() ?? '';
+                  final nombre = data['nombre']?.toString() ?? '';
+                  titulo = rol == 'ADMINISTRADOR'
+                      ? 'Administración'
+                      : (nombre.isNotEmpty ? nombre : 'Tu empresa');
+                }
+              }
+            } catch (_) {}
+
+            await RepartidorChatMensajeSonidoService.onMensajeEmpresaRecibido(
+              mensajeId: record['id']?.toString() ?? '',
+              conversacionId: convId ?? '',
+              preview: preview,
+              tituloRemitente: titulo,
+            );
+
             _cargarMensajesNoLeidos();
           },
         )
@@ -2030,6 +2071,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       await androidImplementation.createNotificationChannel(androidChannel);
       print('✅ Canal de notificaciones creado: ordenes_channel');
     }
+
+    await RepartidorChatMensajeSonidoService.init(_localNotifications!);
+    print('✅ Canal y sonido de chat empresa inicializados');
 
     print('✅ Notificaciones locales inicializadas');
   }
@@ -2628,6 +2672,19 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     _onSearchChanged();
   }
 
+  /// Datos de sucursal mostrados en la tarjeta (join cargado en [_sucursalesInfo]).
+  String? _textoSucursalParaBusqueda(String ordenId) {
+    final s = _sucursalesInfo[ordenId];
+    if (s == null) return null;
+    return [
+      s['nombre'],
+      s['direccion'],
+      s['municipio'],
+      s['provincia'],
+      s['pais'],
+    ].whereType<String>().where((t) => t.trim().isNotEmpty).join(' ');
+  }
+
   // Variables para configuración de prioridad
   bool _prioridadUrgentes = true;
   bool _ordenarPorFecha = false;
@@ -2751,58 +2808,22 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
     // Filtrar por repartidor (solo para master)
     if (_esRepartidorMaster && _filtroRepartidor == 'MÍAS') {
+      final nombre = (_repartidorNombre ?? '').trim().toLowerCase();
       filtradas = filtradas.where((orden) {
-        return orden.repartidor == _repartidorNombre;
+        final asignado = (orden.repartidor ?? '').trim().toLowerCase();
+        return nombre.isNotEmpty && asignado == nombre;
       }).toList();
     }
 
-    // Filtrar por búsqueda
-    final query = _searchController.text.toLowerCase();
-    if (query.isNotEmpty) {
-      filtradas = filtradas.where((orden) {
-        // Extraer solo números de la búsqueda para búsqueda flexible
-        final queryNumerico = query.replaceAll(RegExp(r'[^0-9]'), '');
-        
-        // Buscar en número de orden (texto completo y solo números)
-        final numeroOrdenTexto = orden.numeroOrden?.toLowerCase() ?? '';
-        final numeroOrdenMatch = numeroOrdenTexto.contains(query);
-        final numeroOrdenNumerico = numeroOrdenTexto.replaceAll(RegExp(r'[^0-9]'), '');
-        final numeroOrdenMatchNumerico = queryNumerico.isNotEmpty && numeroOrdenNumerico.contains(queryNumerico);
-        
-        // CRÍTICO: Buscar también en número de remesa (para remesas puras)
-        final numeroRemesaTexto = (orden.numeroRemesa ?? '').toLowerCase();
-        final numeroRemesaMatch = numeroRemesaTexto.isNotEmpty && numeroRemesaTexto.contains(query);
-        final numeroRemesaNumerico = numeroRemesaTexto.replaceAll(RegExp(r'[^0-9]'), '');
-        final numeroRemesaMatchNumerico = queryNumerico.isNotEmpty && numeroRemesaNumerico.isNotEmpty && numeroRemesaNumerico.contains(queryNumerico);
-        
-        // Buscar en otros campos
-        final emisorMatch = orden.emisor.toLowerCase().contains(query);
-        final receptorMatch = orden.receptor.toLowerCase().contains(query);
-        final direccionMatch = orden.direccionDestino.toLowerCase().contains(query);
-        
-        final resultado = numeroOrdenMatch || numeroRemesaMatch || numeroOrdenMatchNumerico || numeroRemesaMatchNumerico || emisorMatch || receptorMatch || direccionMatch;
-        
-        // Log para debugging de remesas (solo si contiene parte de la búsqueda o si buscamos específicamente)
-        final queryNumericoLog = query.replaceAll(RegExp(r'[^0-9]'), ''); // Extraer solo números
-        final numeroOrdenNumericoLog = orden.numeroOrden?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
-        final numeroRemesaNumericoLog = (orden.numeroRemesa ?? '').replaceAll(RegExp(r'[^0-9]'), '');
-        
-        // Log si es remesa y contiene la búsqueda en números o si buscamos "2152"
-        if (orden.tieneRemesa && (queryNumericoLog.isNotEmpty && (numeroOrdenNumericoLog.contains(queryNumericoLog) || numeroRemesaNumericoLog.contains(queryNumericoLog)) || query == '2152')) {
-          print('🔍 [BÚSQUEDA] Remesa #${orden.numeroRemesa ?? orden.numeroOrden}: numeroOrden="${orden.numeroOrden}" numeroRemesa="${orden.numeroRemesa}", numeroOrdenMatch=$numeroOrdenMatch, numeroRemesaMatch=$numeroRemesaMatch, query="$query", queryNumerico="$queryNumericoLog"');
-        }
-        
-        return resultado;
-      }).toList();
-      
-      // Log final de búsqueda
-      if (query.isNotEmpty && _esRepartidorMaster) {
-        final remesasEnResultados = filtradas.where((o) => o.tieneRemesa).toList();
-        print('🔍 [BÚSQUEDA MASTER] Query: "$query" - Resultados: ${filtradas.length} totales, ${remesasEnResultados.length} remesas');
-        for (var remesa in remesasEnResultados) {
-          print('   ✅ Remesa encontrada: #${remesa.numeroRemesa ?? remesa.numeroOrden}');
-        }
-      }
+    // Filtrar por búsqueda (todos los campos visibles en la tarjeta + sucursal)
+    final query = _searchController.text;
+    if (query.trim().isNotEmpty) {
+      filtradas = filtradas
+          .where((orden) => orden.coincideConBusqueda(
+                query,
+                textoSucursalExtra: _textoSucursalParaBusqueda(orden.id),
+              ))
+          .toList();
     }
 
     // Aplicar ordenamiento según configuración
@@ -4033,121 +4054,143 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header con número y estado
+              // Header: número a la izquierda; estado + foto a la derecha (foto debajo del estado)
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: tipoInfo.colorAcento,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          '#${orden.numeroOrden.isNotEmpty ? orden.numeroOrden : (orden.id.length > 8 ? orden.id.substring(0, 8) : orden.id)}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      _buildChipTipoOrden(tipoInfo),
-                      if (esUrgente) ...[
-                        const SizedBox(width: 6),
+                  Expanded(
+                    child: Row(
+                      children: [
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFDC2626),
-                            borderRadius: BorderRadius.circular(3),
+                            color: tipoInfo.colorAcento,
+                            borderRadius: BorderRadius.circular(4),
                           ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.warning, color: Colors.white, size: 10),
-                              SizedBox(width: 1),
-                              Text(
-                                'URGENTE',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 8,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
+                          child: Text(
+                            '#${orden.numeroOrden.isNotEmpty ? orden.numeroOrden : (orden.id.length > 8 ? orden.id.substring(0, 8) : orden.id)}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
+                        const SizedBox(width: 6),
+                        _buildChipTipoOrden(tipoInfo),
+                        if (esUrgente) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFDC2626),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.warning, color: Colors.white, size: 10),
+                                SizedBox(width: 1),
+                                Text(
+                                  'URGENTE',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
-                  // Iconos indicadores en la esquina superior derecha
-                  Row(
+                  const SizedBox(width: 8),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Icono de firma requerida
-                      if (orden.requiereFirma)
-                        Container(
-                          margin: const EdgeInsets.only(right: 4),
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF9C27B0).withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                              color: const Color(0xFF9C27B0),
-                              width: 1.5,
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (orden.requiereFirma)
+                            Container(
+                              margin: const EdgeInsets.only(right: 4),
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF9C27B0).withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: const Color(0xFF9C27B0),
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.edit,
+                                color: Color(0xFF9C27B0),
+                                size: 14,
+                              ),
                             ),
-                          ),
-                          child: const Icon(
-                            Icons.edit,
-                            color: Color(0xFF9C27B0),
-                            size: 14,
-                          ),
-                        ),
-                      // Icono de remesa
-                      if (orden.tieneRemesa)
-                        Container(
-                          margin: const EdgeInsets.only(right: 4),
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF2196F3).withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                              color: const Color(0xFF2196F3),
-                              width: 1.5,
+                          if (orden.tieneRemesa)
+                            Container(
+                              margin: const EdgeInsets.only(right: 4),
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF2196F3).withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: const Color(0xFF2196F3),
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.attach_money,
+                                color: Color(0xFF2196F3),
+                                size: 14,
+                              ),
                             ),
-                          ),
-                          child: const Icon(
-                            Icons.attach_money,
-                            color: Color(0xFF2196F3),
-                            size: 14,
-                          ),
-                        ),
-                      // Icono de cobrar dinero contra entrega
-                      if (orden.requierePago && !orden.pagado)
-                        Container(
-                          margin: const EdgeInsets.only(right: 4),
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFF9800).withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                              color: const Color(0xFFFF9800),
-                              width: 1.5,
+                          if (orden.requierePago && !orden.pagado)
+                            Container(
+                              margin: const EdgeInsets.only(right: 4),
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFF9800).withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: const Color(0xFFFF9800),
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.payment,
+                                color: Color(0xFFFF9800),
+                                size: 14,
+                              ),
                             ),
+                          _buildStatusChip(
+                            OrdenRecogidaColaboradorUi.estadoVisibleRepartidor(orden),
+                            esAtrasada,
                           ),
-                          child: const Icon(
-                            Icons.payment,
-                            color: Color(0xFFFF9800),
-                            size: 14,
-                          ),
-                        ),
-                      // Chip de estado
-                      _buildStatusChip(
-                        OrdenRecogidaColaboradorUi.estadoVisibleRepartidor(orden),
-                        esAtrasada,
+                        ],
+                      ),
+                      FutureBuilder<String?>(
+                        future: EntregaFotoUtil.resolverUrlFoto(orden),
+                        builder: (context, snap) {
+                          final url = snap.data;
+                          if (!EntregaFotoUtil.urlTieneFoto(url)) {
+                            return const SizedBox.shrink();
+                          }
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: FotoEntregaPreview(
+                              fotoUrl: url,
+                              ancho: 48,
+                              alto: 48,
+                              alineacion: Alignment.centerRight,
+                            ),
+                          );
+                        },
                       ),
                     ],
                   ),
@@ -4251,7 +4294,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   'Dirección de Recogida:', 
                   _formatearDireccionCompleta(orden),
                 ),
-              ] else if (OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(orden)) ...[
+              ] else if (OrdenRecogidaColaboradorUi.mostrarBloquePuntoColaborador(orden)) ...[
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
@@ -4314,14 +4357,12 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                     ],
                   ),
                 ),
-              ] else ...[
-                // Para órdenes de envío: mostrar emisor y destinatario
+              ] else if (OrdenRecogidaColaboradorUi.mostrarBloqueDestinatario(orden)) ...[
                 _buildInfoRow(Icons.person, 'De:', orden.emisor),
                 const SizedBox(height: 4),
                 _buildInfoRow(Icons.person_outline, 'Para:', orden.receptor),
                 const SizedBox(height: 4),
-                
-                // Si recoger_en_sucursal está activo, mostrar información de sucursal en recuadro resaltado
+
                 if (orden.recogerEnSucursal && _sucursalesInfo.containsKey(orden.id)) ...[
                   Container(
                     padding: const EdgeInsets.all(12),
@@ -4507,9 +4548,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 ),
               ),
 
-              // Tarjeta de contacto del vendedor (fase de entrega normal, no duplicar en recogida pendiente)
-              if (!OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(orden) &&
-                  !orden.entregaPorVendedor &&
+              if (OrdenRecogidaColaboradorUi.mostrarTarjetaContactoVendedorEnLista(orden) &&
                   orden.vendedorContactoNombre != null &&
                   orden.vendedorContactoNombre!.isNotEmpty) ...[
                 const SizedBox(height: 10),
@@ -4570,35 +4609,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 ],
               ],
               
-              // Mensaje informativo en fase de recogida en colaborador
-              if (OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(orden)) ...[
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE8F5E9),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFF4CAF50), width: 1.5),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.storefront, color: const Color(0xFF2E7D32), size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          OrdenRecogidaColaboradorUi.mensajeInfoTarjeta(orden),
-                          style: const TextStyle(
-                            color: Color(0xFF2E7D32),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ] else if (orden.estado == 'POR ENVIAR' && orden.tipoOrden != 'RECOGIDA') ...[
+              if (orden.estado == 'POR ENVIAR' &&
+                  orden.tipoOrden != 'RECOGIDA' &&
+                  !OrdenRecogidaColaboradorUi.esRecogidaColaborador(orden)) ...[
                 const SizedBox(height: 8),
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -5532,15 +5545,39 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     }
   }
 
+  void _actualizarOrdenEnLista(Orden orden) {
+    if (!mounted) return;
+    final index = _ordenes.indexWhere((o) => o.id == orden.id);
+    if (index == -1) return;
+    setState(() => _ordenes[index] = orden);
+    _ordenesFiltradasCache = null;
+    _cacheKeyFiltradas = null;
+  }
+
+  Future<Orden> _capturarFotoEntregaParaOrden(Orden orden) async {
+    await _tomarFotoDesdeModal(orden);
+    final resuelta = await EntregaFotoUtil.ordenConFotoResuelta(orden);
+    _actualizarOrdenEnLista(resuelta);
+    return resuelta;
+  }
+
   Future<void> _marcarComoEntregado(Orden orden) async {
+    var ordenTrabajo = await EntregaFotoUtil.ordenConFotoResuelta(orden);
+    _actualizarOrdenEnLista(ordenTrabajo);
+
+    if (RemesaPuraEntregaUi.exigeFotoEntrega(ordenTrabajo, _fotoEntregaObligatoria) &&
+        !EntregaFotoUtil.ordenTieneFoto(ordenTrabajo)) {
+      ordenTrabajo = await _capturarFotoEntregaParaOrden(ordenTrabajo);
+      if (!EntregaFotoUtil.ordenTieneFoto(ordenTrabajo)) return;
+    }
+
     // 🔍 VALIDACIÓN COMPLETA ANTES DE ENTREGAR
     List<String> errores = [];
     
-    // DEBUG: Ver cantidad de bultos
-    print('🔍 DEBUG - Orden #${orden.numeroOrden}');
-    print('🔍 DEBUG - Cantidad de bultos: ${orden.cantidadBultos}');
+    print('🔍 DEBUG - Orden #${ordenTrabajo.numeroOrden}');
+    print('🔍 DEBUG - Cantidad de bultos: ${ordenTrabajo.cantidadBultos}');
     print('🔍 DEBUG - Foto obligatoria: $_fotoEntregaObligatoria');
-    print('🔍 DEBUG - Tiene foto: ${orden.fotoEntrega != null && orden.fotoEntrega!.isNotEmpty}');
+    print('🔍 DEBUG - Tiene foto: ${EntregaFotoUtil.ordenTieneFoto(ordenTrabajo)}');
     print('🔍 DEBUG - Requiere pago: ${orden.requierePago}');
     print('🔍 DEBUG - Pagado: ${orden.pagado}');
     print('🔍 DEBUG - Requiere firma: ${orden.requiereFirma}');
@@ -5548,112 +5585,91 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     print('🔍 DEBUG - Tiene remesa: ${orden.tieneRemesa}');
     
     // 1. Validar remesa (si tiene remesa, debe entregarse)
-    if (orden.tieneRemesa) {
-      final cantidadRemesa = orden.cantidadRemesa ?? 0.0;
+    if (ordenTrabajo.tieneRemesa) {
+      final cantidadRemesa = ordenTrabajo.cantidadRemesa ?? 0.0;
       errores.add('📦 Debes entregar remesa de \$${cantidadRemesa.toStringAsFixed(2)}');
     }
 
-    // 2. Validar pago pendiente (si requiere pago)
-    if (orden.requierePago && !orden.pagado) {
-      final simbolo = orden.moneda == 'USD' ? '\$' : '\$';
-      errores.add('💰 Falta cobrar ${simbolo}${orden.montoCobrar.toStringAsFixed(2)} ${orden.moneda}');
+    if (ordenTrabajo.requierePago && !ordenTrabajo.pagado) {
+      final simbolo = ordenTrabajo.moneda == 'USD' ? '\$' : '\$';
+      errores.add('💰 Falta cobrar ${simbolo}${ordenTrabajo.montoCobrar.toStringAsFixed(2)} ${ordenTrabajo.moneda}');
     }
 
-    // 3. Validar firma obligatoria (no aplica a remesas puras)
-    if (RemesaPuraEntregaUi.exigeFirmaEntrega(orden) &&
-        (orden.firmaUrl == null || orden.firmaUrl!.isEmpty)) {
+    if (RemesaPuraEntregaUi.exigeFirmaEntrega(ordenTrabajo) &&
+        (ordenTrabajo.firmaUrl == null || ordenTrabajo.firmaUrl!.isEmpty)) {
       errores.add('✍️ Falta obtener la firma del cliente (obligatorio)');
     }
 
-    // 4. Validar foto obligatoria (no aplica a remesas puras)
-    if (RemesaPuraEntregaUi.exigeFotoEntrega(orden, _fotoEntregaObligatoria) &&
-        (orden.fotoEntrega == null || orden.fotoEntrega!.isEmpty)) {
-      errores.add('📷 Falta tomar la foto de entrega');
-    }
-
     print('🔍 DEBUG - Errores encontrados: ${errores.length}');
-    print('🔍 DEBUG - ¿Debe preguntar por bultos? ${orden.cantidadBultos > 1}');
+    print('🔍 DEBUG - ¿Debe preguntar por bultos? ${ordenTrabajo.cantidadBultos > 1}');
 
-    // 3. Mostrar diálogo de confirmación de bultos (solo si hay más de 1)
     if (errores.isEmpty) {
-      // Solo preguntar por bultos si hay 2 o más
-      if (orden.cantidadBultos > 1) {
-        print('✅ Mostrando diálogo de confirmación de bultos');
-        final confirmado = await _mostrarDialogoConfirmacionBultos(orden);
-        if (!confirmado) {
-          return; // Usuario canceló
-        }
+      if (ordenTrabajo.cantidadBultos > 1) {
+        final confirmado = await _mostrarDialogoConfirmacionBultos(ordenTrabajo);
+        if (!confirmado) return;
       }
     } else {
-      // Hay errores - mostrar diálogo de errores
-      print('❌ Mostrando diálogo de errores: $errores');
-      _mostrarDialogoErroresEntrega(orden, errores);
+      _mostrarDialogoErroresEntrega(ordenTrabajo, errores);
       return;
     }
 
-    // Todo validado - proceder con la entrega
     final confirmadoFinal = await _mostrarConfirmacion(
       'Confirmar Entrega',
       '¿Estás seguro de que quieres marcar esta orden como entregada?',
     );
     
     if (confirmadoFinal) {
-      print('✅ Usuario confirmó la entrega de la orden #${orden.numeroOrden}');
+      print('✅ Usuario confirmó la entrega de la orden #${ordenTrabajo.numeroOrden}');
       try {
-        final fechaEntrega = DateTime.now().toIso8601String();
+        final fechaEntregaDt = DateTime.now();
         final updateData = {
           'estado': 'ENTREGADO',
-          'fecha_entrega': fechaEntrega,
+          'fecha_entrega': fechaEntregaDt.toIso8601String(),
         };
         final ordenLocal = Orden(
-          id: orden.id,
-          numeroOrden: orden.numeroOrden,
-          emisor: orden.emisor,
-          receptor: orden.receptor,
-          descripcion: orden.descripcion,
-          direccionDestino: orden.direccionDestino,
-          telefonoDestinatario: orden.telefonoDestinatario,
-          ciudadDestino: orden.ciudadDestino,
-          provinciaDestino: orden.provinciaDestino,
-          municipioDestino: orden.municipioDestino,
-          consejoPopularBatey: orden.consejoPopularBatey,
-          peso: orden.peso,
-          largo: orden.largo,
-          ancho: orden.ancho,
-          alto: orden.alto,
+          id: ordenTrabajo.id,
+          numeroOrden: ordenTrabajo.numeroOrden,
+          emisor: ordenTrabajo.emisor,
+          receptor: ordenTrabajo.receptor,
+          descripcion: ordenTrabajo.descripcion,
+          direccionDestino: ordenTrabajo.direccionDestino,
+          telefonoDestinatario: ordenTrabajo.telefonoDestinatario,
+          ciudadDestino: ordenTrabajo.ciudadDestino,
+          provinciaDestino: ordenTrabajo.provinciaDestino,
+          municipioDestino: ordenTrabajo.municipioDestino,
+          consejoPopularBatey: ordenTrabajo.consejoPopularBatey,
+          peso: ordenTrabajo.peso,
+          largo: ordenTrabajo.largo,
+          ancho: ordenTrabajo.ancho,
+          alto: ordenTrabajo.alto,
           estado: 'ENTREGADO',
-          fechaCreacion: orden.fechaCreacion,
-          fechaEntrega: fechaEntrega,
-          fechaEstimadaEntrega: orden.fechaEstimadaEntrega,
-          notas: orden.notas,
-          repartidor: orden.repartidor,
-          esUrgente: orden.esUrgente,
-          fotoEntrega: orden.fotoEntrega,
-          creadoPorNombre: orden.creadoPorNombre,
-          creadoPorEmail: orden.creadoPorEmail,
-          cantidadBultos: orden.cantidadBultos,
-          requierePago: orden.requierePago,
-          montoCobrar: orden.montoCobrar,
-          moneda: orden.moneda,
-          pagado: orden.pagado,
-          fechaPago: orden.fechaPago,
-          notasPago: orden.notasPago,
-          tieneRemesa: orden.tieneRemesa,
-          cantidadRemesa: orden.cantidadRemesa,
-          requiereFirma: orden.requiereFirma,
-          firmaUrl: orden.firmaUrl,
-          itemsAdicionales: orden.itemsAdicionales,
-          tenantId: orden.tenantId,
+          fechaCreacion: ordenTrabajo.fechaCreacion,
+          fechaEntrega: fechaEntregaDt,
+          fechaEstimadaEntrega: ordenTrabajo.fechaEstimadaEntrega,
+          notas: ordenTrabajo.notas,
+          repartidor: ordenTrabajo.repartidor,
+          esUrgente: ordenTrabajo.esUrgente,
+          fotoEntrega: ordenTrabajo.fotoEntrega,
+          creadoPorNombre: ordenTrabajo.creadoPorNombre,
+          creadoPorEmail: ordenTrabajo.creadoPorEmail,
+          cantidadBultos: ordenTrabajo.cantidadBultos,
+          requierePago: ordenTrabajo.requierePago,
+          montoCobrar: ordenTrabajo.montoCobrar,
+          moneda: ordenTrabajo.moneda,
+          pagado: ordenTrabajo.pagado,
+          fechaPago: ordenTrabajo.fechaPago,
+          notasPago: ordenTrabajo.notasPago,
+          tieneRemesa: ordenTrabajo.tieneRemesa,
+          cantidadRemesa: ordenTrabajo.cantidadRemesa,
+          requiereFirma: ordenTrabajo.requiereFirma,
+          firmaUrl: ordenTrabajo.firmaUrl,
+          itemsAdicionales: ordenTrabajo.itemsAdicionales,
+          tenantId: ordenTrabajo.tenantId,
         );
-        if (mounted) {
-          setState(() {
-            final index = _ordenes.indexWhere((o) => o.id == orden.id);
-            if (index != -1) _ordenes[index] = ordenLocal;
-          });
-        }
+        _actualizarOrdenEnLista(ordenLocal);
 
         final syncResult = await OrdenEstadoSyncHelper.persistirCambioEstado(
-          ordenId: orden.id,
+          ordenId: ordenTrabajo.id,
           ordenEnCache: ordenLocal,
           updateData: updateData,
           queueType: 'mark_delivered',
@@ -5665,7 +5681,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 ? '✅ Entrega guardada localmente (se sincroniza al reconectar)'
                 : 'No se pudo registrar la entrega',
           );
-          await _cargarOrdenes(preservarOrdenId: orden.id, preservarEstado: 'ENTREGADO');
+          await _cargarOrdenes(preservarOrdenId: ordenTrabajo.id, preservarEstado: 'ENTREGADO');
           _verificarYActivarRastreo();
           return;
         }
@@ -5873,7 +5889,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     
     if (confirmado) {
       try {
-        final fecha = DateTime.now().toIso8601String();
+        final fechaEntregaDt = DateTime.now();
         final ordenActualizada = Orden(
           id: orden.id,
           numeroOrden: orden.numeroOrden,
@@ -5892,7 +5908,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           alto: orden.alto,
           estado: 'RECOGIDO',
           fechaCreacion: orden.fechaCreacion,
-          fechaEntrega: fecha,
+          fechaEntrega: fechaEntregaDt,
           fechaEstimadaEntrega: orden.fechaEstimadaEntrega,
           notas: orden.notas,
           repartidor: orden.repartidor,
@@ -5917,7 +5933,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         final result = await OrdenEstadoSyncHelper.persistirCambioEstado(
           ordenId: orden.id,
           ordenEnCache: ordenActualizada,
-          updateData: {'estado': 'RECOGIDO', 'fecha_entrega': fecha},
+          updateData: {
+            'estado': 'RECOGIDO',
+            'fecha_entrega': fechaEntregaDt.toIso8601String(),
+          },
           syncGoodBarber: false,
         );
         if (mounted) {
@@ -6091,6 +6110,22 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       _mostrarMensaje('Primero el colaborador debe marcar su parte como lista.');
       return;
     }
+    final syncService = SyncService();
+    if (!syncService.isOnline) {
+      try {
+        await syncService.addOperation(
+          type: 'rpc_iniciar_recolecta',
+          ordenId: orden.id,
+          data: {'p_orden_id': orden.id},
+        );
+        _mostrarMensaje('Aviso guardado. Se enviará al reconectar.');
+        await _cargarOrdenes(preservarOrdenId: orden.id);
+      } catch (e) {
+        _mostrarMensaje('No se pudo guardar el aviso sin conexión.');
+      }
+      return;
+    }
+
     try {
       final res = await supabase.rpc(
         'repartidor_iniciar_recolecta_colaborador',
@@ -6105,7 +6140,17 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       await _cargarOrdenes(preservarOrdenId: orden.id);
     } catch (e) {
       print('❌ Error iniciar recolecta: $e');
-      _mostrarMensaje('No se pudo iniciar la recolecta.');
+      if (RepartidorPantallasOfflineService.esErrorDeRed(e)) {
+        await syncService.addOperation(
+          type: 'rpc_iniciar_recolecta',
+          ordenId: orden.id,
+          data: {'p_orden_id': orden.id},
+        );
+        _mostrarMensaje('Sin conexión: aviso en cola para sincronizar.');
+        await _cargarOrdenes(preservarOrdenId: orden.id);
+      } else {
+        _mostrarMensaje('No se pudo iniciar la recolecta.');
+      }
     }
   }
 
@@ -7023,6 +7068,12 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   // Tomar/seleccionar foto desde el modal de errores
   Future<void> _tomarFotoDesdeModal(Orden orden) async {
     if (!mounted) return;
+
+    final ordenConFoto = await EntregaFotoUtil.ordenConFotoResuelta(orden);
+    if (EntregaFotoUtil.ordenTieneFoto(ordenConFoto)) {
+      _actualizarOrdenEnLista(ordenConFoto);
+      return;
+    }
     
     try {
       // Mostrar opciones: Cámara o Galería
@@ -7183,8 +7234,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               print('✅ Foto subida exitosamente desde modal (online)');
               
               if (mounted) {
-                Navigator.of(context).pop(); // Cerrar diálogo de carga
-                _cargarOrdenes(); // Recargar órdenes para actualizar la lista
+                Navigator.of(context).pop();
+                final actualizada = EntregaFotoUtil.aplicarFotoAOrden(orden, imageUrl);
+                await EntregaFotoUtil.guardarFotoEnCache(actualizada, imageUrl);
+                _actualizarOrdenEnLista(actualizada);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('✅ Foto subida exitosamente'),
@@ -7205,22 +7258,12 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 },
               );
               
-              // 🔒 CRÍTICO: Actualizar caché local de la orden con la foto local
-              try {
-                final ordenCached = await OrdenCacheService.getCachedOrderById(orden.id);
-                if (ordenCached != null) {
-                  final ordenJson = ordenCached.toJson();
-                  ordenJson['foto_entrega'] = 'local://${image.path}';
-                  final ordenActualizada = Orden.fromJson(ordenJson);
-                  await OrdenCacheService.updateCachedOrder(ordenActualizada);
-                  print('💾 Orden actualizada en caché local con foto: ${image.path}');
-                }
-              } catch (e) {
-                print('⚠️ Error actualizando caché local con foto: $e');
-              }
-              
+              final fotoLocal = 'local://${image.path}';
+              final actualizada = EntregaFotoUtil.aplicarFotoAOrden(orden, fotoLocal);
+              await EntregaFotoUtil.guardarFotoEnCache(actualizada, fotoLocal);
               if (mounted) {
-                Navigator.of(context).pop(); // Cerrar diálogo de carga
+                Navigator.of(context).pop();
+                _actualizarOrdenEnLista(actualizada);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('✅ Foto guardada - Puedes continuar con la entrega (se sincronizará cuando haya conexión)'),
@@ -7231,33 +7274,22 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               }
             }
           } else {
-            // Sin conexión, agregar a cola directamente
             print('📴 Sin conexión - Agregando foto a cola de sincronización');
             await syncService.addOperation(
               type: 'upload_photo',
               ordenId: orden.id,
               data: {
                 'photo_base64': photoBase64,
-                'file_path': image.path, // 🔒 CRÍTICO: Incluir ruta del archivo para sincronización
+                'file_path': image.path,
               },
             );
-            
-            // 🔒 CRÍTICO: Actualizar caché local de la orden con la foto local
-            try {
-              final ordenCached = await OrdenCacheService.getCachedOrderById(orden.id);
-              if (ordenCached != null) {
-                final ordenJson = ordenCached.toJson();
-                ordenJson['foto_entrega'] = 'local://${image.path}';
-                final ordenActualizada = Orden.fromJson(ordenJson);
-                await OrdenCacheService.updateCachedOrder(ordenActualizada);
-                print('💾 Orden actualizada en caché local con foto: ${image.path}');
-              }
-            } catch (e) {
-              print('⚠️ Error actualizando caché local con foto: $e');
-            }
-            
+
+            final fotoLocal = 'local://${image.path}';
+            final actualizada = EntregaFotoUtil.aplicarFotoAOrden(orden, fotoLocal);
+            await EntregaFotoUtil.guardarFotoEnCache(actualizada, fotoLocal);
             if (mounted) {
-              Navigator.of(context).pop(); // Cerrar diálogo de carga
+              Navigator.of(context).pop();
+              _actualizarOrdenEnLista(actualizada);
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text('✅ Foto guardada - Puedes continuar con la entrega (modo offline)'),

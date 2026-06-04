@@ -192,243 +192,71 @@ class _OnlineModalWidgetState extends State<_OnlineModalWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.9,
+    return VolonexDialog(
+      title: 'Conexión restaurada',
+      leading: const Icon(Icons.wifi, color: AppColors.exito, size: 26),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'Asistente VolonexPro+',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+            textAlign: TextAlign.center,
           ),
-          child: Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  const Color(0xFF4CAF50),
-                  const Color(0xFF66BB6A),
-                ],
-              ),
+          const SizedBox(height: 10),
+          Text(
+            _isSyncing
+                ? 'Actualizando el sistema y las órdenes...'
+                : 'Sistema actualizado correctamente.',
+            textAlign: TextAlign.center,
+          ),
+          if (_isSyncing) ...[
+            const SizedBox(height: 16),
+            const CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(AppColors.exito),
+              strokeWidth: 2.5,
             ),
-            child: Column(
+            const SizedBox(height: 12),
+            Text(
+              'Sincronizando ${widget.pendingOperations > 0 ? widget.pendingOperations : 0} operación${widget.pendingOperations > 1 ? 'es' : ''}...',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+          ] else if (widget.pendingOperations == 0 || _syncCompleted) ...[
+            const SizedBox(height: 12),
+            const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-              // Icono del asistente
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.wifi,
-                  size: 48,
-                  color: Colors.white,
-                ),
-              ),
-              
-              const SizedBox(height: 16),
-              
-              // Título
-              const Text(
-                'Asistente VolonexPro+',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              
-              const SizedBox(height: 8),
-              
-              // Subtítulo
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Text(
-                  'Conexión Restaurada',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
+                Icon(Icons.check_circle, color: AppColors.exito, size: 18),
+                SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    'Operaciones sincronizadas correctamente',
+                    style: TextStyle(fontSize: 12),
                   ),
                 ),
-              ),
-              
-              const SizedBox(height: 20),
-              
-              // Mensaje principal
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  children: [
-                    const Icon(
-                      Icons.cloud_done,
-                      color: Color(0xFF4CAF50),
-                      size: 32,
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      '¡Conexión Restaurada!',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF2C2C2C),
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                      child: Text(
-                        _isSyncing
-                            ? 'La app está de vuelta con la conexión. Actualizando el sistema y las órdenes...'
-                            : 'La app está de vuelta con la conexión. Sistema actualizado correctamente.',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Color(0xFF666666),
-                          height: 1.5,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                    if (_isSyncing) ...[
-                      const SizedBox(height: 20),
-                      const CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4CAF50)),
-                        strokeWidth: 3,
-                      ),
-                      const SizedBox(height: 16),
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE8F5E9),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: const Color(0xFF4CAF50).withValues(alpha: 0.3),
-                            width: 1,
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4CAF50)),
-                                strokeWidth: 2,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Flexible(
-                              child: Text(
-                                'Sincronizando ${widget.pendingOperations > 0 ? widget.pendingOperations : 0} operación${widget.pendingOperations > 1 ? 'es' : ''}...',
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  color: Color(0xFF2C2C2C),
-                                  fontWeight: FontWeight.w600,
-                                ),
-                                textAlign: TextAlign.center,
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 2,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ] else if (widget.pendingOperations == 0 || _syncCompleted) ...[
-                      const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE8F5E9),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(
-                              Icons.check_circle,
-                              color: Color(0xFF4CAF50),
-                              size: 20,
-                            ),
-                            const SizedBox(width: 8),
-                            Flexible(
-                              child: Text(
-                                'Todas las operaciones se han sincronizado correctamente',
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Color(0xFF2C2C2C),
-                                  fontWeight: FontWeight.w500,
-                                ),
-                                textAlign: TextAlign.center,
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 2,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              
-              const SizedBox(height: 20),
-              
-              // Botón Aceptar (siempre visible - permite continuar trabajando mientras sincroniza)
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                    onPressed: () {
-                      print('👤 Usuario presionó botón Aceptar - Cerrando modal');
-                      Navigator.of(context).pop();
-                      widget.onClose();
-                      // La sincronización continuará en segundo plano
-                      print('✅ Usuario cerró modal - Sincronización continuará en segundo plano');
-                    },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: const Color(0xFF4CAF50),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: 0,
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                    child: Text(
-                      _isSyncing
-                          ? 'Continuar trabajando (sincronizando en segundo plano)'
-                          : 'Aceptar',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      textAlign: TextAlign.center,
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 2,
-                    ),
-                  ),
-                ),
-              ),
-            ],
+              ],
             ),
+          ],
+        ],
+      ),
+      actions: [
+        ElevatedButton(
+          onPressed: () {
+            Navigator.of(context).pop();
+            widget.onClose();
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.exito,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+          ),
+          child: Text(
+            _isSyncing ? 'Continuar' : 'Aceptar',
+            style: const TextStyle(fontWeight: FontWeight.bold),
           ),
         ),
-      );
+      ],
+    );
   }
 }

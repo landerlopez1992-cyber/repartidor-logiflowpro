@@ -3,6 +3,9 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Permite que notificaciones tipo alarma suenen con el teléfono en silencio (según ajustes del dispositivo). -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     
     <application
         android:label="VolonexPro+ Repartidor"
