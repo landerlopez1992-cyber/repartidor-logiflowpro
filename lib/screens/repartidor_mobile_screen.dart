@@ -38,6 +38,7 @@ import '../services/repartidor_notificaciones_push_service.dart';
 import '../services/repartidor_chat_soporte_service.dart';
 import '../utils/orden_tipo_tarjeta_repartidor.dart';
 import '../utils/orden_recogida_colaborador_ui.dart';
+import '../utils/remesa_pura_entrega_ui.dart';
 import '../utils/repartidor_nombre_util.dart';
 
 class RepartidorMobileScreen extends StatefulWidget {
@@ -2707,22 +2708,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       switch (_filtroEstado) {
         case 'ACTIVAS':
           print('🔍 [FILTRO] Aplicando filtro ACTIVAS');
-          // Para REPARTIDORES MASTER: Incluir ENTREGADO EN SUCURSAL (para que puedan completar el flujo)
-          // Para repartidores normales: Excluir ENTREGADO, CANCELADA y ENTREGADO EN SUCURSAL
-          if (_esRepartidorMaster) {
-            // MASTER: Solo excluir ENTREGADO y CANCELADA, pero INCLUIR ENTREGADO EN SUCURSAL
-            filtradas = filtradas.where((orden) => 
-                orden.estado != 'ENTREGADO' && 
-                orden.estado != 'CANCELADA').toList();
-            print('👑 [FILTRO MASTER] Después de filtrar ACTIVAS (incluye ENTREGADO EN SUCURSAL): ${filtradas.length} órdenes');
-          } else {
-            // NORMAL: Excluir ENTREGADO, CANCELADA y ENTREGADO EN SUCURSAL
-            filtradas = filtradas.where((orden) => 
-                orden.estado != 'ENTREGADO' && 
-                orden.estado != 'CANCELADA' &&
-                orden.estado != 'ENTREGADO EN SUCURSAL').toList();
-            print('🔍 [FILTRO NORMAL] Después de filtrar ACTIVAS: ${filtradas.length} órdenes');
-          }
+          // Incluir ENTREGADO EN SUCURSAL (remesas en sucursal pendientes de entrega al destinatario)
+          filtradas = filtradas.where((orden) =>
+              orden.estado != 'ENTREGADO' &&
+              orden.estado != 'CANCELADA').toList();
+          print('🔍 [FILTRO ACTIVAS] incluye ENTREGADO EN SUCURSAL: ${filtradas.length} órdenes');
           for (var orden in filtradas) {
             print('   - Orden #${orden.numeroOrden}: estado=${orden.estado}, recogerEnSucursal=${orden.recogerEnSucursal}');
           }
@@ -3678,41 +3668,6 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     );
   }
 
-  // Detectar si es una remesa pura (no una orden con remesa)
-  bool _esRemesaPura(Orden orden) {
-    // Verificar que tenga remesa
-    if (!orden.tieneRemesa) {
-      return false;
-    }
-    
-    // Verificar peso (debe ser 0 o null)
-    final peso = orden.peso ?? 0.0;
-    if (peso > 0) {
-      return false;
-    }
-    
-    // Verificar items adicionales (debe ser null o vacío)
-    final tieneItemsAdicionales = orden.itemsAdicionales != null && 
-                                  orden.itemsAdicionales is List && 
-                                  (orden.itemsAdicionales as List).isNotEmpty;
-    if (tieneItemsAdicionales) {
-      return false;
-    }
-    
-    // Si tiene remesa, peso = 0 y sin items adicionales, es remesa pura
-    // NO verificar descripción porque puede variar o estar vacía
-    
-    // Log para debugging (solo primera vez o si hay problema)
-    final numeroRemesaLog = orden.numeroRemesa ?? orden.numeroOrden ?? 'N/A';
-    print('✅ [DETECCIÓN REMESA PURA] Remesa pura detectada: #$numeroRemesaLog');
-    print('   - tieneRemesa: ${orden.tieneRemesa}');
-    print('   - peso: $peso');
-    print('   - tieneItems: $tieneItemsAdicionales');
-    print('   - descripcion: "${orden.descripcion}" (no se verifica)');
-    
-    return true; // Es remesa pura
-  }
-
   // Tarjeta especial para remesas (estilo dorado/amarillo como en web)
   Widget _buildRemesaCard(Orden orden) {
     // ✅ Obtener número desde BD, usar ID como fallback si no hay número
@@ -3857,6 +3812,20 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   ],
                 ),
               ),
+
+              const SizedBox(height: 8),
+              Text(
+                orden.recogerEnSucursal
+                    ? (estado == 'ENTREGADO EN SUCURSAL'
+                        ? 'En sucursal: entrega al destinatario con número de remesa e identificación (sin firma ni foto).'
+                        : 'En sucursal: deja la remesa aquí o entrégala tú al destinatario (sin firma ni foto).')
+                    : 'Sin firma ni foto: valida número de remesa e identificación del destinatario.',
+                style: TextStyle(
+                  fontSize: 10,
+                  color: const Color(0xFF5D4037).withOpacity(0.85),
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
               
               const SizedBox(height: 12),
               
@@ -3915,91 +3884,77 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 const SizedBox(height: 4),
               ],
               
-              // Botón de acción según el estado
+              // Botones según estado
               if (estado == 'POR ENVIAR') ...[
+                const SizedBox(height: 8),
+                if (orden.recogerEnSucursal) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _marcarRemesaEntregadaEnSucursal(orden),
+                      icon: const Icon(Icons.store, size: 18),
+                      label: const Text('Solo dejar en sucursal'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFFE65100),
+                        side: const BorderSide(color: Color(0xFFFF9800), width: 1.5),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () => _mostrarDetallesOrden(orden),
+                      icon: const Icon(Icons.check_circle, size: 18),
+                      label: const Text('Entregar al destinatario'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF4CAF50),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                  ),
+                ] else ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () => _mostrarDetallesOrden(orden),
+                      icon: const Icon(Icons.check_circle, size: 18),
+                      label: const Text('Entregar Remesa'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFFD700),
+                        foregroundColor: const Color(0xFF1A1A1A),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ] else if (estado == 'ENTREGADO EN SUCURSAL') ...[
                 const SizedBox(height: 8),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: () {
-                      if (orden.recogerEnSucursal) {
-                        // Si es recogida en sucursal: botón "Entregado en Sucursal"
-                        _marcarRemesaEntregadaEnSucursal(orden);
-                      } else {
-                        // Si NO es recogida en sucursal: navegar a detalles para flujo completo
-                        _mostrarDetallesOrden(orden);
-                      }
-                    },
-                    icon: Icon(
-                      orden.recogerEnSucursal ? Icons.store : Icons.check_circle,
-                      size: 18,
-                    ),
-                    label: Text(
-                      orden.recogerEnSucursal 
-                          ? 'Entregado en Sucursal'
-                          : 'Entregar Remesa',
-                    ),
+                    onPressed: () => _mostrarDetallesOrden(orden),
+                    icon: const Icon(Icons.check_circle, size: 18),
+                    label: const Text('Entregar al destinatario'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: orden.recogerEnSucursal 
-                          ? const Color(0xFFFF9800) 
-                          : const Color(0xFFFFD700),
-                      foregroundColor: const Color(0xFF1A1A1A),
+                      backgroundColor: const Color(0xFF4CAF50),
+                      foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                  ),
-                ),
-              ],
-              
-              // 👑 BOTÓN para MASTERS: Si está ENTREGADO EN SUCURSAL, permitir completar la entrega
-              if (estado == 'ENTREGADO EN SUCURSAL' && _esRepartidorMaster) ...[
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFF9800).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: const Color(0xFFFF9800), width: 1.5),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.info_outline, color: const Color(0xFFFF9800), size: 16),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              'La remesa está en sucursal. Como Master, puedes completar la entrega.',
-                              style: TextStyle(
-                                color: const Color(0xFF666666),
-                                fontSize: 11,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: () => _marcarRemesaComoEntregada(orden),
-                          icon: const Icon(Icons.check_circle, size: 18),
-                          label: const Text('Marcar como Entregado'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF4CAF50),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
                   ),
                 ),
               ],
@@ -4810,6 +4765,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         return const Color(0xFFE65100);
       case 'LISTO PARA RECOGIDA':
         return const Color(0xFF2E7D32);
+      case 'EN CAMINO A RECOGER':
+        return const Color(0xFF1976D2);
       case 'POR RECOGER':
         return const Color(0xFF9E9E9E); // Gris para "POR RECOGER"
       case 'CANCELADA':
@@ -4841,6 +4798,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         return Icons.storefront;
       case 'LISTO PARA RECOGIDA':
         return Icons.inventory_2;
+      case 'EN CAMINO A RECOGER':
+        return Icons.directions_car;
       case 'POR RECOGER':
         return Icons.schedule; // Icono de reloj para "POR RECOGER"
       case 'CANCELADA':
@@ -5169,7 +5128,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     }
   }
 
-  // Método específico para marcar remesa como entregada (con validaciones de firma y foto)
+  // Marcar remesa pura como entregada (sin firma ni foto)
   Future<void> _marcarRemesaComoEntregada(Orden orden) async {
     if (orden.estado == 'ENTREGADO') {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -5197,41 +5156,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       // Continuar con la orden original si falla
     }
     
-    // 🔍 VALIDACIÓN: Verificar si requiere firma o foto
-    List<String> errores = [];
-    
-    print('🔍 DEBUG - Remesa #${ordenActualizada.numeroRemesa ?? ordenActualizada.numeroOrden}');
-    print('🔍 DEBUG - Requiere firma: ${ordenActualizada.requiereFirma}');
-    print('🔍 DEBUG - Tiene firma: ${ordenActualizada.firmaUrl != null && ordenActualizada.firmaUrl!.isNotEmpty}');
-    print('🔍 DEBUG - URL firma: ${ordenActualizada.firmaUrl}');
-    print('🔍 DEBUG - Foto obligatoria configuración: $_fotoEntregaObligatoria');
-    print('🔍 DEBUG - Tiene foto: ${ordenActualizada.fotoEntrega != null && ordenActualizada.fotoEntrega!.isNotEmpty}');
-    print('🔍 DEBUG - URL foto: ${ordenActualizada.fotoEntrega}');
-    
-    // 1. Validar firma obligatoria (si requiere firma)
-    // Aceptar firmas locales (local://) que están pendientes de sincronización
-    final tieneFirma = ordenActualizada.firmaUrl != null && ordenActualizada.firmaUrl!.isNotEmpty;
-    if (ordenActualizada.requiereFirma && !tieneFirma) {
-      errores.add('✍️ Falta obtener la firma del destinatario (obligatorio)');
-    }
-    
-    // 2. Validar foto obligatoria (si está activa) - Para remesas es opcional pero si está configurado debe pedirse
-    // Si _fotoEntregaObligatoria está activo, pedir foto también para remesas
-    // Aceptar fotos locales (local://) que están pendientes de sincronización
-    final tieneFoto = ordenActualizada.fotoEntrega != null && ordenActualizada.fotoEntrega!.isNotEmpty;
-    if (_fotoEntregaObligatoria && !tieneFoto) {
-      errores.add('📷 Falta tomar la foto de entrega');
-    }
-    
-    print('🔍 DEBUG - Errores encontrados: ${errores.length}');
-    
-    // Si hay errores, mostrar diálogo
-    if (errores.isNotEmpty) {
-      print('❌ Mostrando diálogo de errores: $errores');
-      _mostrarDialogoErroresEntrega(orden, errores);
-      return;
-    }
-    
+    // Remesas puras: no validar firma ni foto
     // Confirmación
     final confirmado = await _mostrarConfirmacion(
       'Confirmar Entrega de Remesa',
@@ -5485,7 +5410,22 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     // Botones para repartidores (estados normales de envío)
     switch (orden.estado) {
       case 'POR ENVIAR':
-        if (OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(orden)) {
+        if (OrdenRecogidaColaboradorUi.puedeIniciarRecolecta(orden)) {
+          return ElevatedButton.icon(
+            onPressed: () => _iniciarRecolectaColaborador(orden),
+            icon: const Icon(Icons.directions_car, size: 18),
+            label: const Text('Iniciar recolecta'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1976D2),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          );
+        }
+        if (OrdenRecogidaColaboradorUi.puedeConfirmarRecogida(orden)) {
           return ElevatedButton.icon(
             onPressed: () => _confirmarRecogidaEnColaborador(orden),
             icon: const Icon(Icons.check_circle_outline, size: 18),
@@ -5497,6 +5437,21 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
               ),
+            ),
+          );
+        }
+        if (OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(orden)) {
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE3F2FD),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFF1976D2)),
+            ),
+            child: Text(
+              OrdenRecogidaColaboradorUi.mensajeInfoTarjeta(orden),
+              style: const TextStyle(color: Color(0xFF1565C0), fontSize: 12),
+              textAlign: TextAlign.center,
             ),
           );
         }
@@ -5639,14 +5594,15 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       errores.add('💰 Falta cobrar ${simbolo}${orden.montoCobrar.toStringAsFixed(2)} ${orden.moneda}');
     }
 
-    // 3. Validar firma obligatoria (si requiere firma)
-    if (orden.requiereFirma && (orden.firmaUrl == null || orden.firmaUrl!.isEmpty)) {
+    // 3. Validar firma obligatoria (no aplica a remesas puras)
+    if (RemesaPuraEntregaUi.exigeFirmaEntrega(orden) &&
+        (orden.firmaUrl == null || orden.firmaUrl!.isEmpty)) {
       errores.add('✍️ Falta obtener la firma del cliente (obligatorio)');
     }
 
-    // 4. Validar foto obligatoria (si está activa) - EXCLUIR remesas puras
-    // Para remesas, la foto es opcional (no bloqueante)
-    if (!_esRemesaPura(orden) && _fotoEntregaObligatoria && (orden.fotoEntrega == null || orden.fotoEntrega!.isEmpty)) {
+    // 4. Validar foto obligatoria (no aplica a remesas puras)
+    if (RemesaPuraEntregaUi.exigeFotoEntrega(orden, _fotoEntregaObligatoria) &&
+        (orden.fotoEntrega == null || orden.fotoEntrega!.isEmpty)) {
       errores.add('📷 Falta tomar la foto de entrega');
     }
 
@@ -6060,9 +6016,32 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     }
   }
 
+  Future<void> _iniciarRecolectaColaborador(Orden orden) async {
+    if (!OrdenRecogidaColaboradorUi.puedeIniciarRecolecta(orden)) {
+      _mostrarMensaje('Primero el colaborador debe marcar su parte como lista.');
+      return;
+    }
+    try {
+      final res = await supabase.rpc(
+        'repartidor_iniciar_recolecta_colaborador',
+        params: {'p_orden_id': orden.id},
+      );
+      final payload = res as Map<String, dynamic>? ?? {};
+      if (payload['ok'] != true) {
+        _mostrarMensaje('No se pudo iniciar la recolecta. Inténtalo de nuevo.');
+        return;
+      }
+      _mostrarMensaje('El colaborador verá que vas en camino a recoger.');
+      await _cargarOrdenes(preservarOrdenId: orden.id);
+    } catch (e) {
+      print('❌ Error iniciar recolecta: $e');
+      _mostrarMensaje('No se pudo iniciar la recolecta.');
+    }
+  }
+
   Future<void> _confirmarRecogidaEnColaborador(Orden orden) async {
-    if (!OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(orden)) {
-      _mostrarMensaje('Esta acción solo aplica mientras debes recoger en el colaborador.');
+    if (!OrdenRecogidaColaboradorUi.puedeConfirmarRecogida(orden)) {
+      _mostrarMensaje('Primero pulsa «Iniciar recolecta» cuando salgas hacia el colaborador.');
       return;
     }
 

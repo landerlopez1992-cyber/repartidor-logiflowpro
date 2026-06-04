@@ -18,6 +18,7 @@ import '../services/paises_service.dart';
 import '../services/goodbarber_sync_service.dart';
 import '../main.dart';
 import '../utils/orden_recogida_colaborador_ui.dart';
+import '../utils/remesa_pura_entrega_ui.dart';
 
 class DetalleOrdenScreen extends StatefulWidget {
   final Orden orden;
@@ -650,7 +651,9 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       print('✍️ Abriendo modal de firma automáticamente después de cargar orden...');
       // Esperar un frame para que la UI se renderice completamente
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _ordenActual.requiereFirma && (_firmaUrl == null || _firmaUrl!.isEmpty)) {
+        if (mounted &&
+            RemesaPuraEntregaUi.exigeFirmaEntrega(_ordenActual) &&
+            (_firmaUrl == null || _firmaUrl!.isEmpty)) {
           print('✍️ Llamando _mostrarModalFirma() automáticamente...');
           _mostrarModalFirma();
         } else {
@@ -824,13 +827,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     );
   }
 
-  // Detectar si es una remesa pura (no una orden con remesa)
-  bool _esRemesaPura() {
-    return _ordenActual.tieneRemesa && 
-           _ordenActual.descripcion == 'Remesa de dinero' &&
-           (_ordenActual.peso == null || _ordenActual.peso == 0) &&
-           _ordenActual.itemsAdicionales == null;
-  }
+  bool _esRemesaPura() => RemesaPuraEntregaUi.esRemesaPura(_ordenActual);
 
   @override
   Widget build(BuildContext context) {
@@ -1315,12 +1312,69 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               const SizedBox(height: 16),
             ],
             
-            // Botones de acción (solo si está POR ENVIAR o ENTREGADO EN SUCURSAL)
             if (estado == 'POR ENVIAR' || estado == 'ENTREGADO EN SUCURSAL') ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF8E1),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFFFD700).withOpacity(0.6)),
+                ),
+                child: Text(
+                  _ordenActual.recogerEnSucursal
+                      ? (estado == 'ENTREGADO EN SUCURSAL'
+                          ? 'Completa la entrega al destinatario (número de remesa e identificación). Sin firma ni foto.'
+                          : 'En sucursal: puedes dejarla para que la entregue la sucursal, o entregarla tú al destinatario si está contigo. Sin firma ni foto.')
+                      : 'Esta remesa no requiere firma ni foto. Confirma el número de remesa y la identificación del destinatario.',
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF5D4037), height: 1.35),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            if (estado == 'POR ENVIAR' && _ordenActual.recogerEnSucursal) ...[
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => _marcarRemesaDetalleComoEntregada(soloDejarEnSucursal: true),
+                  icon: const Icon(Icons.store, size: 22),
+                  label: const Text(
+                    'Solo dejar en sucursal',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFE65100),
+                    side: const BorderSide(color: Color(0xFFFF9800), width: 1.5),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  onPressed: () => _marcarRemesaDetalleComoEntregada(),
+                  onPressed: () => _marcarRemesaDetalleComoEntregada(entregarADestinatario: true),
+                  icon: const Icon(Icons.check_circle, size: 24),
+                  label: const Text(
+                    'Entregar al destinatario',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF4CAF50),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    elevation: 4,
+                  ),
+                ),
+              ),
+            ] else if (estado == 'POR ENVIAR') ...[
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () => _marcarRemesaDetalleComoEntregada(entregarADestinatario: true),
                   icon: const Icon(Icons.check_circle, size: 24),
                   label: const Text(
                     'Marcar Remesa como Entregada',
@@ -1330,9 +1384,26 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                     backgroundColor: const Color(0xFFFFD700),
                     foregroundColor: const Color(0xFF1A1A1A),
                     padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    elevation: 4,
+                  ),
+                ),
+              ),
+            ] else if (estado == 'ENTREGADO EN SUCURSAL') ...[
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () => _marcarRemesaDetalleComoEntregada(entregarADestinatario: true),
+                  icon: const Icon(Icons.check_circle, size: 24),
+                  label: const Text(
+                    'Entregar al destinatario',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF4CAF50),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     elevation: 4,
                   ),
                 ),
@@ -1452,8 +1523,12 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     return partes.isEmpty ? 'Dirección no especificada' : partes.join(', ');
   }
   
-  // Método para marcar remesa como entregada (con validaciones según recoger_en_sucursal)
-  Future<void> _marcarRemesaDetalleComoEntregada() async {
+  /// [soloDejarEnSucursal]: deja la remesa en la sucursal (estado intermedio).
+  /// [entregarADestinatario]: entrega final al destinatario (ENTREGADO), también si estás en sucursal.
+  Future<void> _marcarRemesaDetalleComoEntregada({
+    bool soloDejarEnSucursal = false,
+    bool entregarADestinatario = false,
+  }) async {
     if (_ordenActual.estado == 'ENTREGADO') {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1463,9 +1538,13 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       );
       return;
     }
-    
-    // Si es recogida en sucursal, solo marcar como "ENTREGADO EN SUCURSAL"
-    if (_ordenActual.recogerEnSucursal) {
+
+    final estRemesa = _ordenActual.estado.trim().toUpperCase();
+    final esPorEnviar = estRemesa.isEmpty || estRemesa == 'POR ENVIAR';
+
+    // Dejar en sucursal (estado intermedio; luego otro repartidor o tú puedes completar)
+    if (soloDejarEnSucursal) {
+      if (!_ordenActual.recogerEnSucursal || !esPorEnviar) return;
       final confirmado = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -1608,8 +1687,10 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       }
       return;
     }
-    
-    // Si NO es recogida en sucursal: Pedir validaciones (RMSA, ID, firma, foto)
+
+    if (!entregarADestinatario) return;
+
+    // Entrega final al destinatario (domicilio o en sucursal): RMSA e ID, sin firma ni foto
     final numeroRemesa = _ordenActual.numeroRemesa ?? _ordenActual.numeroOrden;
     final nombreDestinatario = _ordenActual.receptor;
     
@@ -1625,8 +1706,9 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     final idVerificado = await _verificarIDDestinatario(nombreDestinatario);
     if (idVerificado != true) return;
     
-    // Pedir firma si es necesario
-    if (_ordenActual.requiereFirma && (_firmaUrl == null || _firmaUrl!.isEmpty)) {
+    // Firma: solo órdenes que no son remesa pura
+    if (RemesaPuraEntregaUi.exigeFirmaEntrega(_ordenActual) &&
+        (_firmaUrl == null || _firmaUrl!.isEmpty)) {
       print('✍️ Abriendo modal de firma para remesa...');
       final firmaObtenida = await _mostrarModalFirma();
       if (!firmaObtenida) {
@@ -1717,11 +1799,10 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       }
     }
     
-    // 🔒 PARA REMESAS: La foto se pide igual que en órdenes normales
-    // Si _fotoEntregaObligatoria está activo, pedir foto también para remesas
-    // Flujo: RMSA → ID → FIRMA → FOTO (si obligatoria) → Confirmación
-    if (_fotoEntregaObligatoria && (_fotoEntregaUrl == null || _fotoEntregaUrl!.isEmpty)) {
-      print('📷 PASO 4: Foto obligatoria pero no tomada para remesa');
+    // Foto de entrega: no aplica a remesas puras
+    if (RemesaPuraEntregaUi.exigeFotoEntrega(_ordenActual, _fotoEntregaObligatoria) &&
+        (_fotoEntregaUrl == null || _fotoEntregaUrl!.isEmpty)) {
+      print('📷 PASO 4: Foto obligatoria pero no tomada');
       
       // Usar el método existente que maneja todo el flujo de foto
       await _tomarFotoEntregaConSelector();
@@ -1853,11 +1934,13 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       'fecha_entrega': fechaEntrega.toIso8601String(),
     };
     
-    if (_firmaUrl != null && _firmaUrl!.isNotEmpty) {
-      updateData['firma_url'] = _firmaUrl;
-    }
-    if (_fotoEntregaUrl != null && _fotoEntregaUrl!.isNotEmpty) {
-      updateData['foto_entrega'] = _fotoEntregaUrl;
+    if (!_esRemesaPura()) {
+      if (_firmaUrl != null && _firmaUrl!.isNotEmpty) {
+        updateData['firma_url'] = _firmaUrl;
+      }
+      if (_fotoEntregaUrl != null && _fotoEntregaUrl!.isNotEmpty) {
+        updateData['foto_entrega'] = _fotoEntregaUrl;
+      }
     }
     
     // Intentar actualizar en BD si hay conexión, si no, agregar a cola de sincronización
@@ -3348,6 +3431,10 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
         color = const Color(0xFF2E7D32);
         icon = Icons.inventory_2;
         break;
+      case 'EN CAMINO A RECOGER':
+        color = const Color(0xFF1976D2);
+        icon = Icons.directions_car;
+        break;
       case 'POR ENVIAR':
         color = const Color(0xFFFF9800);
         icon = Icons.schedule;
@@ -3665,7 +3752,22 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
   Widget _buildBotonAccionProgresivo() {
     switch (_ordenActual.estado) {
       case 'POR ENVIAR':
-        if (OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(_ordenActual)) {
+        if (OrdenRecogidaColaboradorUi.puedeIniciarRecolecta(_ordenActual)) {
+          return ElevatedButton.icon(
+            onPressed: _isLoading ? null : () => _iniciarRecolectaColaborador(),
+            icon: const Icon(Icons.directions_car, size: 20),
+            label: const Text('Iniciar recolecta'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1976D2),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          );
+        }
+        if (OrdenRecogidaColaboradorUi.puedeConfirmarRecogida(_ordenActual)) {
           return ElevatedButton.icon(
             onPressed: _isLoading ? null : () => _confirmarRecogidaEnColaborador(),
             icon: const Icon(Icons.check_circle_outline, size: 20),
@@ -3677,6 +3779,16 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10),
               ),
+            ),
+          );
+        }
+        if (OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(_ordenActual)) {
+          return Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text(
+              OrdenRecogidaColaboradorUi.mensajeInfoTarjeta(_ordenActual),
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Color(0xFF666666), fontSize: 13),
             ),
           );
         }
@@ -4971,9 +5083,41 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     }
   }
 
+  Future<void> _iniciarRecolectaColaborador() async {
+    if (!OrdenRecogidaColaboradorUi.puedeIniciarRecolecta(_ordenActual)) {
+      _mostrarMensaje('El colaborador debe indicar que está listo antes de iniciar la recolecta.');
+      return;
+    }
+    final confirmado = await _mostrarConfirmacion(
+      'Iniciar recolecta',
+      '¿Confirmas que vas en camino al colaborador para recoger el pedido?\n\nEl colaborador será notificado.',
+    );
+    if (!confirmado) return;
+
+    setState(() => _isLoading = true);
+    try {
+      final res = await supabase.rpc(
+        'repartidor_iniciar_recolecta_colaborador',
+        params: {'p_orden_id': widget.orden.id},
+      );
+      final payload = res as Map<String, dynamic>? ?? {};
+      if (payload['ok'] != true) {
+        _mostrarMensaje('No se pudo registrar el inicio de recolecta.');
+        return;
+      }
+      await _recargarOrden();
+      _mostrarMensaje('El colaborador verá que vas en camino.');
+    } catch (e) {
+      print('❌ iniciar recolecta: $e');
+      _mostrarMensaje('Error al iniciar la recolecta.');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   Future<void> _confirmarRecogidaEnColaborador() async {
-    if (!OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(_ordenActual)) {
-      _mostrarMensaje('Esta acción solo aplica mientras debes recoger en el colaborador.');
+    if (!OrdenRecogidaColaboradorUi.puedeConfirmarRecogida(_ordenActual)) {
+      _mostrarMensaje('Primero inicia la recolecta cuando salgas hacia el colaborador.');
       return;
     }
 
@@ -5909,10 +6053,12 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     
     // 🔒 Validación: Permitir tomar foto cuando el estado es "EN REPARTO" 
     // o cuando es "LISTO PARA RECOGER" para órdenes con recoger_en_sucursal
-    // CRÍTICO: Para remesas puras, permitir tomar foto en cualquier estado (especialmente "POR ENVIAR")
-    final esRemesaPura = _esRemesaPura();
-    final estadoValido = esRemesaPura || // Remesas pueden tomar foto en cualquier estado
-        _ordenActual.estado == 'EN REPARTO' ||
+    if (_esRemesaPura()) {
+      _mostrarMensaje('Las remesas no requieren foto de entrega.');
+      return;
+    }
+
+    final estadoValido = _ordenActual.estado == 'EN REPARTO' ||
         (_ordenActual.estado == 'LISTO PARA RECOGER' && _ordenActual.recogerEnSucursal);
     
     if (!estadoValido) {
@@ -6125,13 +6271,13 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
   // Tomar/seleccionar foto con selector de cámara/galería
   Future<void> _tomarFotoEntregaConSelector() async {
     if (!mounted) return;
-    
-    // 🔒 Validación: Permitir tomar foto cuando el estado es "EN REPARTO" 
-    // o cuando es "LISTO PARA RECOGER" para órdenes con recoger_en_sucursal
-    // CRÍTICO: Para remesas puras, permitir tomar foto en cualquier estado (especialmente "POR ENVIAR")
-    final esRemesaPura = _esRemesaPura();
-    final estadoValido = esRemesaPura || // Remesas pueden tomar foto en cualquier estado
-        _ordenActual.estado == 'EN REPARTO' ||
+
+    if (_esRemesaPura()) {
+      _mostrarMensaje('Las remesas no requieren foto de entrega.');
+      return;
+    }
+
+    final estadoValido = _ordenActual.estado == 'EN REPARTO' ||
         (_ordenActual.estado == 'LISTO PARA RECOGER' && _ordenActual.recogerEnSucursal);
     
     if (!estadoValido) {
@@ -7004,6 +7150,10 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
 
   // Mostrar modal de firma
   Future<bool> _mostrarModalFirma() async {
+    if (_esRemesaPura()) {
+      return true;
+    }
+
     print('');
     print('✍️ ========================================');
     print('✍️ ABRIENDO MODAL DE FIRMA');

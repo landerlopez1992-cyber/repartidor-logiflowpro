@@ -9,7 +9,7 @@ class OrdenRecogidaColaboradorUi {
       OrdenTipoTarjetaRepartidorUtil.clasificar(orden) ==
       OrdenTipoTarjetaRepartidor.recogidaColaborador;
 
-  /// Antes de confirmar recogida: solo datos del colaborador, no destino final.
+  /// Antes de confirmar recogida física: estado logística sigue POR ENVIAR.
   static bool enFaseRecogidaColaborador(Orden orden) {
     if (!esRecogidaColaborador(orden)) return false;
     final e = orden.estado.trim().toUpperCase();
@@ -18,47 +18,68 @@ class OrdenRecogidaColaboradorUi {
 
   static bool colaboradorMarcoListo(Orden orden) {
     final avisos = orden.avisosRecogidaVendedor;
-    return avisos != null && avisos.isNotEmpty;
+    if (avisos == null || avisos.isEmpty) return false;
+    for (final raw in avisos) {
+      final listo = raw['listo_en'];
+      if (listo != null && listo.toString().trim().isNotEmpty) return true;
+    }
+    return false;
+  }
+
+  static bool repartidorInicioRecolecta(Orden orden) {
+    final avisos = orden.avisosRecogidaVendedor;
+    if (avisos == null || avisos.isEmpty) return false;
+    for (final raw in avisos) {
+      final ini = raw['inicio_recolecta_en'];
+      if (ini != null && ini.toString().trim().isNotEmpty) return true;
+    }
+    return false;
   }
 
   /// Etiqueta visible al repartidor (no usar «POR ENVIAR» en fase de recogida local).
   static String estadoVisibleRepartidor(Orden orden) {
-    if (enFaseRecogidaColaborador(orden)) {
-      return colaboradorMarcoListo(orden) ? 'LISTO PARA RECOGIDA' : 'POR RECOLECTAR';
+    if (!enFaseRecogidaColaborador(orden)) {
+      return orden.estado.trim();
     }
-    return orden.estado.trim();
+    if (repartidorInicioRecolecta(orden)) {
+      return 'EN CAMINO A RECOGER';
+    }
+    if (colaboradorMarcoListo(orden)) {
+      return 'LISTO PARA RECOGIDA';
+    }
+    return 'POR RECOLECTAR';
   }
 
   static const List<String> estadosTimeline = [
     'POR RECOLECTAR',
     'LISTO PARA RECOGIDA',
+    'EN CAMINO A RECOGER',
     'EN REPARTO',
     'ENTREGADO',
   ];
 
   static int indiceEstadoTimeline(Orden orden) {
     if (enFaseRecogidaColaborador(orden)) {
-      return colaboradorMarcoListo(orden) ? 1 : 0;
+      if (repartidorInicioRecolecta(orden)) return 2;
+      if (colaboradorMarcoListo(orden)) return 1;
+      return 0;
     }
     final e = orden.estado.trim().toUpperCase();
-    if (e == 'ENTREGADO' || e == 'ENTREGADO EN SUCURSAL') return 3;
-    if (e == 'EN REPARTO' || e == 'EN TRANSITO' || e == 'ATRASADO') return 2;
+    if (e == 'ENTREGADO' || e == 'ENTREGADO EN SUCURSAL') return 4;
+    if (e == 'EN REPARTO' || e == 'EN TRANSITO' || e == 'ATRASADO') return 3;
+    if (repartidorInicioRecolecta(orden)) return 2;
     if (colaboradorMarcoListo(orden)) return 1;
     return 0;
   }
 
   static String mensajeInfoTarjeta(Orden orden) {
+    if (repartidorInicioRecolecta(orden)) {
+      return 'Estás en camino al colaborador. Al tener el pedido, confirma la recogida.';
+    }
     if (colaboradorMarcoListo(orden)) {
-      return 'El colaborador indicó que los artículos están listos. Ve al punto de recogida indicado abajo.';
+      return 'El colaborador indicó que está listo. Pulsa «Iniciar recolecta» cuando salgas hacia su punto.';
     }
     return 'Debes recoger este pedido en el colaborador. La entrega al cliente será después de la recogida.';
-  }
-
-  static String mensajeAccionBloqueada(Orden orden) {
-    if (colaboradorMarcoListo(orden)) {
-      return 'Recoge el pedido en el colaborador y pulsa «Confirmar recogida» para iniciar la entrega al cliente.';
-    }
-    return 'Coordina la recogida con el colaborador. Cuando tengas el pedido, confirma la recogida para pasar a reparto.';
   }
 
   static String etiquetaPlazo(Orden orden) {
@@ -74,4 +95,12 @@ class OrdenRecogidaColaboradorUi {
     final e = (orden.vendedorContactoEmail ?? '').trim();
     return n.isNotEmpty || t.isNotEmpty || e.isNotEmpty;
   }
+
+  static bool puedeIniciarRecolecta(Orden orden) =>
+      enFaseRecogidaColaborador(orden) &&
+      colaboradorMarcoListo(orden) &&
+      !repartidorInicioRecolecta(orden);
+
+  static bool puedeConfirmarRecogida(Orden orden) =>
+      enFaseRecogidaColaborador(orden) && repartidorInicioRecolecta(orden);
 }
