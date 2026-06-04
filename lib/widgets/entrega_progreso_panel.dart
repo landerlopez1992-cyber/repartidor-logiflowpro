@@ -20,11 +20,11 @@ class EntregaProgresoPanel extends StatelessWidget {
     if (pasosRequeridos.isEmpty) return const SizedBox.shrink();
 
     return Card(
-      elevation: 2,
-      color: Colors.white,
+      elevation: 0,
+      color: AppColors.darkSurface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: Color(0xFFE8E8E8)),
+        side: const BorderSide(color: AppColors.darkBorder),
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -79,14 +79,14 @@ class EntregaProgresoPanel extends StatelessWidget {
               ? AppColors.exito.withValues(alpha: 0.08)
               : esActual
                   ? AppColors.botonPrincipal.withValues(alpha: 0.1)
-                  : const Color(0xFFF5F5F5),
+                  : AppColors.darkElevated,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color: completo
                 ? AppColors.exito
                 : esActual
                     ? AppColors.botonPrincipal
-                    : const Color(0xFFE0E0E0),
+                    : AppColors.darkBorder,
             width: esActual ? 1.5 : 1,
           ),
         ),
@@ -103,7 +103,7 @@ class EntregaProgresoPanel extends StatelessWidget {
                   ? AppColors.exito
                   : esActual
                       ? AppColors.botonPrincipal
-                      : const Color(0xFFB0B0B0),
+                      : AppColors.darkTextMuted,
               size: 22,
             ),
             const SizedBox(width: 10),
@@ -128,8 +128,8 @@ class EntregaProgresoPanel extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 12,
                         color: completo
-                            ? const Color(0xFF2E7D32)
-                            : AppColors.textoSecundario,
+                            ? AppColors.exito
+                            : AppColors.darkTextMuted,
                       ),
                     ),
                   ],

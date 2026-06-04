@@ -185,6 +185,32 @@ class SyncService {
   /// Cantidad de operaciones pendientes
   int get pendingOperationsCount => _pendingOperations.length;
 
+  /// Copia de la cola (p. ej. saldo pendiente offline sin doble conteo tras sync).
+  List<Map<String, dynamic>> get pendingOperationsSnapshot =>
+      List<Map<String, dynamic>>.from(_pendingOperations);
+
+  final List<void Function()> _syncCompleteListeners = [];
+
+  void addSyncCompleteListener(void Function() listener) {
+    if (!_syncCompleteListeners.contains(listener)) {
+      _syncCompleteListeners.add(listener);
+    }
+  }
+
+  void removeSyncCompleteListener(void Function() listener) {
+    _syncCompleteListeners.remove(listener);
+  }
+
+  void _notifySyncComplete() {
+    for (final listener in List<void Function()>.from(_syncCompleteListeners)) {
+      try {
+        listener();
+      } catch (e) {
+        print('⚠️ syncCompleteListener: $e');
+      }
+    }
+  }
+
   /// Agregar operación a la cola de sincronización
   Future<void> addOperation({
     required String type, // 'update_orden', 'upload_photo', 'upload_firma', etc.
@@ -575,6 +601,8 @@ class SyncService {
     print('');
     
     _isSyncing = false;
+
+    _notifySyncComplete();
     
     // Notificar a listeners que se completó la sincronización
     for (var listener in _connectivityListeners) {

@@ -8,6 +8,10 @@ import 'package:geocoding/geocoding.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/orden.dart';
 import '../services/paises_service.dart';
+import '../services/ruta_geometria_osrm_service.dart';
+import '../services/mapa_region_service.dart';
+import '../services/google_maps_ruta_service.dart';
+import '../services/direccion_navegacion_service.dart';
 import '../services/orden_estado_sync_helper.dart';
 import '../main.dart';
 import 'detalle_orden_screen.dart';
@@ -19,11 +23,14 @@ import '../widgets/volonex_dialog.dart';
 class RutaOptimizadaRepartidorScreen extends StatefulWidget {
   final List<Orden> ordenes;
   final String repartidorNombre;
+  /// Datos de sucursal por orden (desde lista principal), para navegación correcta.
+  final Map<String, Map<String, dynamic>>? sucursalesPorOrdenId;
 
   const RutaOptimizadaRepartidorScreen({
     super.key,
     required this.ordenes,
     required this.repartidorNombre,
+    this.sucursalesPorOrdenId,
   });
 
   @override
@@ -47,6 +54,12 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
   
   // Nombre de la empresa para mostrar en mensajes
   String? _nombreEmpresa;
+
+  String? _paisOperacion;
+  LatLng? _centroMapaInicial;
+  double _zoomMapaInicial = 12.0;
+  List<LatLng> _geometriaRutaCarretera = [];
+  bool _cargandoGeometriaRuta = false;
 
   // Lista de órdenes ordenadas por orden_ruta o por índice si no tienen orden_ruta
   // Excluye órdenes entregadas y canceladas
@@ -128,8 +141,99 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
   void initState() {
     super.initState();
     _cargarNombreEmpresa();
+    _inicializarRegionMapa();
     _obtenerUbicacionRepartidor();
     _geocodificarOrdenesSinCoordenadas();
+  }
+
+  Future<void> _inicializarRegionMapa() async {
+    String? pais;
+    if (widget.ordenes.isNotEmpty && widget.ordenes.first.tenantId != null) {
+      try {
+        pais = await PaisesService.obtenerPaisOperacion(widget.ordenes.first.tenantId!);
+      } catch (_) {}
+    }
+    pais ??= await PaisesService.obtenerPaisOperacionActual();
+    _paisOperacion = pais;
+
+    final guardada = await MapaRegionService.cargarRegionGuardada();
+    if (!mounted) return;
+    setState(() {
+      _centroMapaInicial = guardada?.centro ?? MapaRegionService.centroPorPais(pais);
+      _zoomMapaInicial = guardada?.zoom ?? MapaRegionService.zoomInicialPorPais(pais);
+    });
+  }
+
+  Future<void> _actualizarGeometriaRutaEnMapa() async {
+    final ordenes = _ordenesOrdenadas;
+    final waypoints = <LatLng>[];
+    if (_ubicacionRepartidor != null) {
+      waypoints.add(_ubicacionRepartidor!);
+    }
+    for (final orden in ordenes) {
+      final c = _obtenerCoordenadas(orden);
+      if (c != null) waypoints.add(c);
+    }
+    if (waypoints.length < 2) {
+      if (mounted) {
+        setState(() {
+          _geometriaRutaCarretera = waypoints;
+          _cargandoGeometriaRuta = false;
+        });
+      }
+      return;
+    }
+
+    if (mounted) setState(() => _cargandoGeometriaRuta = true);
+    final geometria = await RutaGeometriaOsrmService.obtenerGeometriaConduccion(waypoints);
+
+    if (_ubicacionRepartidor != null) {
+      var zoom = _zoomMapaInicial;
+      try {
+        zoom = _mapController.camera.zoom;
+      } catch (_) {}
+      await MapaRegionService.guardarRegion(
+        pais: _paisOperacion ?? 'Cuba',
+        centro: _ubicacionRepartidor!,
+        zoom: zoom,
+      );
+    }
+
+    if (mounted) {
+      setState(() {
+        _geometriaRutaCarretera = geometria;
+        _cargandoGeometriaRuta = false;
+      });
+    }
+  }
+
+  Future<void> _abrirRutaEnGoogleMaps() async {
+    final ok = await GoogleMapsRutaService.abrirRutaOrdenes(
+      ordenes: _ordenesOrdenadas,
+      sucursalesPorOrdenId: widget.sucursalesPorOrdenId,
+      paisOperacion: _paisOperacion,
+      origenCoordenadas: _ubicacionRepartidor,
+    );
+    if (!ok) {
+      final paradas = <LatLng>[];
+      for (final orden in _ordenesOrdenadas) {
+        final c = _obtenerCoordenadas(orden);
+        if (c != null) paradas.add(c);
+      }
+      if (paradas.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No hay direcciones válidas para abrir en Google Maps'),
+          ),
+        );
+        return;
+      }
+      await GoogleMapsRutaService.abrirRutaEnGoogleMaps(
+        origen: _ubicacionRepartidor,
+        paradas: paradas,
+      );
+      return;
+    }
   }
   
   // Cargar nombre de la empresa desde el tenant_id
@@ -191,62 +295,26 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
       print('✅ Todas las órdenes ya tienen coordenadas');
       if (mounted) {
         setState(() {});
+        await _actualizarGeometriaRutaEnMapa();
       }
       return;
     }
     
     print('🔍 Geocodificando ${ordenesSinCoords.length} órdenes sin coordenadas...');
     
-    // Obtener país de operación del tenant (usar la primera orden para obtener tenant_id)
-    String? paisOperacion;
-    if (ordenesSinCoords.isNotEmpty && ordenesSinCoords.first.tenantId != null) {
-      try {
-        paisOperacion = await PaisesService.obtenerPaisOperacion(ordenesSinCoords.first.tenantId!);
-        print('🌍 País de operación obtenido: $paisOperacion');
-      } catch (e) {
-        print('⚠️ Error obteniendo país de operación: $e');
-      }
-    }
-    
-    // Si no se pudo obtener, intentar desde el usuario actual
-    if (paisOperacion == null || paisOperacion.isEmpty) {
-      try {
-        paisOperacion = await PaisesService.obtenerPaisOperacionActual();
-        print('🌍 País de operación obtenido del usuario actual: $paisOperacion');
-      } catch (e) {
-        print('⚠️ Error obteniendo país del usuario actual: $e');
-      }
-    }
-    
-    // País por defecto si no se encontró (Estados Unidos en lugar de Cuba)
-    final paisDefault = paisOperacion ?? 'Estados Unidos';
-    print('🌍 Usando país para geocodificación: $paisDefault');
-    
     for (var orden in ordenesSinCoords) {
       try {
-        // Construir dirección completa
-        String direccionCompleta = orden.direccionDestino;
-        if (orden.municipioDestino != null && orden.municipioDestino!.isNotEmpty) {
-          direccionCompleta += ', ${orden.municipioDestino}';
+        final suc = widget.sucursalesPorOrdenId?[orden.id];
+        final res = await DireccionNavegacionService.resolverConPaisOrden(
+          orden,
+          sucursal: suc,
+        );
+        if (!res.esValida) {
+          print('   ⚠️ Sin dirección completa para orden #${orden.numeroOrden}');
+          continue;
         }
-        if (orden.provinciaDestino != null && orden.provinciaDestino!.isNotEmpty) {
-          direccionCompleta += ', ${orden.provinciaDestino}';
-        }
-        
-        // Agregar país solo si no está especificado en la dirección
-        final direccionLower = direccionCompleta.toLowerCase();
-        final tienePais = direccionLower.contains('cuba') || 
-                         direccionLower.contains('usa') ||
-                         direccionLower.contains('united states') ||
-                         direccionLower.contains('estados unidos') ||
-                         direccionLower.contains('united states of america');
-        
-        if (!tienePais) {
-          // Usar el país de operación del tenant, no hardcodear "Cuba"
-          direccionCompleta += ', $paisDefault';
-        }
-        
-        print('   📍 Geocodificando: $direccionCompleta');
+        final direccionCompleta = res.direccionCompleta;
+        print('   📍 Geocodificando (${res.tipoDestino}): $direccionCompleta');
         
         final locations = await locationFromAddress(direccionCompleta);
         if (locations.isNotEmpty) {
@@ -267,6 +335,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
       setState(() {
         _isLoading = false;
       });
+      await _actualizarGeometriaRutaEnMapa();
     }
   }
   
@@ -294,6 +363,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
           _ubicacionRepartidor = LatLng(position.latitude, position.longitude);
           _isLoading = false;
         });
+        await _actualizarGeometriaRutaEnMapa();
       }
       
       // NO mover el mapa automáticamente - solo actualizar el marcador
@@ -458,7 +528,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('No se pudo obtener tu ubicación. Usando ordenamiento por defecto.'),
-          backgroundColor: Color(0xFFFF9800),
+          backgroundColor: AppColors.botonPrincipal,
         ),
       );
       // Continuar sin optimización por distancia
@@ -558,7 +628,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Ruta optimizada por distancia: ${todasLasOrdenes.length} órdenes. Se entregarán las más cercanas primero.'),
-          backgroundColor: const Color(0xFF4CAF50),
+          backgroundColor: AppColors.exito,
           duration: const Duration(seconds: 4),
         ),
       );
@@ -585,198 +655,120 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (BuildContext context) {
-        return Dialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Container(
-            padding: const EdgeInsets.all(24),
-            constraints: const BoxConstraints(maxWidth: 500),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Header con icono
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFEBEE),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(
-                        Icons.priority_high,
-                        color: Color(0xFFDC2626),
-                        size: 32,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    const Expanded(
-                      child: Text(
-                        'Órdenes Prioritarias Detectadas',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF2C2C2C),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                
-                // Información de órdenes
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFF3E0),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: const Color(0xFFFF9800),
-                      width: 2,
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (totalUrgentes > 0) ...[
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.warning,
-                              color: Color(0xFFDC2626),
-                              size: 24,
+      builder: (ctx) => VolonexDialog(
+        title: 'Órdenes prioritarias',
+        maxWidth: AppLayout.dialogWideMaxWidth,
+        leading: const Icon(Icons.priority_high, color: AppColors.error, size: 26),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.darkElevated,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.botonPrincipal, width: 1.5),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (totalUrgentes > 0) ...[
+                    Row(
+                      children: [
+                        const Icon(Icons.warning, color: AppColors.error, size: 22),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '$totalUrgentes ${totalUrgentes == 1 ? 'orden urgente' : 'órdenes urgentes'}',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.error,
                             ),
-                            const SizedBox(width: 8),
-                            Text(
-                              '$totalUrgentes ${totalUrgentes == 1 ? 'orden urgente' : 'órdenes urgentes'}',
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFFDC2626),
-                              ),
-                            ),
-                          ],
-                        ),
-                        if (totalAtrasadas > 0) const SizedBox(height: 12),
-                      ],
-                      if (totalAtrasadas > 0) ...[
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.schedule,
-                              color: Color(0xFFFF9800),
-                              size: 24,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              '$totalAtrasadas ${totalAtrasadas == 1 ? 'orden atrasada' : 'órdenes atrasadas'}',
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFFFF9800),
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                       ],
-                      const SizedBox(height: 12),
-                      Text(
-                        'Total: $totalPrioritarias ${totalPrioritarias == 1 ? 'orden prioritaria' : 'órdenes prioritarias'}',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF2C2C2C),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
-                
-                // Descripción
-                const Text(
-                  '¿Cómo deseas proceder?',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF2C2C2C),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  '• Entregar Primero: Optimiza la ruta para ir directo a las órdenes prioritarias. Si hay otras órdenes en el camino, se entregarán de paso.\n\n'
-                  '• Seguir Ruta: Continúa con la ruta optimizada normal (por distancia).',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF666666),
-                    height: 1.5,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                
-                // Botones
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () {
-                          Navigator.of(context).pop();
-                          _iniciarRutaConPrioridad();
-                        },
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          side: const BorderSide(
-                            color: Color(0xFFDC2626),
-                            width: 2,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text(
-                          'Entregar Primero',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFFDC2626),
-                          ),
-                        ),
-                      ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () {
-                          Navigator.of(context).pop();
-                          _iniciarRutaNormal();
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF4CAF50),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text(
-                          'Seguir Ruta',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
+                    if (totalAtrasadas > 0) const SizedBox(height: 10),
                   ],
-                ),
-              ],
+                  if (totalAtrasadas > 0)
+                    Row(
+                      children: [
+                        const Icon(Icons.schedule, color: AppColors.botonPrincipal, size: 22),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '$totalAtrasadas ${totalAtrasadas == 1 ? 'orden atrasada' : 'órdenes atrasadas'}',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.botonPrincipal,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Total: $totalPrioritarias ${totalPrioritarias == 1 ? 'orden prioritaria' : 'órdenes prioritarias'}',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.darkText,
+                    ),
+                  ),
+                ],
+              ),
             ),
+            const SizedBox(height: 14),
+            const Text(
+              '¿Cómo deseas proceder?',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: AppColors.darkText,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              '• Entregar primero: va directo a las prioritarias; si hay otras en el camino, se entregan de paso.\n\n'
+              '• Seguir ruta: continúa con el orden optimizado por distancia.',
+              style: TextStyle(
+                fontSize: 13,
+                color: AppColors.darkTextMuted,
+                height: 1.45,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          OutlinedButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _iniciarRutaConPrioridad();
+            },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.error,
+              side: const BorderSide(color: AppColors.error, width: 1.5),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            ),
+            child: const Text('Entregar primero', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
-        );
-      },
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _iniciarRutaNormal();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.exito,
+              foregroundColor: AppColors.onAccentButton,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            ),
+            child: const Text('Seguir ruta', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
     );
   }
   
@@ -804,33 +796,15 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
       return _coordenadasGeocodificadas[orden.id];
     }
     
-    // Intentar geocodificar
     try {
-      String? paisOperacion;
-      if (orden.tenantId != null) {
-        try {
-          paisOperacion = await PaisesService.obtenerPaisOperacion(orden.tenantId!);
-        } catch (e) {
-          print('⚠️ Error obteniendo país: $e');
-        }
-      }
-      
-      if (paisOperacion == null || paisOperacion.isEmpty) {
-        try {
-          paisOperacion = await PaisesService.obtenerPaisOperacionActual();
-        } catch (e) {
-          print('⚠️ Error obteniendo país actual: $e');
-        }
-      }
-      
-      String direccionCompleta = orden.direccionDestino;
-      if (paisOperacion != null && paisOperacion.isNotEmpty) {
-        if (!direccionCompleta.toLowerCase().contains(paisOperacion.toLowerCase())) {
-          direccionCompleta = '$direccionCompleta, $paisOperacion';
-        }
-      }
-      
-      final locations = await locationFromAddress(direccionCompleta);
+      final suc = widget.sucursalesPorOrdenId?[orden.id];
+      final res = await DireccionNavegacionService.resolverConPaisOrden(
+        orden,
+        sucursal: suc,
+      );
+      if (!res.esValida) return null;
+
+      final locations = await locationFromAddress(res.direccionCompleta);
       if (locations.isNotEmpty) {
         final coords = LatLng(locations.first.latitude, locations.first.longitude);
         _coordenadasGeocodificadas[orden.id] = coords;
@@ -855,7 +829,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('No se pudo obtener tu ubicación. Usando ordenamiento por defecto.'),
-          backgroundColor: Color(0xFFFF9800),
+          backgroundColor: AppColors.botonPrincipal,
         ),
       );
       // Continuar sin optimización por distancia
@@ -971,7 +945,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(mensaje),
-          backgroundColor: const Color(0xFFFF9800),
+          backgroundColor: AppColors.botonPrincipal,
           duration: const Duration(seconds: 4),
         ),
       );
@@ -1151,7 +1125,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
             const SnackBar(
               content: Text('¡Todas las órdenes han sido entregadas!'),
               duration: Duration(seconds: 3),
-              backgroundColor: Color(0xFF4CAF50),
+              backgroundColor: AppColors.exito,
             ),
           );
         }
@@ -1210,7 +1184,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
             SnackBar(
               content: Text('Avanzando a orden #${nuevaOrdenActual.numeroOrden} (${ordenesRestantes.length} restantes)'),
               duration: const Duration(seconds: 2),
-              backgroundColor: const Color(0xFF4CAF50),
+              backgroundColor: AppColors.exito,
             ),
           );
         }
@@ -1328,7 +1302,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
               onPressed: () => Navigator.of(ctx).pop('iniciar'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.exito,
-                foregroundColor: Colors.white,
+                foregroundColor: AppColors.onAccentButton,
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               ),
               child: const Row(
@@ -1356,113 +1330,29 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
       // Si seleccionó "Solo ver ubicación", no cambiar el estado, solo continuar con la navegación
     }
     
-    // Obtener coordenadas (de BD o geocodificadas)
-    LatLng? coordenadas = _obtenerCoordenadas(orden);
-    
-    // Si no tiene coordenadas, intentar geocodificar primero
-    if (coordenadas == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Obteniendo coordenadas...'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-      
-      try {
-        // Obtener país de operación del tenant
-        String? paisOperacion;
-        if (orden.tenantId != null) {
-          try {
-            paisOperacion = await PaisesService.obtenerPaisOperacion(orden.tenantId!);
-          } catch (e) {
-            print('⚠️ Error obteniendo país: $e');
-          }
-        }
-        
-        // Si no se pudo obtener, intentar desde el usuario actual
-        if (paisOperacion == null || paisOperacion.isEmpty) {
-          try {
-            paisOperacion = await PaisesService.obtenerPaisOperacionActual();
-          } catch (e) {
-            print('⚠️ Error obteniendo país del usuario: $e');
-          }
-        }
-        
-        // País por defecto si no se encontró
-        final paisDefault = paisOperacion ?? 'Estados Unidos';
-        
-        // Construir dirección completa
-        String direccionCompleta = orden.direccionDestino;
-        if (orden.municipioDestino != null && orden.municipioDestino!.isNotEmpty) {
-          direccionCompleta += ', ${orden.municipioDestino}';
-        }
-        if (orden.provinciaDestino != null && orden.provinciaDestino!.isNotEmpty) {
-          direccionCompleta += ', ${orden.provinciaDestino}';
-        }
-        
-        // Agregar país solo si no está especificado en la dirección
-        final direccionLower = direccionCompleta.toLowerCase();
-        final tienePais = direccionLower.contains('cuba') || 
-                         direccionLower.contains('usa') ||
-                         direccionLower.contains('united states') ||
-                         direccionLower.contains('estados unidos') ||
-                         direccionLower.contains('united states of america');
-        
-        if (!tienePais) {
-          // Usar el país de operación del tenant, no hardcodear "Cuba"
-          direccionCompleta += ', $paisDefault';
-        }
-        
-        final locations = await locationFromAddress(direccionCompleta);
-        if (locations.isNotEmpty) {
-          final location = locations.first;
-          coordenadas = LatLng(location.latitude, location.longitude);
-          _coordenadasGeocodificadas[orden.id] = coordenadas;
-          
-          // Actualizar estado
-          if (mounted) {
-            setState(() {});
-          }
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('No se encontraron coordenadas para: $direccionCompleta')),
-          );
-          return;
-        }
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error obteniendo coordenadas: $e')),
-        );
-        return;
-      }
-    }
+    final sucursal = widget.sucursalesPorOrdenId?[orden.id];
+    final coords = _obtenerCoordenadas(orden);
 
-    // Ahora abrir navegación con las coordenadas
-    // Intentar primero con Google Maps app (si está instalada)
-    final googleMapsUrl = 'https://www.google.com/maps/dir/?api=1&destination=${coordenadas.latitude},${coordenadas.longitude}';
-    // También preparar URL alternativa con formato geo:
-    final geoUrl = 'geo:${coordenadas.latitude},${coordenadas.longitude}?q=${coordenadas.latitude},${coordenadas.longitude}';
-    
-    try {
-      // Intentar con Google Maps URL primero
-      final uri = Uri.parse(googleMapsUrl);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        // Si no funciona, intentar con geo: URL
-        final geoUri = Uri.parse(geoUrl);
-        if (await canLaunchUrl(geoUri)) {
-          await launchUrl(geoUri, mode: LaunchMode.externalApplication);
-        } else {
-          // Último intento: usar platformDefault
-          await launchUrl(uri, mode: LaunchMode.platformDefault);
-        }
-      }
-    } catch (e) {
-      print('❌ Error abriendo navegación: $e');
+    final ok = await DireccionNavegacionService.abrirDestinoEnGoogleMaps(
+      orden: orden,
+      sucursal: sucursal,
+      paisOperacion: _paisOperacion,
+      latitudFallback: coords?.latitude ?? orden.latitudEntrega,
+      longitudFallback: coords?.longitude ?? orden.longitudEntrega,
+    );
+
+    if (!ok && mounted) {
+      final res = await DireccionNavegacionService.resolverConPaisOrden(
+        orden,
+        sucursal: sucursal,
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('No se pudo abrir la navegación: $e'),
+          content: Text(
+            res.esValida
+                ? 'No se pudo abrir Google Maps'
+                : 'No hay dirección completa para esta orden',
+          ),
           duration: const Duration(seconds: 3),
         ),
       );
@@ -1472,9 +1362,15 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(),
+      return Scaffold(
+        backgroundColor: AppColors.darkBg,
+        appBar: AppBar(
+          title: const Text('Ruta Optimizada'),
+          backgroundColor: AppColors.header,
+          foregroundColor: AppColors.onAccentButton,
+        ),
+        body: const Center(
+          child: CircularProgressIndicator(color: AppColors.botonPrincipal),
         ),
       );
     }
@@ -1494,11 +1390,11 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
       appBar: AppBar(
         title: const Text('Ruta Optimizada'),
         backgroundColor: AppColors.header,
+        foregroundColor: AppColors.onAccentButton,
         actions: [
-          // Botón para centrar el mapa en la ubicación del repartidor
           if (_ubicacionRepartidor != null)
             IconButton(
-              icon: const Icon(Icons.my_location, color: Colors.white),
+              icon: const Icon(Icons.my_location, color: AppColors.onAccentButton),
               onPressed: _centrarEnRepartidor,
               tooltip: 'Rastrear Repartidor',
             ),
@@ -1523,12 +1419,16 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
       appBar: AppBar(
         title: const Text('Ruta Optimizada'),
         backgroundColor: AppColors.header,
-        foregroundColor: Colors.white,
+        foregroundColor: AppColors.onAccentButton,
         actions: [
-          // Botón para centrar el mapa en la ubicación del repartidor
+          IconButton(
+            icon: const Icon(Icons.map, color: AppColors.onAccentButton),
+            onPressed: _abrirRutaEnGoogleMaps,
+            tooltip: 'Abrir en Google Maps',
+          ),
           if (_ubicacionRepartidor != null)
             IconButton(
-              icon: const Icon(Icons.my_location, color: Colors.white),
+              icon: const Icon(Icons.my_location, color: AppColors.onAccentButton),
               onPressed: _centrarEnRepartidor,
               tooltip: 'Rastrear Repartidor',
             ),
@@ -1540,11 +1440,12 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
-              initialCenter: _ubicacionRepartidor ?? 
-                (ordenesConCoordenadas.isNotEmpty 
-                  ? _obtenerCoordenadas(ordenesConCoordenadas.first)!
-                  : const LatLng(23.1136, -82.3666)), // Coordenadas por defecto (La Habana, Cuba)
-              initialZoom: 12.0,
+              initialCenter: _ubicacionRepartidor ??
+                _centroMapaInicial ??
+                (ordenesConCoordenadas.isNotEmpty
+                    ? _obtenerCoordenadas(ordenesConCoordenadas.first)!
+                    : MapaRegionService.centroPorPais(_paisOperacion)),
+              initialZoom: _zoomMapaInicial,
               minZoom: 10.0,
               maxZoom: 18.0,
             ),
@@ -1554,19 +1455,16 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                 userAgentPackageName: 'com.logiflowpro.app',
               ),
               
-              // Línea desde el repartidor hasta la primera orden
-              if (_ubicacionRepartidor != null && ordenesConCoordenadas.isNotEmpty)
+              // Ruta por carretera (OSRM), no líneas rectas
+              if (_geometriaRutaCarretera.length >= 2)
                 PolylineLayer(
                   polylines: [
                     Polyline(
-                      points: [
-                        _ubicacionRepartidor!,
-                        _obtenerCoordenadas(ordenesConCoordenadas.first)!,
-                      ],
-                      strokeWidth: 4.0,
-                      color: const Color(0xFF4CAF50), // Verde para la línea del camión
-                      borderStrokeWidth: 2.0,
-                      borderColor: Colors.white,
+                      points: _geometriaRutaCarretera,
+                      strokeWidth: 5.0,
+                      color: AppColors.info,
+                      borderStrokeWidth: 2.5,
+                      borderColor: AppColors.onAccentButton,
                     ),
                   ],
                 ),
@@ -1581,9 +1479,9 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                       height: 50,
                       child: Container(
                         decoration: BoxDecoration(
-                          color: const Color(0xFF4CAF50), // Verde para el camión
+                          color: AppColors.exito,
                           shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 3),
+                          border: Border.all(color: AppColors.onAccentButton, width: 3),
                           boxShadow: [
                             BoxShadow(
                               color: Colors.black.withOpacity(0.3),
@@ -1592,7 +1490,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                             ),
                           ],
                         ),
-                        child: const Icon(Icons.local_shipping, color: Colors.white, size: 28),
+                        child: const Icon(Icons.local_shipping, color: AppColors.onAccentButton, size: 28),
                       ),
                     ),
                   ],
@@ -1621,9 +1519,9 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                           child: Container(
                             padding: const EdgeInsets.all(5),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFFF9800), // Naranja para el paquete
+                              color: AppColors.botonPrincipal,
                               shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 2),
+                              border: Border.all(color: AppColors.onAccentButton, width: 2),
                               boxShadow: [
                                 BoxShadow(
                                   color: Colors.black.withOpacity(0.3),
@@ -1634,7 +1532,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                             ),
                             child: const Icon(
                               Icons.inventory_2,
-                              color: Colors.white,
+                              color: AppColors.onAccentButton,
                               size: 20,
                             ),
                           ),
@@ -1647,10 +1545,10 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                             height: 40,
                             decoration: BoxDecoration(
                               color: _ordenActualIndex == index && _rutaIniciada
-                                  ? const Color(0xFFFF9800) // Naranja para orden actual
-                                  : const Color(0xFF1976D2), // Azul para otras órdenes
+                                  ? AppColors.botonPrincipal
+                                  : AppColors.info,
                               shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 3),
+                              border: Border.all(color: AppColors.onAccentButton, width: 3),
                               boxShadow: [
                                 BoxShadow(
                                   color: Colors.black.withOpacity(0.4),
@@ -1664,7 +1562,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                               child: Text(
                                 '$ordenRuta',
                                 style: const TextStyle(
-                                  color: Colors.white,
+                                  color: AppColors.onAccentButton,
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -1678,24 +1576,47 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                 }).toList(),
               ),
               
-              // Línea de ruta conectando todas las órdenes (línea azul moderna)
-              if (ordenesConCoordenadas.length > 1)
-                PolylineLayer(
-                  polylines: [
-                    Polyline(
-                      points: ordenesConCoordenadas
-                        .map((orden) => _obtenerCoordenadas(orden))
-                        .whereType<LatLng>()
-                        .toList(),
-                      strokeWidth: 5.0,
-                      color: const Color(0xFF1976D2), // Azul moderno
-                      borderStrokeWidth: 3.0,
-                      borderColor: Colors.white,
-                    ),
-                  ],
-                ),
             ],
           ),
+
+          if (_cargandoGeometriaRuta)
+            Positioned(
+              top: 12,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Material(
+                  color: AppColors.darkElevated,
+                  borderRadius: const BorderRadius.all(Radius.circular(8)),
+                  elevation: 4,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.darkBorder),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.botonPrincipal,
+                          ),
+                        ),
+                        SizedBox(width: 8),
+                        Text(
+                          'Calculando ruta por calles…',
+                          style: TextStyle(fontSize: 12, color: AppColors.darkText),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
           
           // Botones de zoom (+ y -) en la esquina superior derecha
           Positioned(
@@ -1703,11 +1624,12 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
             right: 16,
             child: Container(
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: AppColors.darkElevated,
                 borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.darkBorder),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.2),
+                    color: Colors.black.withValues(alpha: 0.35),
                     blurRadius: 8,
                     offset: const Offset(0, 2),
                   ),
@@ -1716,7 +1638,6 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Botón de zoom in (+)
                   Material(
                     color: Colors.transparent,
                     child: InkWell(
@@ -1731,18 +1652,17 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                         height: 48,
                         decoration: const BoxDecoration(
                           border: Border(
-                            bottom: BorderSide(color: Color(0xFFE0E0E0), width: 1),
+                            bottom: BorderSide(color: AppColors.darkBorder, width: 1),
                           ),
                         ),
                         child: const Icon(
                           Icons.add,
-                          color: Color(0xFF1976D2),
+                          color: AppColors.info,
                           size: 24,
                         ),
                       ),
                     ),
                   ),
-                  // Botón de zoom out (-)
                   Material(
                     color: Colors.transparent,
                     child: InkWell(
@@ -1752,12 +1672,12 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                         _mapController.move(_mapController.camera.center, newZoom);
                       },
                       borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
-                      child: Container(
+                      child: const SizedBox(
                         width: 48,
                         height: 48,
-                        child: const Icon(
+                        child: Icon(
                           Icons.remove,
-                          color: Color(0xFF1976D2),
+                          color: AppColors.info,
                           size: 24,
                         ),
                       ),
@@ -1777,15 +1697,18 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
               top: false,
               child: Container(
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: AppColors.darkSurface,
                   borderRadius: const BorderRadius.only(
                     topLeft: Radius.circular(20),
                     topRight: Radius.circular(20),
                   ),
+                  border: const Border(
+                    top: BorderSide(color: AppColors.darkBorder, width: 1),
+                  ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.2),
-                      blurRadius: 10,
+                      color: Colors.black.withValues(alpha: 0.4),
+                      blurRadius: 12,
                       offset: const Offset(0, -2),
                     ),
                   ],
@@ -1801,7 +1724,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                     width: 40,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: Colors.grey[300],
+                      color: AppColors.darkBorder,
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
@@ -1817,7 +1740,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                             style: const TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
-                              color: Color(0xFF2C2C2C),
+                              color: AppColors.darkText,
                             ),
                           ),
                           // Debug: Mostrar información adicional
@@ -1833,7 +1756,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                                     'Urgentes: $urgentes | Atrasadas: $atrasadas | Recoger en sucursal: $recogerEnSucursal',
                                     style: TextStyle(
                                       fontSize: 12,
-                                      color: Colors.grey[600],
+                                      color: AppColors.darkTextMuted,
                                     ),
                                   ),
                                 );
@@ -1850,8 +1773,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                             ),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF4CAF50),
-                              foregroundColor: Colors.white,
+                              backgroundColor: AppColors.exito,
+                              foregroundColor: AppColors.onAccentButton,
                               padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
@@ -1876,13 +1799,13 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFFFF9800),
+                                      color: AppColors.botonPrincipal,
                                       borderRadius: BorderRadius.circular(20),
                                     ),
                                     child: Text(
                                       'Orden ${_ordenActual!.ordenRuta ?? (_ordenActualIndex + 1)} de ${_ordenesOrdenadas.length}',
                                       style: const TextStyle(
-                                        color: Colors.white,
+                                        color: AppColors.onAccentButton,
                                         fontSize: 14,
                                         fontWeight: FontWeight.bold,
                                       ),
@@ -1894,7 +1817,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                                     style: const TextStyle(
                                       fontSize: 16,
                                       fontWeight: FontWeight.bold,
-                                      color: Color(0xFF2C2C2C),
+                                      color: AppColors.darkText,
                                     ),
                                   ),
                                 ],
@@ -1904,7 +1827,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                                   '${_ordenActual!.distanciaDesdeAnterior!.toStringAsFixed(1)} km',
                                   style: const TextStyle(
                                     fontSize: 14,
-                                    color: Color(0xFF666666),
+                                    color: AppColors.darkTextMuted,
                                   ),
                                 ),
                             ],
@@ -1914,7 +1837,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                             _ordenActual!.direccionDestino,
                             style: const TextStyle(
                               fontSize: 14,
-                              color: Color(0xFF2C2C2C),
+                              color: AppColors.darkText,
                             ),
                           ),
                           if (_ordenActual!.receptor.isNotEmpty) ...[
@@ -1923,7 +1846,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                               'Destinatario: ${_ordenActual!.receptor}',
                               style: const TextStyle(
                                 fontSize: 12,
-                                color: Color(0xFF666666),
+                                color: AppColors.darkTextMuted,
                               ),
                             ),
                           ],
@@ -1936,8 +1859,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                               icon: const Icon(Icons.info_outline, size: 18),
                               label: const Text('Explorar Orden'),
                               style: OutlinedButton.styleFrom(
-                                foregroundColor: const Color(0xFF666666),
-                                side: const BorderSide(color: Color(0xFF666666)),
+                                foregroundColor: AppColors.darkText,
+                                side: const BorderSide(color: AppColors.darkBorder),
                                 padding: const EdgeInsets.symmetric(vertical: 12),
                               ),
                             ),
@@ -1951,8 +1874,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                                   icon: const Icon(Icons.navigation, size: 18),
                                   label: const Text('Navegar'),
                                   style: OutlinedButton.styleFrom(
-                                    foregroundColor: const Color(0xFF1976D2),
-                                    side: const BorderSide(color: Color(0xFF1976D2)),
+                                    foregroundColor: AppColors.info,
+                                    side: const BorderSide(color: AppColors.info),
                                     padding: const EdgeInsets.symmetric(vertical: 12),
                                   ),
                                 ),
@@ -1966,8 +1889,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                                     icon: const Icon(Icons.check_circle, size: 18),
                                     label: const Text('Entregar'),
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF4CAF50),
-                                      foregroundColor: Colors.white,
+                                      backgroundColor: AppColors.exito,
+                                      foregroundColor: AppColors.onAccentButton,
                                       padding: const EdgeInsets.symmetric(vertical: 12),
                                     ),
                                   ),
@@ -1991,8 +1914,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                                         : 'No disponible',
                                     ),
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.grey[400],
-                                      foregroundColor: Colors.white,
+                                      backgroundColor: AppColors.darkElevated,
+                                      foregroundColor: AppColors.darkTextMuted,
                                       padding: const EdgeInsets.symmetric(vertical: 12),
                                     ),
                                   ),
@@ -2014,8 +1937,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                                 : 'Volver al Inicio',
                             ),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF1976D2),
-                              foregroundColor: Colors.white,
+                              backgroundColor: AppColors.info,
+                              foregroundColor: AppColors.onAccentButton,
                               padding: const EdgeInsets.symmetric(vertical: 12),
                             ),
                           ),
@@ -2030,7 +1953,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                         children: [
                           const Icon(
                             Icons.check_circle,
-                            color: Color(0xFF4CAF50),
+                            color: AppColors.exito,
                             size: 48,
                           ),
                           const SizedBox(height: 16),
@@ -2039,7 +1962,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                             style: TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.bold,
-                              color: Color(0xFF4CAF50),
+                              color: AppColors.exito,
                             ),
                           ),
                           const SizedBox(height: 8),
@@ -2047,7 +1970,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                             'Has completado todas las ${_ordenesOrdenadas.length} órdenes',
                             style: const TextStyle(
                               fontSize: 14,
-                              color: Color(0xFF666666),
+                              color: AppColors.darkTextMuted,
                             ),
                           ),
                         ],

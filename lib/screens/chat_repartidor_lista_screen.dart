@@ -608,7 +608,7 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                                   'Modo sin conexión: conversaciones y mensajes guardados en el dispositivo. Los envíos nuevos se sincronizan al reconectar.',
                                   style: TextStyle(
                                     fontSize: 12,
-                                    color: Color(0xFF2C2C2C),
+                                    color: AppColors.darkText,
                                   ),
                                 ),
                               ),
@@ -640,8 +640,8 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                               : BorderSide.none,
                         ),
                         color: tieneNuevoMensaje
-                            ? AppColors.primary.withOpacity(0.05)
-                            : Colors.white,
+                            ? AppColors.primary.withOpacity(0.12)
+                            : AppColors.darkSurface,
                         child: InkWell(
                           onTap: () {
                             setState(() {

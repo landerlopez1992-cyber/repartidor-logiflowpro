@@ -16,6 +16,7 @@ import '../services/orden_estado_sync_helper.dart';
 import '../services/offline_storage_service.dart';
 import '../services/orden_cache_service.dart';
 import '../services/paises_service.dart';
+import '../services/direccion_navegacion_service.dart';
 import '../services/goodbarber_sync_service.dart';
 import '../main.dart';
 import '../utils/orden_recogida_colaborador_ui.dart';
@@ -900,19 +901,19 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
         title: const Text(
           'Quitar foto de entrega',
           style: TextStyle(
-            color: Color(0xFF2C2C2C),
+            color: AppColors.textOnLight,
             fontSize: 18,
             fontWeight: FontWeight.bold,
           ),
         ),
         content: const Text(
           '¿Eliminar la foto actual? Podrás tomar o subir otra antes de marcar como entregada.',
-          style: TextStyle(color: Color(0xFF666666), fontSize: 14),
+          style: TextStyle(color: AppColors.textMutedOnLight, fontSize: 14),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancelar'),
+            child: const Text('Cancelar', style: TextStyle(color: AppColors.textMutedOnLight)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -1096,7 +1097,12 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100), // Más padding inferior
+        padding: EdgeInsets.fromLTRB(
+          16,
+          16,
+          16,
+          16 + MediaQuery.paddingOf(context).bottom + 96,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1123,8 +1129,11 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               Center(
                 child: Card(
                   elevation: 2,
-                  color: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  color: AppColors.darkSurface,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: const BorderSide(color: AppColors.darkBorder, width: 0.5),
+                  ),
                   child: Padding(
                     padding: const EdgeInsets.all(12),
                     child: Column(
@@ -1256,45 +1265,52 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             : 'POR ENVIAR';
     
     return Scaffold(
-      backgroundColor: const Color(0xFFFFF9E6), // Fondo dorado muy claro
+      backgroundColor: AppColors.darkBg,
       appBar: AppBar(
         title: Row(
           children: [
-            const Icon(Icons.attach_money, color: Color(0xFFFFD700), size: 20),
+            const Icon(
+              Icons.payments_outlined,
+              color: RemesaPuraUiTheme.acento,
+              size: 20,
+            ),
             const SizedBox(width: 8),
-            Text('Remesa #$numeroRemesa'),
+            Text(
+              'Remesa #$numeroRemesa',
+              style: const TextStyle(
+                color: AppColors.darkText,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
         ),
-        backgroundColor: const Color(0xFFFFD700),
-        foregroundColor: const Color(0xFF1A1A1A),
+        backgroundColor: AppColors.header,
+        foregroundColor: AppColors.darkText,
         elevation: 0,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          16,
+          16,
+          16 + MediaQuery.paddingOf(context).bottom + 96,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Card principal con información de remesa (estilo dorado)
             Container(
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    const Color(0xFFFFD700).withOpacity(0.3),
-                    const Color(0xFFFFA500).withOpacity(0.2),
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                color: RemesaPuraUiTheme.fondoTarjeta,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: const Color(0xFFFFD700).withOpacity(0.8),
-                  width: 2,
+                  color: RemesaPuraUiTheme.borde,
+                  width: 1.5,
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFFFFD700).withOpacity(0.3),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
+                    color: Colors.black.withOpacity(0.2),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
                   ),
                 ],
               ),
@@ -1340,16 +1356,11 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                     Container(
                       padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            const Color(0xFFFFD700).withOpacity(0.4),
-                            const Color(0xFFFFA500).withOpacity(0.3),
-                          ],
-                        ),
+                        color: RemesaPuraUiTheme.fondoDestacado,
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: const Color(0xFFFFD700),
-                          width: 2,
+                          color: RemesaPuraUiTheme.borde.withOpacity(0.65),
+                          width: 1,
                         ),
                       ),
                       child: Column(
@@ -1359,7 +1370,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                             'Cantidad a Pagar',
                             style: TextStyle(
                               fontSize: 14,
-                              color: Color(0xFF666666),
+                              color: AppColors.darkTextMuted,
                               fontWeight: FontWeight.w500,
                             ),
                           ),
@@ -1368,7 +1379,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                             '\$${cantidadRemesa.toStringAsFixed(2)}',
                             style: const TextStyle(
                               fontSize: 36,
-                              color: Color(0xFF1A1A1A),
+                              color: RemesaPuraUiTheme.acento,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
@@ -1410,18 +1421,11 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      const Color(0xFFFFD700).withOpacity(0.2),
-                      const Color(0xFFFFA500).withOpacity(0.15),
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
+                  color: RemesaPuraUiTheme.fondoTarjeta,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(
-                    color: const Color(0xFFFFD700).withOpacity(0.4),
-                    width: 1.5,
+                    color: AppColors.darkBorder,
+                    width: 0.5,
                   ),
                 ),
                 child: Column(
@@ -1429,14 +1433,18 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                   children: [
                     const Row(
                       children: [
-                        Icon(Icons.contact_phone, color: Color(0xFFFFD700), size: 20),
+                        Icon(
+                          Icons.contact_phone,
+                          color: RemesaPuraUiTheme.acento,
+                          size: 20,
+                        ),
                         SizedBox(width: 8),
                         Text(
                           'Contacto del Destinatario',
                           style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
-                            color: Color(0xFF1A1A1A),
+                            color: AppColors.darkText,
                           ),
                         ),
                       ],
@@ -1455,7 +1463,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                                 'Dirección de Entrega',
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: Color(0xFF666666),
+                                  color: AppColors.darkTextMuted,
                                   fontWeight: FontWeight.w500,
                                 ),
                               ),
@@ -1464,7 +1472,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                                 _formatearDireccionCompletaRemesa(),
                                 style: const TextStyle(
                                   fontSize: 14,
-                                  color: Color(0xFF1A1A1A),
+                                  color: AppColors.darkText,
                                   fontWeight: FontWeight.w600,
                                   height: 1.4,
                                 ),
@@ -1504,7 +1512,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                                   'Teléfono del Destinatario',
                                   style: TextStyle(
                                     fontSize: 12,
-                                    color: Color(0xFF666666),
+                                    color: AppColors.darkTextMuted,
                                     fontWeight: FontWeight.w500,
                                   ),
                                 ),
@@ -1512,7 +1520,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                                   _ordenActual.telefonoDestinatario!,
                                   style: const TextStyle(
                                     fontSize: 16,
-                                    color: Color(0xFF1A1A1A),
+                                    color: AppColors.darkText,
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
@@ -1577,9 +1585,11 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFF8E1),
+                  color: RemesaPuraUiTheme.fondoDestacado,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFFFD700).withOpacity(0.6)),
+                  border: Border.all(
+                    color: RemesaPuraUiTheme.borde.withOpacity(0.45),
+                  ),
                 ),
                 child: Text(
                   _ordenActual.recogerEnSucursal
@@ -1587,7 +1597,11 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                           ? 'Completa la entrega al destinatario (número de remesa e identificación). Sin firma ni foto.'
                           : 'En sucursal: puedes dejarla para que la entregue la sucursal, o entregarla tú al destinatario si está contigo. Sin firma ni foto.')
                       : 'Esta remesa no requiere firma ni foto. Confirma el número de remesa y la identificación del destinatario.',
-                  style: const TextStyle(fontSize: 12, color: Color(0xFF5D4037), height: 1.35),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.darkTextMuted,
+                    height: 1.35,
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
@@ -1612,8 +1626,8 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               VolonexActionButton(
                 label: 'Marcar Remesa como Entregada',
                 icon: Icons.check_circle,
-                backgroundColor: const Color(0xFFFFD700),
-                foregroundColor: const Color(0xFF1A1A1A),
+                backgroundColor: RemesaPuraUiTheme.acentoFuerte,
+                foregroundColor: AppColors.onAccentButton,
                 onPressed: () => _marcarRemesaDetalleComoEntregada(entregarADestinatario: true),
               ),
             ] else if (estado == 'ENTREGADO EN SUCURSAL') ...[
@@ -1637,7 +1651,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, color: const Color(0xFF666666), size: 20),
+        Icon(icon, color: RemesaPuraUiTheme.acento.withOpacity(0.9), size: 20),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -1647,7 +1661,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                 label,
                 style: const TextStyle(
                   fontSize: 12,
-                  color: Color(0xFF666666),
+                  color: AppColors.darkTextMuted,
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -1656,7 +1670,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                 value,
                 style: const TextStyle(
                   fontSize: 16,
-                  color: Color(0xFF1A1A1A),
+                  color: AppColors.darkText,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -1707,35 +1721,20 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
   }
   
   String _formatearDireccionCompletaRemesa() {
-    final List<String> partes = [];
-    if (_ordenActual.direccionDestino.isNotEmpty) {
-      partes.add(_ordenActual.direccionDestino);
-    }
-    if (_ordenActual.municipioDestino != null && _ordenActual.municipioDestino!.isNotEmpty) {
-      partes.add(_ordenActual.municipioDestino!);
-    }
-    if (_ordenActual.provinciaDestino != null && _ordenActual.provinciaDestino!.isNotEmpty) {
-      partes.add(_ordenActual.provinciaDestino!);
-    }
-    return partes.isEmpty ? 'Dirección no especificada' : partes.join(', ');
+    return DireccionNavegacionService.resolver(
+      orden: _ordenActual,
+      sucursal: _sucursalInfo,
+    ).direccionCompleta;
   }
   
   String _formatearDireccionSucursalRemesa() {
-    if (_sucursalInfo == null) return 'Dirección no especificada';
-    final List<String> partes = [];
-    if (_sucursalInfo!['direccion'] != null && _sucursalInfo!['direccion'].toString().isNotEmpty) {
-      partes.add(_sucursalInfo!['direccion'].toString());
+    if (_sucursalInfo == null) {
+      return DireccionNavegacionService.resolver(orden: _ordenActual).direccionCompleta;
     }
-    if (_sucursalInfo!['municipio'] != null && _sucursalInfo!['municipio'].toString().isNotEmpty) {
-      partes.add(_sucursalInfo!['municipio'].toString());
-    }
-    if (_sucursalInfo!['provincia'] != null && _sucursalInfo!['provincia'].toString().isNotEmpty) {
-      partes.add(_sucursalInfo!['provincia'].toString());
-    }
-    if (_sucursalInfo!['pais'] != null && _sucursalInfo!['pais'].toString().isNotEmpty) {
-      partes.add(_sucursalInfo!['pais'].toString());
-    }
-    return partes.isEmpty ? 'Dirección no especificada' : partes.join(', ');
+    return DireccionNavegacionService.resolver(
+      orden: _ordenActual,
+      sucursal: _sucursalInfo,
+    ).direccionCompleta;
   }
   
   /// [soloDejarEnSucursal]: deja la remesa en la sucursal (estado intermedio).
@@ -2186,7 +2185,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF2C2C2C),
+                  color: AppColors.textOnLight,
                 ),
               ),
             ),
@@ -2214,7 +2213,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                     'Número de Remesa',
                     style: TextStyle(
                       fontSize: 12,
-                      color: Color(0xFF666666),
+                      color: AppColors.textMutedOnLight,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -2237,7 +2236,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
               ),
             ),
             const SizedBox(height: 12),
@@ -2245,7 +2244,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               '1. Pregunta al destinatario por el número de remesa: #$numeroRemesa',
               style: const TextStyle(
                 fontSize: 14,
-                color: Color(0xFF666666),
+                color: AppColors.textMutedOnLight,
                 height: 1.5,
               ),
             ),
@@ -2254,7 +2253,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               '2. Verifica el ID/carné de identidad del destinatario',
               style: const TextStyle(
                 fontSize: 14,
-                color: Color(0xFF666666),
+                color: AppColors.textMutedOnLight,
                 height: 1.5,
               ),
             ),
@@ -2263,7 +2262,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               '   Nombre completo: $nombreDestinatario',
               style: const TextStyle(
                 fontSize: 13,
-                color: Color(0xFF999999),
+                color: AppColors.textMutedOnLight,
                 fontStyle: FontStyle.italic,
                 height: 1.4,
               ),
@@ -2273,7 +2272,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               '3. Confirma que el nombre y apellido del ID coinciden con el destinatario de la remesa',
               style: TextStyle(
                 fontSize: 14,
-                color: Color(0xFF666666),
+                color: AppColors.textMutedOnLight,
                 height: 1.5,
               ),
             ),
@@ -2282,7 +2281,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
+            child: const Text('Cancelar', style: TextStyle(color: AppColors.textMutedOnLight)),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
@@ -2322,7 +2321,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               'Por favor, verifica que el cliente conoce el número de remesa:',
               style: TextStyle(
                 fontSize: 15,
-                color: Color(0xFF333333),
+                color: AppColors.textOnLight,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -2341,7 +2340,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                     'Número de Remesa:',
                     style: TextStyle(
                       fontSize: 13,
-                      color: Color(0xFF666666),
+                      color: AppColors.textMutedOnLight,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -2389,9 +2388,9 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF666666),
+              foregroundColor: AppColors.textMutedOnLight,
             ),
-            child: const Text('Cancelar'),
+            child: const Text('Cancelar', style: TextStyle(color: AppColors.textMutedOnLight)),
           ),
           ElevatedButton(
             onPressed: () {
@@ -2451,7 +2450,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               'Verifica el ID/carné de identidad del destinatario:',
               style: TextStyle(
                 fontSize: 14,
-                color: Color(0xFF666666),
+                color: AppColors.textMutedOnLight,
               ),
             ),
             const SizedBox(height: 12),
@@ -2469,7 +2468,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                     'Nombre esperado:',
                     style: TextStyle(
                       fontSize: 12,
-                      color: Color(0xFF666666),
+                      color: AppColors.textMutedOnLight,
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -2510,7 +2509,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                       'Confirma que el nombre y apellido coinciden exactamente con el destinatario',
                       style: TextStyle(
                         fontSize: 12,
-                        color: Color(0xFF666666),
+                        color: AppColors.textMutedOnLight,
                       ),
                     ),
                   ),
@@ -2522,7 +2521,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
+            child: const Text('Cancelar', style: TextStyle(color: AppColors.textMutedOnLight)),
           ),
           ElevatedButton(
             onPressed: () {
@@ -2584,7 +2583,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
-                      color: const Color(0xFF2C2C2C),
+                      color: AppColors.textOnLight,
                     ),
                   ),
                 ),
@@ -2593,19 +2592,19 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             const SizedBox(height: 8),
             Text(
               OrdenRecogidaColaboradorUi.mensajeInfoTarjeta(_ordenActual),
-              style: const TextStyle(fontSize: 13, color: Color(0xFF666666)),
+              style: const TextStyle(fontSize: 13, color: AppColors.textMutedOnLight),
             ),
             if (nombre != null && nombre.isNotEmpty) ...[
               const SizedBox(height: 12),
-              _buildInfoRow(Icons.badge_outlined, 'Nombre', nombre),
+              _buildInfoRow(Icons.badge_outlined, 'Nombre', nombre, onLightSurface: true),
             ],
             if (tel != null && tel.isNotEmpty) ...[
               const SizedBox(height: 8),
-              _buildInfoRow(Icons.phone, 'Teléfono', tel),
+              _buildInfoRow(Icons.phone, 'Teléfono', tel, onLightSurface: true),
             ],
             if (email != null && email.isNotEmpty) ...[
               const SizedBox(height: 8),
-              _buildInfoRow(Icons.email_outlined, 'Correo', email),
+              _buildInfoRow(Icons.email_outlined, 'Correo', email, onLightSurface: true),
             ],
           ],
         ),
@@ -2615,9 +2614,12 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
 
   Widget _buildInfoCard() {
     return Card(
-      elevation: 3,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 2,
+      color: AppColors.darkSurface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppColors.darkBorder, width: 0.5),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -2632,7 +2634,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
-                      color: Color(0xFF2C2C2C),
+                      color: AppColors.darkText,
                     ),
                   ),
                 ),
@@ -2701,9 +2703,12 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     print('   - provinciaDestino: ${_ordenActual.provinciaDestino}');
     
     return Card(
-      elevation: 3,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 2,
+      color: AppColors.darkSurface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppColors.darkBorder, width: 0.5),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -2714,7 +2719,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               style: const TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF2C2C2C),
+                color: AppColors.darkText,
               ),
             ),
             const SizedBox(height: 16),
@@ -2740,7 +2745,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                         esRecogida ? 'Dirección de Recogida' : 'Dirección de Entrega',
                         style: const TextStyle(
                           fontSize: 12,
-                          color: Color(0xFF666666),
+                          color: AppColors.darkTextMuted,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -2750,7 +2755,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                         _formatearDireccionCompleta(),
                         style: const TextStyle(
                           fontSize: 16,
-                          color: Color(0xFF2C2C2C),
+                          color: AppColors.darkText,
                           fontWeight: FontWeight.w600,
                           height: 1.4,
                         ),
@@ -2858,6 +2863,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                               _ordenActual.direccionDestino.isNotEmpty
                                   ? _ordenActual.direccionDestino
                                   : 'Dirección no disponible',
+                              onLightSurface: true,
                             ),
                             if (_ordenActual.municipioDestino != null && _ordenActual.municipioDestino!.isNotEmpty) ...[
                               const SizedBox(height: 8),
@@ -2865,6 +2871,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                                 Icons.location_city,
                                 'Municipio',
                                 _ordenActual.municipioDestino!,
+                                onLightSurface: true,
                               ),
                             ],
                             if (_ordenActual.provinciaDestino != null && _ordenActual.provinciaDestino!.isNotEmpty) ...[
@@ -2873,6 +2880,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                                 Icons.map,
                                 'Provincia',
                                 _ordenActual.provinciaDestino!,
+                                onLightSurface: true,
                               ),
                             ],
                             const SizedBox(height: 12),
@@ -2961,12 +2969,14 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                       Icons.store,
                       'Sucursal',
                       _sucursalInfo!['nombre'] ?? 'Sin nombre',
+                      onLightSurface: true,
                     ),
                     const SizedBox(height: 8),
                     _buildInfoRow(
                       Icons.location_on,
                       'Dirección de Recogida',
                       _formatearDireccionSucursal(_sucursalInfo!),
+                      onLightSurface: true,
                     ),
                     if (_sucursalInfo!['es_principal'] == true) ...[
                       const SizedBox(height: 8),
@@ -3013,7 +3023,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                           esRecogida ? 'Teléfono del Cliente' : 'Teléfono del Destinatario',
                           style: const TextStyle(
                             fontSize: 12,
-                            color: Color(0xFF666666),
+                            color: AppColors.darkTextMuted,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
@@ -3021,7 +3031,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                           _ordenActual.telefonoDestinatario!,
                           style: const TextStyle(
                             fontSize: 16,
-                            color: Color(0xFF2C2C2C),
+                            color: AppColors.darkText,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -3077,13 +3087,13 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             ] else ...[
               const Row(
                 children: [
-                  Icon(Icons.phone_disabled, color: Color(0xFF999999), size: 20),
+                  Icon(Icons.phone_disabled, color: AppColors.darkTextMuted, size: 20),
                   SizedBox(width: 12),
                   Text(
                     'No hay teléfono disponible',
                     style: TextStyle(
                       fontSize: 14,
-                      color: Color(0xFF999999),
+                      color: AppColors.darkTextMuted,
                     ),
                   ),
                 ],
@@ -3097,9 +3107,12 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
 
   Widget _buildDeliveryCard() {
     return Card(
-      elevation: 3,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 2,
+      color: AppColors.darkSurface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppColors.darkBorder, width: 0.5),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -3110,7 +3123,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF2C2C2C),
+                color: AppColors.darkText,
               ),
             ),
             const SizedBox(height: 16),
@@ -3169,9 +3182,12 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
 
   Widget _buildPaymentCard() {
     return Card(
-      elevation: 3,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 2,
+      color: AppColors.darkSurface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppColors.darkBorder, width: 0.5),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -3182,7 +3198,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF2C2C2C),
+                color: AppColors.darkText,
               ),
             ),
             const SizedBox(height: 16),
@@ -3205,7 +3221,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                         'Monto a Cobrar',
                         style: TextStyle(
                           fontSize: 12,
-                          color: Color(0xFF666666),
+                          color: AppColors.darkTextMuted,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -3232,9 +3248,12 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     final cantidadRemesa = _ordenActual.cantidadRemesa ?? 0.0;
     
     return Card(
-      elevation: 3,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 2,
+      color: AppColors.darkSurface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppColors.darkBorder, width: 0.5),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -3245,7 +3264,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF2C2C2C),
+                color: AppColors.darkText,
               ),
             ),
             const SizedBox(height: 16),
@@ -3268,7 +3287,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                         'Remesa a Entregar',
                         style: TextStyle(
                           fontSize: 12,
-                          color: Color(0xFF666666),
+                          color: AppColors.darkTextMuted,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -3302,7 +3321,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                       'Debes entregar esta remesa al cliente al momento de la entrega',
                       style: TextStyle(
                         fontSize: 12,
-                        color: Color(0xFF666666),
+                        color: AppColors.darkTextMuted,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -3318,9 +3337,12 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
 
   Widget _buildStatusHistoryCard() {
     return Card(
-      elevation: 3,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 2,
+      color: AppColors.darkSurface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppColors.darkBorder, width: 0.5),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -3331,7 +3353,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF2C2C2C),
+                color: AppColors.darkText,
               ),
             ),
             const SizedBox(height: 16),
@@ -3403,7 +3425,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             '4. La orden quedará disponible en la sucursal para que el cliente la recoja.',
             style: const TextStyle(
               fontSize: 13,
-              color: Color(0xFF2C2C2C),
+              color: AppColors.darkText,
               height: 1.6,
             ),
           ),
@@ -3448,7 +3470,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               width: 24,
               height: 24,
               decoration: BoxDecoration(
-                color: isCompleted ? const Color(0xFF4CAF50) : Colors.grey[300],
+                color: isCompleted ? const Color(0xFF4CAF50) : AppColors.darkBorder,
                 shape: BoxShape.circle,
                 border: isCurrent ? Border.all(color: const Color(0xFF1976D2), width: 3) : null,
               ),
@@ -3466,7 +3488,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                      color: isCompleted ? const Color(0xFF2C2C2C) : Colors.grey[600],
+                      color: isCompleted ? AppColors.darkText : AppColors.darkTextMuted,
                     ),
                   ),
                   if (isCurrent)
@@ -3488,9 +3510,12 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
 
   Widget _buildActionButtons() {
     return Card(
-      elevation: 3,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 2,
+      color: AppColors.darkSurface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppColors.darkBorder, width: 0.5),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -3501,7 +3526,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF2C2C2C),
+                color: AppColors.darkText,
               ),
             ),
             const SizedBox(height: 16),
@@ -3519,37 +3544,27 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
 
   /// Formatea la dirección completa incluyendo calle, municipio, provincia, etc.
   String _formatearDireccionCompleta() {
-    final List<String> partes = [];
-    
-    // 1. Dirección principal (calle)
-    if (_ordenActual.direccionDestino.isNotEmpty) {
-      partes.add(_ordenActual.direccionDestino);
-    }
-    
-    // 2. Municipio
-    if (_ordenActual.municipioDestino != null && _ordenActual.municipioDestino!.isNotEmpty) {
-      partes.add(_ordenActual.municipioDestino!);
-    }
-    
-    // 3. Provincia
-    if (_ordenActual.provinciaDestino != null && _ordenActual.provinciaDestino!.isNotEmpty) {
-      partes.add(_ordenActual.provinciaDestino!);
-    }
-    
-    // Si no hay ninguna parte, mostrar mensaje
-    if (partes.isEmpty) {
-      return 'Dirección no especificada';
-    }
-    
-    // Unir todas las partes con comas
-    return partes.join(', ');
+    return DireccionNavegacionService.resolver(
+      orden: _ordenActual,
+      sucursal: _sucursalInfo,
+    ).direccionCompleta;
   }
 
-  Widget _buildInfoRow(IconData icon, String label, String value) {
+  Widget _buildInfoRow(
+    IconData icon,
+    String label,
+    String value, {
+    bool onLightSurface = false,
+  }) {
+    final labelColor =
+        onLightSurface ? AppColors.textMutedOnLight : AppColors.darkTextMuted;
+    final valueColor = onLightSurface ? AppColors.textOnLight : AppColors.darkText;
+    final iconColor =
+        onLightSurface ? AppColors.textMutedOnLight : AppColors.darkTextMuted;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, color: const Color(0xFF666666), size: 20),
+        Icon(icon, color: iconColor, size: 20),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -3557,18 +3572,18 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             children: [
               Text(
                 label,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
-                  color: Color(0xFF666666),
+                  color: labelColor,
                   fontWeight: FontWeight.w500,
                 ),
               ),
               const SizedBox(height: 2),
               Text(
                 value,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
-                  color: Color(0xFF2C2C2C),
+                  color: valueColor,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -3629,7 +3644,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
         icon = Icons.cancel;
         break;
       default:
-        color = const Color(0xFF666666);
+        color = AppColors.darkTextMuted;
         icon = Icons.help;
     }
     
@@ -3756,75 +3771,30 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
   }
 
   void _abrirGPSConDireccion() async {
-    // ✅ FIX: Construir dirección LIMPIA sin datos codificados innecesarios
-    final List<String> partesDireccion = [];
-    
-    // Agregar dirección principal
-    if (_ordenActual.direccionDestino.isNotEmpty) {
-      partesDireccion.add(_ordenActual.direccionDestino);
+    final pais = await _obtenerPaisOperacion();
+    final paisOk = pais != null && pais != 'N/A' ? pais : null;
+
+    final res = DireccionNavegacionService.resolver(
+      orden: _ordenActual,
+      sucursal: _sucursalInfo,
+      paisOperacion: paisOk,
+    );
+
+    final ok = await DireccionNavegacionService.abrirDestinoEnGoogleMaps(
+      orden: _ordenActual,
+      sucursal: _sucursalInfo,
+      paisOperacion: paisOk,
+      latitudFallback: _ordenActual.latitudEntrega,
+      longitudFallback: _ordenActual.longitudEntrega,
+    );
+
+    if (!ok) {
+      _mostrarMensaje(
+        res.esValida
+            ? 'No se pudo abrir Google Maps.\n\nDirección: ${res.direccionCompleta}'
+            : 'No hay dirección completa (calle, municipio, provincia y país) para navegar.',
+      );
     }
-    
-    // Agregar municipio si existe
-    if (_ordenActual.municipioDestino != null && 
-        _ordenActual.municipioDestino!.isNotEmpty &&
-        _ordenActual.municipioDestino != 'N/A') {
-      partesDireccion.add(_ordenActual.municipioDestino!);
-    }
-    
-    // Agregar provincia si existe
-    if (_ordenActual.provinciaDestino != null && 
-        _ordenActual.provinciaDestino!.isNotEmpty &&
-        _ordenActual.provinciaDestino != 'N/A') {
-      partesDireccion.add(_ordenActual.provinciaDestino!);
-    }
-    
-    // ✅ NO agregar país automáticamente - solo dirección limpia
-    
-    // Construir dirección completa
-    final direccionCompleta = partesDireccion.join(', ');
-    
-    if (direccionCompleta.isEmpty) {
-      _mostrarMensaje('No hay dirección disponible para abrir en el GPS');
-      return;
-    }
-    
-    print('🗺️ Abriendo GPS con dirección: $direccionCompleta');
-    
-    // ✅ Codificar SOLO para URL, no para mostrar al usuario
-    final direccionEncoded = Uri.encodeComponent(direccionCompleta);
-    
-    // Intentar abrir Google Maps (el más compatible)
-    try {
-      // Intentar Google Maps app primero (Android/iOS)
-      final Uri googleMapsApp = Uri.parse('comgooglemaps://?q=$direccionEncoded');
-      if (await canLaunchUrl(googleMapsApp)) {
-        await launchUrl(googleMapsApp, mode: LaunchMode.externalApplication);
-        return;
-      }
-    } catch (e) {
-      print('⚠️ Google Maps app no disponible, intentando web...');
-    }
-    
-    // Si no se pudo abrir la app, intentar la versión web
-    try {
-      final Uri googleMapsWeb = Uri.parse('https://www.google.com/maps/search/?api=1&query=$direccionEncoded');
-      await launchUrl(googleMapsWeb, mode: LaunchMode.externalApplication);
-      return;
-    } catch (e) {
-      print('⚠️ Error abriendo Google Maps web: $e');
-    }
-    
-    // Último intento: Android Maps genérico
-    try {
-      final Uri androidMaps = Uri.parse('geo:0,0?q=$direccionEncoded');
-      await launchUrl(androidMaps, mode: LaunchMode.externalApplication);
-      return;
-    } catch (e) {
-      print('⚠️ Error abriendo Android Maps: $e');
-    }
-    
-    // Si nada funciona, mostrar mensaje con la dirección limpia
-    _mostrarMensaje('No se pudo abrir el GPS.\n\nDirección: $direccionCompleta');
   }
 
   void _mostrarOpciones() {
@@ -3833,10 +3803,15 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
         decoration: const BoxDecoration(
-          color: Colors.white,
+          color: AppColors.darkSurface,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 40), // Más padding inferior
+        padding: EdgeInsets.fromLTRB(
+          20,
+          20,
+          20,
+          20 + MediaQuery.paddingOf(context).bottom + 16,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -3845,7 +3820,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.grey[300],
+                color: AppColors.darkBorder,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -3957,7 +3932,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             child: Text(
               OrdenRecogidaColaboradorUi.mensajeInfoTarjeta(_ordenActual),
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Color(0xFF666666), fontSize: 13),
+              style: const TextStyle(color: AppColors.darkTextMuted, fontSize: 13),
             ),
           );
         }
@@ -4150,7 +4125,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                   child: Text(
                     'Sin Conexión',
                     style: TextStyle(
-                      color: Color(0xFF2C2C2C),
+                      color: AppColors.textOnLight,
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
@@ -4166,7 +4141,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                   Text(
                     'No se pudo conectar con el servidor. Verifica tu conexión a internet.',
                     style: TextStyle(
-                      color: Color(0xFF666666),
+                      color: AppColors.textMutedOnLight,
                       fontSize: 14,
                     ),
                   ),
@@ -4174,7 +4149,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                   Text(
                     '¿Deseas continuar sin actualizar los datos?',
                     style: TextStyle(
-                      color: Color(0xFF2C2C2C),
+                      color: AppColors.textOnLight,
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                     ),
@@ -4187,7 +4162,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                 onPressed: () => Navigator.of(context).pop(false),
                 child: const Text(
                   'Cancelar',
-                  style: TextStyle(color: Color(0xFF666666)),
+                  style: TextStyle(color: AppColors.textMutedOnLight),
                 ),
               ),
               ElevatedButton(
@@ -4235,7 +4210,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                   child: Text(
                     'Error al Cargar',
                     style: TextStyle(
-                      color: Color(0xFF2C2C2C),
+                      color: AppColors.textOnLight,
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
@@ -4251,7 +4226,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                   const Text(
                     'No se pudieron cargar los datos actualizados de la orden.',
                     style: TextStyle(
-                      color: Color(0xFF666666),
+                      color: AppColors.textMutedOnLight,
                       fontSize: 14,
                     ),
                   ),
@@ -4259,7 +4234,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                   Text(
                     'Error: ${e.toString()}',
                     style: const TextStyle(
-                      color: Color(0xFF999999),
+                      color: AppColors.textMutedOnLight,
                       fontSize: 12,
                     ),
                   ),
@@ -4267,7 +4242,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                   const Text(
                     '¿Deseas continuar de todos modos?',
                     style: TextStyle(
-                      color: Color(0xFF2C2C2C),
+                      color: AppColors.textOnLight,
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                     ),
@@ -4280,7 +4255,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                 onPressed: () => Navigator.of(context).pop(false),
                 child: const Text(
                   'Cancelar',
-                  style: TextStyle(color: Color(0xFF666666)),
+                  style: TextStyle(color: AppColors.textMutedOnLight),
                 ),
               ),
               ElevatedButton(
@@ -5005,7 +4980,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             const Text(
               'Listo para recoger',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),
@@ -5015,7 +4990,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
         content: Text(
           'La orden está lista para que el destinatario ${_ordenActual.receptor} pase a recogerla en la sucursal. ¿Seguro?',
           style: const TextStyle(
-            color: Color(0xFF2C2C2C),
+            color: AppColors.textOnLight,
             fontSize: 15,
           ),
         ),
@@ -5024,7 +4999,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
             style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF666666),
+              foregroundColor: AppColors.textMutedOnLight,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             ),
             child: const Text(
@@ -5523,7 +5498,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             Text(
               'Confirmar Entrega de Remesa',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),
@@ -5537,7 +5512,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             const Text(
               '💰 Antes de continuar, verifica:',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
               ),
@@ -5557,7 +5532,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                   const Text(
                     'Cantidad de Remesa:',
                     style: TextStyle(
-                      color: Color(0xFF666666),
+                      color: AppColors.textMutedOnLight,
                       fontSize: 12,
                     ),
                   ),
@@ -5588,7 +5563,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                     child: Text(
                       '¿Entregaste la remesa correctamente al cliente?',
                       style: TextStyle(
-                        color: Color(0xFF2C2C2C),
+                        color: AppColors.textOnLight,
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),
@@ -5607,7 +5582,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                 child: OutlinedButton(
                   onPressed: () => Navigator.of(context).pop(false),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFF666666),
+                    foregroundColor: AppColors.textMutedOnLight,
                     side: const BorderSide(color: Color(0xFFE0E0E0), width: 1.5),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
@@ -5686,7 +5661,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             Text(
               'Confirmar Cobro',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),
@@ -5700,7 +5675,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             const Text(
               '💵 Antes de continuar, verifica:',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
               ),
@@ -5720,7 +5695,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                   const Text(
                     'Monto a Cobrar:',
                     style: TextStyle(
-                      color: Color(0xFF666666),
+                      color: AppColors.textMutedOnLight,
                       fontSize: 12,
                     ),
                   ),
@@ -5751,7 +5726,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                     child: Text(
                       '¿El cliente ya pagó este monto?',
                       style: TextStyle(
-                        color: Color(0xFF2C2C2C),
+                        color: AppColors.textOnLight,
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),
@@ -5770,7 +5745,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                 child: OutlinedButton(
                   onPressed: () => Navigator.of(context).pop(false),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFF666666),
+                    foregroundColor: AppColors.textMutedOnLight,
                     side: const BorderSide(color: Color(0xFFE0E0E0), width: 1.5),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
@@ -5923,7 +5898,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             Text(
               'Confirmar Cobro',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),
@@ -5937,7 +5912,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             const Text(
               '💵 Antes de continuar, verifica:',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
               ),
@@ -5957,7 +5932,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                   const Text(
                     'Monto a Cobrar:',
                     style: TextStyle(
-                      color: Color(0xFF666666),
+                      color: AppColors.textMutedOnLight,
                       fontSize: 12,
                     ),
                   ),
@@ -5988,7 +5963,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                     child: Text(
                       '¿El cliente ya pagó este monto?',
                       style: TextStyle(
-                        color: Color(0xFF2C2C2C),
+                        color: AppColors.textOnLight,
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),
@@ -6004,7 +5979,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             child: OutlinedButton(
               onPressed: () => Navigator.of(context).pop(false),
               style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF666666),
+                foregroundColor: AppColors.textMutedOnLight,
                 side: const BorderSide(color: Color(0xFFE0E0E0), width: 1.5),
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(
@@ -6359,7 +6334,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                       width: 40,
                       height: 4,
                       decoration: BoxDecoration(
-                        color: Colors.grey[300],
+                        color: AppColors.darkBorder,
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -6369,7 +6344,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFF2C2C2C),
+                        color: AppColors.darkText,
                       ),
                     ),
                     const SizedBox(height: 20),
@@ -6387,14 +6362,14 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF2C2C2C),
+                          color: AppColors.darkText,
                         ),
                       ),
                       subtitle: const Text(
                         'Usar la cámara para tomar una nueva foto',
                         style: TextStyle(
                           fontSize: 13,
-                          color: Color(0xFF666666),
+                          color: AppColors.darkTextMuted,
                         ),
                       ),
                       onTap: () => Navigator.pop(context, 'camara'),
@@ -6413,14 +6388,14 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF2C2C2C),
+                          color: AppColors.darkText,
                         ),
                       ),
                       subtitle: const Text(
                         'Seleccionar una foto de tu galería',
                         style: TextStyle(
                           fontSize: 13,
-                          color: Color(0xFF666666),
+                          color: AppColors.darkTextMuted,
                         ),
                       ),
                       onTap: () => Navigator.pop(context, 'galeria'),
@@ -6573,7 +6548,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             Text(
               'Verificar Bultos',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),
@@ -6587,7 +6562,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             const Text(
               '📦 Antes de marcar como entregada, verifica:',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
               ),
@@ -6607,7 +6582,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                   const Text(
                     'Cantidad de Bultos:',
                     style: TextStyle(
-                      color: Color(0xFF666666),
+                      color: AppColors.textMutedOnLight,
                       fontSize: 12,
                     ),
                   ),
@@ -6638,7 +6613,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                     child: Text(
                       '¿Entregaste todos los bultos correctamente?',
                       style: TextStyle(
-                        color: Color(0xFF2C2C2C),
+                        color: AppColors.textOnLight,
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),
@@ -6654,7 +6629,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             child: OutlinedButton(
               onPressed: () => Navigator.of(context).pop(false),
               style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF666666),
+                foregroundColor: AppColors.textMutedOnLight,
                 side: const BorderSide(color: Color(0xFFE0E0E0), width: 1.5),
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(
@@ -6945,7 +6920,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             const Text(
               '⚠️ Debes completar lo siguiente:',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
               ),
@@ -6991,7 +6966,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                         child: Text(
                           error.replaceAll(RegExp(r'[📦💰✍️📷]'), '').trim(),
                           style: const TextStyle(
-                            color: Color(0xFF2C2C2C),
+                            color: AppColors.textOnLight,
                             fontSize: 13,
                             height: 1.4,
                             fontWeight: FontWeight.w500,
@@ -7088,7 +7063,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                 child: OutlinedButton(
                   onPressed: () => Navigator.of(context).pop(),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFF666666),
+                    foregroundColor: AppColors.textMutedOnLight,
                     side: const BorderSide(color: Color(0xFFE0E0E0), width: 1.5),
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(
@@ -7436,8 +7411,9 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
       child: Container(
         constraints: const BoxConstraints(maxWidth: 400),
         decoration: BoxDecoration(
-          color: const Color(0xFFFFFFFF),
+          color: AppColors.darkSurface,
           borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: AppColors.darkBorder, width: 0.5),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -7447,7 +7423,7 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
               padding: const EdgeInsets.all(20),
               decoration: const BoxDecoration(
                 border: Border(
-                  bottom: BorderSide(color: Color(0xFFE0E0E0), width: 1),
+                  bottom: BorderSide(color: AppColors.darkBorder, width: 1),
                 ),
               ),
               child: Row(
@@ -7471,7 +7447,7 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFF2C2C2C),
+                        color: AppColors.darkText,
                       ),
                     ),
                   ),
@@ -7488,7 +7464,7 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
                     'Por favor, solicite al cliente que firme en el área de abajo:',
                     style: TextStyle(
                       fontSize: 14,
-                      color: Color(0xFF666666),
+                      color: AppColors.darkTextMuted,
                       height: 1.5,
                     ),
                     textAlign: TextAlign.center,
@@ -7499,7 +7475,7 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
                     width: double.infinity,
                     child: Container(
                       decoration: BoxDecoration(
-                        border: Border.all(color: const Color(0xFFE0E0E0), width: 2),
+                        border: Border.all(color: AppColors.darkBorder, width: 2),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: ClipRRect(
@@ -7508,7 +7484,7 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
                           controller: widget.signatureController,
                           height: 200,
                           width: double.infinity,
-                          backgroundColor: const Color(0xFFF5F5F5),
+                          backgroundColor: AppColors.darkElevated,
                         ),
                       ),
                     ),
@@ -7524,8 +7500,8 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
                         icon: const Icon(Icons.refresh, size: 18),
                         label: const Text('Limpiar'),
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF666666),
-                          side: const BorderSide(color: Color(0xFFE0E0E0), width: 1.5),
+                          foregroundColor: AppColors.darkText,
+                          side: const BorderSide(color: AppColors.darkBorder, width: 1.5),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(10),
                           ),
@@ -7552,11 +7528,13 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
               ),
             ),
             // Actions
-            Container(
-              padding: const EdgeInsets.all(20),
+            SafeArea(
+              top: false,
+              child: Container(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
               decoration: const BoxDecoration(
                 border: Border(
-                  top: BorderSide(color: Color(0xFFE0E0E0), width: 1),
+                  top: BorderSide(color: AppColors.darkBorder, width: 1),
                 ),
               ),
               child: Row(
@@ -7565,8 +7543,8 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
                     child: OutlinedButton(
                       onPressed: _isProcessing ? null : () => Navigator.of(context).pop(false),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF666666),
-                        side: const BorderSide(color: Color(0xFFE0E0E0), width: 1.5),
+                        foregroundColor: AppColors.darkText,
+                        side: const BorderSide(color: AppColors.darkBorder, width: 1.5),
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
@@ -7615,6 +7593,7 @@ class _FirmaDialogWidgetState extends State<_FirmaDialogWidget> {
                   ),
                 ],
               ),
+            ),
             ),
           ],
         ),

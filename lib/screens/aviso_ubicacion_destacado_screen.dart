@@ -31,7 +31,7 @@ class _AvisoUbicacionDestacadoScreenState extends State<AvisoUbicacionDestacadoS
         return false; // Bloquear el botón de atrás
       },
       child: Scaffold(
-        backgroundColor: AppColors.cardFondo,
+        backgroundColor: AppColors.darkBg,
         body: SafeArea(
           child: SingleChildScrollView(
           padding: const EdgeInsets.all(20.0),
@@ -61,7 +61,7 @@ class _AvisoUbicacionDestacadoScreenState extends State<AvisoUbicacionDestacadoS
                 style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF2C2C2C),
+                  color: AppColors.darkText,
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -72,7 +72,7 @@ class _AvisoUbicacionDestacadoScreenState extends State<AvisoUbicacionDestacadoS
                 'VolonexPro+ recopila datos de ubicación para habilitar el rastreo de entregas en tiempo real durante tu jornada laboral.',
                 style: TextStyle(
                   fontSize: 16,
-                  color: Color(0xFF666666),
+                  color: AppColors.darkTextMuted,
                   fontWeight: FontWeight.w500,
                 ),
                 textAlign: TextAlign.center,
@@ -83,7 +83,7 @@ class _AvisoUbicacionDestacadoScreenState extends State<AvisoUbicacionDestacadoS
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE8F5E9),
+                  color: AppColors.darkElevated,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(
                     color: const Color(0xFF4CAF50),
@@ -114,7 +114,7 @@ class _AvisoUbicacionDestacadoScreenState extends State<AvisoUbicacionDestacadoS
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
-                              color: Color(0xFF2C2C2C),
+                              color: AppColors.darkText,
                             ),
                           ),
                         ),
@@ -153,7 +153,7 @@ class _AvisoUbicacionDestacadoScreenState extends State<AvisoUbicacionDestacadoS
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF5F5F5),
+                  color: AppColors.darkSurface,
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Row(
@@ -161,7 +161,7 @@ class _AvisoUbicacionDestacadoScreenState extends State<AvisoUbicacionDestacadoS
                   children: [
                     Icon(
                       Icons.lock_outline,
-                      color: Color(0xFF666666),
+                      color: AppColors.darkTextMuted,
                       size: 18,
                     ),
                     SizedBox(width: 10),
@@ -170,7 +170,7 @@ class _AvisoUbicacionDestacadoScreenState extends State<AvisoUbicacionDestacadoS
                         'Los datos de ubicación se recopilan y transmiten únicamente durante tu jornada laboral activa y se comparten exclusivamente con tu agencia para gestionar las entregas.',
                         style: TextStyle(
                           fontSize: 13,
-                          color: Color(0xFF666666),
+                          color: AppColors.darkTextMuted,
                           height: 1.4,
                         ),
                       ),
@@ -326,7 +326,7 @@ class _AvisoUbicacionDestacadoScreenState extends State<AvisoUbicacionDestacadoS
                 'Al continuar, se te solicitará el permiso de ubicación del sistema. Este aviso cumple con los requisitos de Google Play para transparencia en el uso de datos.',
                 style: TextStyle(
                   fontSize: 12,
-                  color: Color(0xFF999999),
+                  color: AppColors.darkTextMuted,
                   fontStyle: FontStyle.italic,
                 ),
                 textAlign: TextAlign.center,
@@ -371,7 +371,7 @@ class _AvisoUbicacionDestacadoScreenState extends State<AvisoUbicacionDestacadoS
                 style: const TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF2C2C2C),
+                  color: AppColors.darkText,
                 ),
               ),
               const SizedBox(height: 3),
@@ -379,7 +379,7 @@ class _AvisoUbicacionDestacadoScreenState extends State<AvisoUbicacionDestacadoS
                 descripcion,
                 style: const TextStyle(
                   fontSize: 13,
-                  color: Color(0xFF666666),
+                  color: AppColors.darkTextMuted,
                   height: 1.3,
                 ),
               ),

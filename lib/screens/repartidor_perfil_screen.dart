@@ -15,10 +15,13 @@ import '../services/sesion_offline_cleanup.dart';
 import '../services/auth_error_handler.dart';
 import '../services/repartidor_notificaciones_push_service.dart';
 import '../services/repartidor_saldo_service.dart';
+import '../services/repartidor_saldo_offline_service.dart';
 import '../services/repartidor_solicitud_pago_service.dart';
 import '../widgets/repartidor_solicitud_pago_dialogs.dart';
 import '../services/repartidor_historial_pago_service.dart';
 import '../widgets/historial_pago_detalle_card.dart';
+import '../utils/repartidor_master_util.dart';
+import '../widgets/repartidor_master_badge.dart';
 
 class RepartidorPerfilScreen extends StatefulWidget {
   const RepartidorPerfilScreen({super.key});
@@ -50,6 +53,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   bool _cargandoHistorial = false;
   
   double _saldo = 0.0;
+  double _saldoServidor = 0.0;
+  double _saldoPendienteSync = 0.0;
   String _monedaSaldo = 'USD';
   String _metodoPago = 'por_orden';
   RepartidorSolicitudPreview? _previewPago;
@@ -60,12 +65,20 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   
   // Tipo de repartidor
   bool _esRecolector = false;
+  bool _esRepartidorMaster = false;
   
   final ImagePicker _picker = ImagePicker();
+  late final void Function() _refrescarSaldoTrasSync;
 
   @override
   void initState() {
     super.initState();
+    _refrescarSaldoTrasSync = () {
+      if (mounted && _repartidorId != null) {
+        _cargarSaldo();
+      }
+    };
+    SyncService().addSyncCompleteListener(_refrescarSaldoTrasSync);
     _inicializarEstadoConexion();
     _cargarDatosPerfil();
   }
@@ -95,7 +108,28 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     _telefonoController.dispose();
     _emailController.dispose();
     _channelPagos?.unsubscribe();
+    SyncService().removeSyncCompleteListener(_refrescarSaldoTrasSync);
     super.dispose();
+  }
+
+  void _aplicarSaldoCargado(RepartidorSaldoCargado r) {
+    _saldo = r.saldo;
+    _saldoServidor = r.saldoServidor;
+    _saldoPendienteSync = r.saldoPendienteSync;
+    _monedaSaldo = r.moneda;
+  }
+
+  Future<void> _persistirMasterFlag(bool esMaster) async {
+    final user = supabase.auth.currentUser;
+    if (user == null) return;
+    await RepartidorMasterUtil.saveCached(user.id, esMaster);
+    final cache = await RepartidorPerfilCacheService.getCachedPerfilData();
+    if (cache != null) {
+      await RepartidorPerfilCacheService.cachePerfilData({
+        ...cache,
+        'repartidor_master': esMaster,
+      });
+    }
   }
 
   Future<void> _cargarDatosPerfil() async {
@@ -131,6 +165,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
 
           final tipoRepartidor = response['tipo_repartidor'] as String? ?? 'REPARTIDOR';
           final esRecolector = tipoRepartidor == 'RECOLECTOR';
+          final esMaster = RepartidorMasterUtil.parseFlag(response['repartidor_master']);
+          await _persistirMasterFlag(esMaster);
 
           // Guardar en caché
           await RepartidorPerfilCacheService.cachePerfilData({
@@ -140,6 +176,10 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             'telefono': response['telefono'] ?? '',
             'email': response['email'] ?? '',
             'foto_perfil': response['foto_perfil'],
+            'repartidor_metodo_pago': response['repartidor_metodo_pago'],
+            'repartidor_tarifa': response['repartidor_tarifa'],
+            'repartidor_saldo_moneda': response['repartidor_saldo_moneda'],
+            'repartidor_master': esMaster,
           });
 
           setState(() {
@@ -150,6 +190,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             _emailController.text = response['email'] ?? '';
             _fotoPerfilUrl = response['foto_perfil'];
             _esRecolector = esRecolector;
+            _esRepartidorMaster = esMaster;
             _isLoading = false;
           });
 
@@ -172,6 +213,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
 
               final tipoRepartidor = response['tipo_repartidor'] as String? ?? 'REPARTIDOR';
               final esRecolector = tipoRepartidor == 'RECOLECTOR';
+              final esMaster = RepartidorMasterUtil.parseFlag(response['repartidor_master']);
+              await _persistirMasterFlag(esMaster);
 
               // Guardar en caché
               await RepartidorPerfilCacheService.cachePerfilData({
@@ -181,6 +224,10 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                 'telefono': response['telefono'] ?? '',
                 'email': response['email'] ?? '',
                 'foto_perfil': response['foto_perfil'],
+                'repartidor_metodo_pago': response['repartidor_metodo_pago'],
+                'repartidor_tarifa': response['repartidor_tarifa'],
+                'repartidor_saldo_moneda': response['repartidor_saldo_moneda'],
+                'repartidor_master': esMaster,
               });
 
               setState(() {
@@ -191,6 +238,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                 _emailController.text = response['email'] ?? '';
                 _fotoPerfilUrl = response['foto_perfil'];
                 _esRecolector = esRecolector;
+                _esRepartidorMaster = esMaster;
                 _isLoading = false;
               });
 
@@ -226,6 +274,12 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
       // Cargar datos del perfil
       final perfilCache = await RepartidorPerfilCacheService.getCachedPerfilData();
       if (perfilCache != null) {
+        var esMaster = RepartidorMasterUtil.parseFlag(perfilCache['repartidor_master']);
+        final user = supabase.auth.currentUser;
+        if (user != null) {
+          final cached = await RepartidorMasterUtil.loadCached(user.id);
+          if (cached != null) esMaster = cached;
+        }
         setState(() {
           _repartidorId = perfilCache['id']?.toString();
           _tenantId = perfilCache['tenant_id']?.toString();
@@ -233,9 +287,10 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           _telefonoController.text = perfilCache['telefono'] ?? '';
           _emailController.text = perfilCache['email'] ?? '';
           _fotoPerfilUrl = perfilCache['foto_perfil'];
+          _esRepartidorMaster = esMaster;
           _isLoading = false;
         });
-        print('💾 Datos de perfil cargados desde caché');
+        print('💾 Datos de perfil cargados desde caché (master=$esMaster)');
       } else {
         setState(() {
           _isLoading = false;
@@ -299,12 +354,38 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   Future<void> _cargarSaldoDesdeCache() async {
     try {
       final saldoCache = await RepartidorPerfilCacheService.getCachedSaldo();
+      final pendienteCola =
+          await RepartidorSaldoOfflineService.totalPendienteEnCola();
       if (saldoCache != null) {
+        final raw = saldoCache['saldo'];
+        final saldoServidor =
+            raw is num ? raw.toDouble() : double.tryParse('$raw') ?? 0.0;
+        final solicitudPendiente = saldoCache['solicitud_pendiente'] == true;
+        final moneda = saldoCache['moneda']?.toString() ?? 'USD';
         setState(() {
-          _saldo = (saldoCache['saldo'] ?? 0.0).toDouble();
-          _monedaSaldo = saldoCache['moneda'] ?? 'CUP';
+          _aplicarSaldoCargado((
+            saldo: RepartidorSaldoOfflineService.combinarSaldoVisible(
+              saldoServidor: saldoServidor,
+              pendienteEnCola: pendienteCola,
+              solicitudPendiente: solicitudPendiente,
+            ),
+            saldoServidor: saldoServidor,
+            saldoPendienteSync: pendienteCola,
+            moneda: moneda,
+            solicitudPendiente: solicitudPendiente,
+          ));
         });
-        print('💾 Saldo cargado desde caché: \$${_saldo.toStringAsFixed(2)} $_monedaSaldo');
+        print(
+          '💾 Saldo caché: \$${saldoServidor.toStringAsFixed(2)} '
+          '+ pendiente cola \$${pendienteCola.toStringAsFixed(2)} = '
+          '\$${_saldo.toStringAsFixed(2)} $moneda',
+        );
+      } else if (pendienteCola > 0) {
+        setState(() {
+          _saldo = pendienteCola;
+          _saldoServidor = 0;
+          _saldoPendienteSync = pendienteCola;
+        });
       }
     } catch (e) {
       print('❌ Error cargando saldo desde caché: $e');
@@ -623,7 +704,14 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           : Stack(
               children: [
                 SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    16,
+                    16,
+                    16 +
+                        MediaQuery.paddingOf(context).bottom +
+                        (_isEditing ? 120 : 100),
+                  ),
                   child: Form(
                     key: _formKey,
                     child: Column(
@@ -721,7 +809,9 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               border: Border.all(
-                color: const Color(0xFF4CAF50),
+                color: _esRepartidorMaster
+                    ? AppColors.botonPrincipal
+                    : const Color(0xFF4CAF50),
                 width: 3,
               ),
               boxShadow: [
@@ -747,6 +837,16 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                   : null,
             ),
           ),
+          if (_esRepartidorMaster)
+            const Positioned(
+              right: 4,
+              top: 4,
+              child: RepartidorMasterBadgeOverlay(
+                size: 20,
+                iconSize: 11,
+                borderColor: AppColors.darkBg,
+              ),
+            ),
           if (_isEditing)
             Positioned(
               bottom: 0,
@@ -771,9 +871,43 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         ],
       ),
         ),
+        if (_esRepartidorMaster) ...[
+          const SizedBox(height: 10),
+          _buildInsigniaMasterChip(),
+        ],
         const SizedBox(height: 12),
         _buildResumenPagoChip(),
       ],
+    );
+  }
+
+  Widget _buildInsigniaMasterChip() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: AppColors.botonPrincipal.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: AppColors.botonPrincipal.withOpacity(0.45),
+          width: 0.5,
+        ),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          RepartidorMasterBadgeOverlay(size: 16, iconSize: 10),
+          SizedBox(width: 6),
+          Text(
+            'Repartidor Master',
+            style: TextStyle(
+              color: Color(0xFFFFCC80),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -877,7 +1011,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             label,
             style: const TextStyle(
               fontSize: 14,
-              color: Color(0xFF666666),
+              color: AppColors.darkTextMuted,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -973,7 +1107,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             enabled: false,
             decoration: InputDecoration(
               labelText: 'Email',
-              prefixIcon: const Icon(Icons.email, color: Color(0xFF666666)),
+              prefixIcon: const Icon(Icons.email, color: AppColors.darkTextMuted),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
               ),
@@ -992,22 +1126,25 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     return Row(
       children: [
         Expanded(
-          child: ElevatedButton(
+          child: OutlinedButton(
             onPressed: () {
               setState(() {
                 _isEditing = false;
-                _cargarDatosPerfil(); // Recargar datos originales
+                _cargarDatosPerfil();
               });
             },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF666666),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 12),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.darkText,
+              side: const BorderSide(color: AppColors.darkBorder, width: 1.5),
+              padding: const EdgeInsets.symmetric(vertical: 14),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
               ),
             ),
-            child: const Text('Cancelar'),
+            child: const Text(
+              'Cancelar',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
           ),
         ),
         const SizedBox(width: 16),
@@ -1015,14 +1152,21 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           child: ElevatedButton(
             onPressed: _guardarCambios,
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4CAF50),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 12),
+              backgroundColor: AppColors.exito,
+              foregroundColor: AppColors.onAccentButton,
+              padding: const EdgeInsets.symmetric(vertical: 14),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
               ),
             ),
-            child: const Text('Guardar'),
+            child: const Text(
+              'Guardar',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: AppColors.onAccentButton,
+              ),
+            ),
           ),
         ),
       ],
@@ -1044,8 +1188,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           ),
         ),
         style: OutlinedButton.styleFrom(
-          foregroundColor: const Color(0xFF37474F),
-          side: const BorderSide(color: Color(0xFF37474F), width: 1.5),
+          foregroundColor: AppColors.botonPrincipal,
+          side: const BorderSide(color: AppColors.botonPrincipal, width: 1.5),
           padding: const EdgeInsets.symmetric(vertical: 14),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
@@ -1103,13 +1247,13 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           ),
           title: const Row(
             children: [
-              Icon(Icons.lock, color: Color(0xFF37474F), size: 24),
+              Icon(Icons.lock, color: AppColors.botonPrincipal, size: 24),
               SizedBox(width: 12),
               Expanded(
                 child: Text(
                   'Cambiar Contraseña',
                   style: TextStyle(
-                    color: AppColors.darkText,
+                    color: AppColors.textOnLight,
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
                   ),
@@ -1130,11 +1274,11 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                     obscureText: !_mostrandoContrasena,
                     decoration: InputDecoration(
                       labelText: 'Contraseña Actual',
-                      prefixIcon: const Icon(Icons.lock_outline, color: Color(0xFF37474F)),
+                      prefixIcon: const Icon(Icons.lock_outline, color: AppColors.botonPrincipal),
                       suffixIcon: IconButton(
                         icon: Icon(
                           _mostrandoContrasena ? Icons.visibility : Icons.visibility_off,
-                          color: const Color(0xFF666666),
+                          color: AppColors.textMutedOnLight,
                         ),
                         onPressed: () {
                           setStateDialog(() {
@@ -1151,7 +1295,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Color(0xFF37474F)),
+                        borderSide: const BorderSide(color: AppColors.botonPrincipal),
                       ),
                     ),
                     validator: (value) {
@@ -1169,11 +1313,11 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                     obscureText: !_mostrandoNuevaContrasena,
                     decoration: InputDecoration(
                       labelText: 'Nueva Contraseña',
-                      prefixIcon: const Icon(Icons.lock, color: Color(0xFF37474F)),
+                      prefixIcon: const Icon(Icons.lock, color: AppColors.botonPrincipal),
                       suffixIcon: IconButton(
                         icon: Icon(
                           _mostrandoNuevaContrasena ? Icons.visibility : Icons.visibility_off,
-                          color: const Color(0xFF666666),
+                          color: AppColors.textMutedOnLight,
                         ),
                         onPressed: () {
                           setStateDialog(() {
@@ -1190,7 +1334,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Color(0xFF37474F)),
+                        borderSide: const BorderSide(color: AppColors.botonPrincipal),
                       ),
                     ),
                     validator: (value) {
@@ -1211,11 +1355,11 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                     obscureText: !_mostrandoConfirmarContrasena,
                     decoration: InputDecoration(
                       labelText: 'Confirmar Nueva Contraseña',
-                      prefixIcon: const Icon(Icons.lock_reset, color: Color(0xFF37474F)),
+                      prefixIcon: const Icon(Icons.lock_reset, color: AppColors.botonPrincipal),
                       suffixIcon: IconButton(
                         icon: Icon(
                           _mostrandoConfirmarContrasena ? Icons.visibility : Icons.visibility_off,
-                          color: const Color(0xFF666666),
+                          color: AppColors.textMutedOnLight,
                         ),
                         onPressed: () {
                           setStateDialog(() {
@@ -1232,7 +1376,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Color(0xFF37474F)),
+                        borderSide: const BorderSide(color: AppColors.botonPrincipal),
                       ),
                     ),
                     validator: (value) {
@@ -1255,7 +1399,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                 Navigator.of(context).pop();
               },
               style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF666666),
+                foregroundColor: AppColors.textMutedOnLight,
                 side: const BorderSide(color: Color(0xFFE0E0E0), width: 1.5),
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 shape: RoundedRectangleBorder(
@@ -1342,7 +1486,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                 }
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF37474F),
+                backgroundColor: AppColors.botonPrincipal,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 shape: RoundedRectangleBorder(
@@ -1388,7 +1532,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             Text(
               'Cerrar Sesión',
               style: TextStyle(
-                color: AppColors.darkText,
+                color: AppColors.textOnLight,
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),
@@ -1398,7 +1542,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         content: const Text(
           '¿Estás seguro de que quieres cerrar sesión?',
           style: TextStyle(
-            color: Color(0xFF666666),
+            color: AppColors.textMutedOnLight,
             fontSize: 14,
           ),
         ),
@@ -1408,7 +1552,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             child: const Text(
               'Cancelar',
               style: TextStyle(
-                color: Color(0xFF666666),
+                color: AppColors.textMutedOnLight,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -1531,6 +1675,10 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
       color = const Color(0xFFFF9800);
     } else {
       texto = 'Saldo ${_saldo.toStringAsFixed(2)} $_monedaSaldo';
+      if (_saldoPendienteSync > 0) {
+        texto +=
+            ' (+${_saldoPendienteSync.toStringAsFixed(2)} por sincronizar)';
+      }
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -1552,11 +1700,20 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     try {
       final p = await RepartidorSolicitudPagoService.cargarPreview(_repartidorId!);
       if (!mounted || p == null) return;
+      final pendienteCola = p.esPorOrden
+          ? await RepartidorSaldoOfflineService.totalPendienteEnCola()
+          : 0.0;
       setState(() {
         _previewPago = p;
         _metodoPago = p.metodoPago;
         if (p.esPorOrden) {
-          _saldo = p.saldoAcumulado;
+          _saldoServidor = p.saldoAcumulado;
+          _saldoPendienteSync = pendienteCola;
+          _saldo = RepartidorSaldoOfflineService.combinarSaldoVisible(
+            saldoServidor: p.saldoAcumulado,
+            pendienteEnCola: pendienteCola,
+            solicitudPendiente: false,
+          );
           _monedaSaldo = p.moneda;
         }
       });
@@ -1735,14 +1892,21 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     }
 
     final ordenesIds = await _obtenerOrdenesIdsParaSolicitud();
-    if (_saldo <= 0 && ordenesIds.isEmpty) {
+    if (_saldoPendienteSync > 0) {
+      _mostrarMensaje(
+        'Hay entregas pendientes de sincronizar. Conéctate y espera a que se suban antes de solicitar el pago.',
+        Colors.orange,
+      );
+      return;
+    }
+    if (_saldoServidor <= 0 && ordenesIds.isEmpty) {
       _mostrarMensaje('No tienes saldo ni órdenes pendientes de cobro', Colors.orange);
       return;
     }
 
     final r = await RepartidorSolicitudPagoDialogs.modalPorOrden(
       context,
-      saldo: _saldo,
+      saldo: _saldoServidor,
       moneda: _monedaSaldo,
       totalOrdenes: ordenesIds.length,
     );
@@ -1852,10 +2016,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     try {
       final r = await RepartidorSaldoService.cargarSaldo(_repartidorId!);
       if (mounted) {
-        setState(() {
-          _saldo = r.saldo;
-          _monedaSaldo = r.moneda;
-        });
+        setState(() => _aplicarSaldoCargado(r));
       }
     } catch (e) {
       print('❌ Error cargando saldo: $e');

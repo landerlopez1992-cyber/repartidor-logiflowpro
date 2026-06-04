@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/repartidor_solicitud_pago_service.dart';
+import '../config/app_colors.dart';
+import 'volonex_ui.dart';
 
 /// Diálogos para solicitar nómina según método de pago de la empresa.
 class RepartidorSolicitudPagoDialogs {
@@ -36,7 +38,7 @@ class RepartidorSolicitudPagoDialogs {
                 Expanded(
                   child: Text(
                     'Recorrido del período',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF2C2C2C)),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textOnLight),
                   ),
                 ),
               ],
@@ -48,7 +50,7 @@ class RepartidorSolicitudPagoDialogs {
                 children: [
                   Text(
                     'Tarifa de la empresa: ${preview.tarifa.toStringAsFixed(2)} ${preview.moneda} por $unidadLabel.',
-                    style: const TextStyle(fontSize: 13, color: Color(0xFF666666)),
+                    style: const TextStyle(fontSize: 13, color: AppColors.textMutedOnLight),
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -153,7 +155,7 @@ class RepartidorSolicitudPagoDialogs {
             Expanded(
               child: Text(
                 'Nómina por días trabajados',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF2C2C2C)),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textOnLight),
               ),
             ),
           ],
@@ -164,24 +166,24 @@ class RepartidorSolicitudPagoDialogs {
           children: [
             Text(
               'Última nómina aceptada: $fechaTxt',
-              style: const TextStyle(fontSize: 13, color: Color(0xFF666666)),
+              style: const TextStyle(fontSize: 13, color: AppColors.textMutedOnLight),
             ),
             if (preview.diasLaborablesEtiqueta.isNotEmpty) ...[
               const SizedBox(height: 8),
               Text(
                 'Días laborables (empresa): ${preview.diasLaborablesEtiqueta}',
-                style: const TextStyle(fontSize: 13, color: Color(0xFF666666)),
+                style: const TextStyle(fontSize: 13, color: AppColors.textMutedOnLight),
               ),
             ],
             const SizedBox(height: 10),
             Text(
               'Días laborables a cobrar: $dias',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF2C2C2C)),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textOnLight),
             ),
             const SizedBox(height: 6),
             Text(
               'Tarifa: ${preview.tarifa.toStringAsFixed(2)} ${preview.moneda} / día',
-              style: const TextStyle(fontSize: 13, color: Color(0xFF666666)),
+              style: const TextStyle(fontSize: 13, color: AppColors.textMutedOnLight),
             ),
             const SizedBox(height: 12),
             Container(
@@ -235,7 +237,7 @@ class RepartidorSolicitudPagoDialogs {
               Expanded(
                 child: Text(
                   'Solicitar pago',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF2C2C2C)),
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textOnLight),
                 ),
               ),
             ],
@@ -262,7 +264,7 @@ class RepartidorSolicitudPagoDialogs {
                   totalOrdenes > 0
                       ? 'Órdenes pendientes de cobro: $totalOrdenes'
                       : 'Sin órdenes nuevas; puedes cobrar solo el saldo acumulado.',
-                  style: const TextStyle(fontSize: 13, color: Color(0xFF666666)),
+                  style: const TextStyle(fontSize: 13, color: AppColors.textMutedOnLight),
                 ),
                 const SizedBox(height: 14),
                 TextField(
@@ -276,14 +278,14 @@ class RepartidorSolicitudPagoDialogs {
                 const SizedBox(height: 12),
                 Row(
                   children: [
-                    ChoiceChip(
-                      label: const Text('USD'),
+                    VolonexUi.materialFilterChip(
+                      label: 'USD',
                       selected: monedaSel == 'USD',
                       onSelected: (v) => setSt(() => monedaSel = 'USD'),
                     ),
                     const SizedBox(width: 8),
-                    ChoiceChip(
-                      label: const Text('CUP'),
+                    VolonexUi.materialFilterChip(
+                      label: 'CUP',
                       selected: monedaSel == 'CUP',
                       onSelected: (v) => setSt(() => monedaSel = 'CUP'),
                     ),

@@ -421,7 +421,7 @@ class _MapaRepartidorScreenState extends State<MapaRepartidorScreen> {
                         _error!,
                         style: const TextStyle(
                           fontSize: 16,
-                          color: Color(0xFF666666),
+                          color: AppColors.darkTextMuted,
                         ),
                         textAlign: TextAlign.center,
                       ),
@@ -449,7 +449,7 @@ class _MapaRepartidorScreenState extends State<MapaRepartidorScreen> {
                         'Esperando ubicación del repartidor...',
                         style: TextStyle(
                           fontSize: 16,
-                          color: Color(0xFF666666),
+                          color: AppColors.darkTextMuted,
                         ),
                       ),
                     )
@@ -534,7 +534,7 @@ class _MapaRepartidorScreenState extends State<MapaRepartidorScreen> {
                                   'En tiempo real',
                                   style: TextStyle(
                                     fontSize: 12,
-                                    color: Color(0xFF2C2C2C),
+                                    color: AppColors.darkText,
                                     fontWeight: FontWeight.w500,
                                   ),
                                 ),
@@ -571,7 +571,7 @@ class _MapaRepartidorScreenState extends State<MapaRepartidorScreen> {
                                         style: const TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.bold,
-                                          color: Color(0xFF2C2C2C),
+                                          color: AppColors.darkText,
                                         ),
                                       ),
                                     ],
@@ -581,7 +581,7 @@ class _MapaRepartidorScreenState extends State<MapaRepartidorScreen> {
                                     'Destino: ${widget.orden.direccionDestino}',
                                     style: const TextStyle(
                                       fontSize: 14,
-                                      color: Color(0xFF666666),
+                                      color: AppColors.darkTextMuted,
                                     ),
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
@@ -592,7 +592,7 @@ class _MapaRepartidorScreenState extends State<MapaRepartidorScreen> {
                                       'Para: ${widget.orden.receptor}',
                                       style: const TextStyle(
                                         fontSize: 14,
-                                        color: Color(0xFF666666),
+                                        color: AppColors.darkTextMuted,
                                       ),
                                     ),
                                   ],

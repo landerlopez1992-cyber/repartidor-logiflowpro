@@ -27,6 +27,7 @@ import '../services/connectivity_assistant_service.dart';
 import '../services/shorebird_service.dart';
 import '../services/goodbarber_sync_service.dart';
 import '../services/paises_service.dart';
+import '../services/orden_proximidad_service.dart';
 import 'repartidor_perfil_screen.dart';
 import 'chat_repartidor_lista_screen.dart';
 import 'detalle_orden_screen.dart';
@@ -49,6 +50,8 @@ import '../widgets/volonex_ui.dart';
 import '../utils/entrega_foto_util.dart';
 import '../widgets/foto_entrega_preview.dart';
 import '../utils/repartidor_nombre_util.dart';
+import '../utils/repartidor_master_util.dart';
+import '../widgets/repartidor_master_badge.dart';
 import '../services/repartidor_saldo_service.dart';
 
 class RepartidorMobileScreen extends StatefulWidget {
@@ -99,6 +102,12 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   
   // Ubicación actual del repartidor para calcular distancias
   Position? _ubicacionActual;
+
+  // Orden manual por cercanía (1 = más cerca)
+  bool _modoOrdenCercania = false;
+  bool _ordenandoCercania = false;
+  Map<String, int> _secuenciaCercania = {};
+  Map<String, double> _distanciaMetrosCercania = {};
   
   // Estado de conexión y sincronización
   bool _isOnline = true;
@@ -225,6 +234,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         builder: (context) => RutaOptimizadaRepartidorScreen(
           ordenes: ordenesOrdenadas,
           repartidorNombre: _repartidorNombre ?? 'Repartidor',
+          sucursalesPorOrdenId: _sucursalesInfo,
         ),
       ),
     );
@@ -499,7 +509,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         try {
           final prefs = await SharedPreferences.getInstance();
           final cachedNombre = prefs.getString('cached_repartidor_nombre_${user.id}');
-          final cachedMaster = prefs.getBool('cached_repartidor_master_${user.id}');
+          final cachedMaster = await RepartidorMasterUtil.loadCached(user.id);
           final cachedTipo = prefs.getString('cached_repartidor_tipo_${user.id}');
           final cachedFoto = prefs.getString('cached_repartidor_foto_${user.id}');
           
@@ -542,15 +552,13 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           final tipoRepartidor = response['tipo_repartidor'] as String? ?? 'REPARTIDOR';
           final nombre = response['nombre'] as String?;
           final foto = response['foto_perfil'] as String?;
-          final esMaster = response['repartidor_master'] == true || 
-                          response['repartidor_master'] == 'true' || 
-                          response['repartidor_master'] == 1;
+          final esMaster = RepartidorMasterUtil.parseFlag(response['repartidor_master']);
           
           // ✅ Guardar en caché para uso offline
           try {
             final prefs = await SharedPreferences.getInstance();
             if (nombre != null) await prefs.setString('cached_repartidor_nombre_${user.id}', nombre);
-            await prefs.setBool('cached_repartidor_master_${user.id}', esMaster);
+            await RepartidorMasterUtil.saveCached(user.id, esMaster);
             await prefs.setString('cached_repartidor_tipo_${user.id}', tipoRepartidor);
             if (foto != null) await prefs.setString('cached_repartidor_foto_${user.id}', foto);
             print('💾 Datos de repartidor guardados en caché');
@@ -575,7 +583,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             final cachedNombre = prefs.getString('cached_repartidor_nombre_${user.id}');
             if (cachedNombre != null) {
               print('💾 Usando caché por error de conexión');
-              final cachedMaster = prefs.getBool('cached_repartidor_master_${user.id}');
+              final cachedMaster = await RepartidorMasterUtil.loadCached(user.id);
               final cachedTipo = prefs.getString('cached_repartidor_tipo_${user.id}');
               final cachedFoto = prefs.getString('cached_repartidor_foto_${user.id}');
               
@@ -605,12 +613,16 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 _repartidorNombre = response['nombre'];
                 _fotoPerfilUrl = response['foto_perfil'];
                 // Verificar si es repartidor master
-                _esRepartidorMaster = response['repartidor_master'] == true || 
-                                     response['repartidor_master'] == 'true' || 
-                                     response['repartidor_master'] == 1;
+                _esRepartidorMaster = RepartidorMasterUtil.parseFlag(
+                  response['repartidor_master'],
+                );
                 _tipoRepartidor = tipoRepartidor;
                 _esRecolector = tipoRepartidor == 'RECOLECTOR';
               });
+              await RepartidorMasterUtil.saveCached(
+                user.id,
+                _esRepartidorMaster,
+              );
               print('🔍 Repartidor Master: $_esRepartidorMaster');
               print('🔍 Tipo Repartidor: $_tipoRepartidor (Es Recolector: $_esRecolector)');
             } catch (e2) {
@@ -669,9 +681,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               
               if (userData != null) {
                 final nombreBD = userData['nombre']?.toString() ?? 'N/A';
-                final esMasterBD = userData['repartidor_master'] == true || 
-                                  userData['repartidor_master'] == 'true' || 
-                                  userData['repartidor_master'] == 1;
+                final esMasterBD = RepartidorMasterUtil.parseFlag(
+                  userData['repartidor_master'],
+                );
                 final tipoBD = userData['tipo_repartidor']?.toString() ?? 'N/A';
                 final provinciasConfig = userData['provincias_config'];
                 
@@ -682,7 +694,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 
                 if (esMasterBD != _esRepartidorMaster) {
                   print('   ⚠️ ⚠️ ⚠️ DISCREPANCIA: _esRepartidorMaster=$_esRepartidorMaster pero BD dice $esMasterBD ⚠️ ⚠️ ⚠️');
-                  // Corregir el valor local
+                  final authUser = supabase.auth.currentUser;
+                  if (authUser != null) {
+                    await RepartidorMasterUtil.saveCached(authUser.id, esMasterBD);
+                  }
                   setState(() {
                     _esRepartidorMaster = esMasterBD;
                   });
@@ -2694,7 +2709,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   List<Orden> get _ordenesFiltradas {
     // Generar clave de caché basada en dependencias
-    final nuevaCacheKey = '${_ordenes.length}_$_filtroEstado$_filtroRepartidor${_searchController.text}_$_esRecolector$_esRepartidorMaster';
+    final nuevaCacheKey =
+        '${_ordenes.length}_$_filtroEstado$_filtroRepartidor${_searchController.text}_$_esRecolector$_esRepartidorMaster$_modoOrdenCercania${_secuenciaCercania.length}';
     
     // Si la caché es válida, retornarla
     if (_ordenesFiltradasCache != null && _cacheKeyFiltradas == nuevaCacheKey) {
@@ -2806,6 +2822,16 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     var ordenadasActivas = List<Orden>.from(ordenesActivas);
     var ordenadasBloqueadas = List<Orden>.from(ordenesBloqueadas);
 
+    // Orden explícito por cercanía (botón en pantalla principal)
+    if (_modoOrdenCercania && _secuenciaCercania.isNotEmpty) {
+      ordenadasActivas.sort((a, b) {
+        final sa = _secuenciaCercania[a.id] ?? 9999;
+        final sb = _secuenciaCercania[b.id] ?? 9999;
+        return sa.compareTo(sb);
+      });
+      return [...ordenadasActivas, ...ordenadasBloqueadas];
+    }
+
     // Si hay que ordenar por distancia, necesitamos calcular las distancias primero
     Map<String, double>? distancias;
     if (_ordenarPorDistancia && _ubicacionActual != null) {
@@ -2873,41 +2899,138 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     return [...ordenadasActivas, ...ordenadasBloqueadas];
   }
 
-  // Calcular distancias desde la ubicación actual a cada orden
+  // Calcular distancias desde la ubicación actual a cada orden (GPS real si hay coordenadas)
   Map<String, double> _calcularDistancias(List<Orden> ordenes) {
     final distancias = <String, double>{};
-    
+
     if (_ubicacionActual == null) return distancias;
 
     for (var orden in ordenes) {
+      if (_distanciaMetrosCercania.containsKey(orden.id)) {
+        distancias[orden.id] = _distanciaMetrosCercania[orden.id]!;
+        continue;
+      }
+
       double distancia = double.infinity;
-      
-      // Intentar obtener coordenadas de la orden desde la base de datos
-      // Si la orden tiene latitud/longitud en la BD, usarlas
-      // Por ahora, como las órdenes no tienen coordenadas GPS almacenadas,
-      // usamos un ordenamiento aproximado basado en provincia/municipio
-      // o simplemente ordenamos por fecha como fallback
-      
-      // TODO: Cuando se agreguen coordenadas GPS a las órdenes, calcular distancia real:
-      // if (orden.latitudDestino != null && orden.longitudDestino != null) {
-      //   distancia = Geolocator.distanceBetween(
-      //     _ubicacionActual!.latitude,
-      //     _ubicacionActual!.longitude,
-      //     orden.latitudDestino!,
-      //     orden.longitudDestino!,
-      //   );
-      // }
-      
-      // Por ahora, usar un valor basado en la fecha de creación como proxy
-      // (órdenes más recientes = más cercanas en tiempo, no en espacio)
-      // Esto es un placeholder hasta que se agreguen coordenadas GPS
-      final diasDesdeCreacion = DateTime.now().difference(orden.fechaCreacion).inDays;
-      distancia = diasDesdeCreacion * 1000.0; // Convertir días a "metros" aproximados
-      
+      if (orden.latitudEntrega != null && orden.longitudEntrega != null) {
+        distancia = OrdenProximidadService.distanciaMetros(
+          _ubicacionActual!.latitude,
+          _ubicacionActual!.longitude,
+          orden.latitudEntrega!,
+          orden.longitudEntrega!,
+        );
+      }
       distancias[orden.id] = distancia;
     }
 
     return distancias;
+  }
+
+  String _textoDistanciaCercania(Orden orden) {
+    final m = _distanciaMetrosCercania[orden.id];
+    if (m == null || m.isInfinite) return '';
+    if (m < 1000) return '${m.round()} m';
+    return '${(m / 1000).toStringAsFixed(1)} km';
+  }
+
+  Future<void> _ordenarOrdenesPorCercania() async {
+    if (_esRecolector) return;
+
+    setState(() => _ordenandoCercania = true);
+
+    try {
+      final activas = _ordenesFiltradas
+          .where((o) => o.estado.trim().toUpperCase() != 'POR ENVIAR')
+          .toList();
+
+      if (activas.isEmpty) {
+        _mostrarMensaje('No hay órdenes activas para ordenar');
+        return;
+      }
+
+      final pais = _paisOperacion ??
+          await PaisesService.obtenerPaisOperacionActual();
+
+      final resultado = await OrdenProximidadService.ordenarPorCercania(
+        ordenes: activas,
+        paisOperacion: pais,
+        sucursalesPorOrdenId: _sucursalesInfo,
+      );
+
+      if (resultado.posicion == null) {
+        _mostrarMensaje(
+          'Activa el GPS y concede permiso de ubicación para ordenar por cercanía',
+        );
+        return;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _modoOrdenCercania = true;
+        _secuenciaCercania = resultado.secuencia;
+        _distanciaMetrosCercania = resultado.distanciaMetros;
+        _ubicacionActual = resultado.posicion;
+        _ordenesFiltradasCache = null;
+        _cacheKeyFiltradas = null;
+      });
+      _mostrarMensaje('Órdenes ordenadas de la más cercana a la más lejana');
+    } catch (e) {
+      print('⚠️ Ordenar por cercanía: $e');
+      _mostrarMensaje('No se pudo ordenar por cercanía. Intenta de nuevo.');
+    } finally {
+      if (mounted) setState(() => _ordenandoCercania = false);
+    }
+  }
+
+  void _desactivarOrdenCercania() {
+    setState(() {
+      _modoOrdenCercania = false;
+      _secuenciaCercania = {};
+      _distanciaMetrosCercania = {};
+      _ordenesFiltradasCache = null;
+      _cacheKeyFiltradas = null;
+    });
+  }
+
+  Widget _buildBadgeSecuenciaCercania(Orden orden) {
+    final n = _secuenciaCercania[orden.id];
+    if (!_modoOrdenCercania || n == null) return const SizedBox.shrink();
+
+    final distTexto = _textoDistanciaCercania(orden);
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 26,
+          height: 26,
+          decoration: const BoxDecoration(
+            color: Color(0xFF4CAF50),
+            shape: BoxShape.circle,
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            '$n',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        if (distTexto.isNotEmpty) ...[
+          const SizedBox(width: 4),
+          Text(
+            distTexto,
+            style: const TextStyle(
+              color: Color(0xFF4CAF50),
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ],
+    );
   }
 
   // Obtener ubicación actual del repartidor
@@ -2939,25 +3062,50 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         elevation: 0,
         title: Row(
           children: [
-            // Foto de perfil circular
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: const Color(0xFFFF9800),
-                shape: BoxShape.circle,
-              ),
-              child: ClipOval(
-                child: _fotoPerfilUrl != null && _fotoPerfilUrl!.isNotEmpty
-                    ? Image.network(
-                        _fotoPerfilUrl!,
-                        width: 40,
-                        height: 40,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Center(
+            // Foto de perfil circular (+ insignia master)
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF9800),
+                    shape: BoxShape.circle,
+                    border: _esRepartidorMaster
+                        ? Border.all(
+                            color: AppColors.botonPrincipal.withOpacity(0.85),
+                            width: 1.5,
+                          )
+                        : null,
+                  ),
+                  child: ClipOval(
+                    child: _fotoPerfilUrl != null && _fotoPerfilUrl!.isNotEmpty
+                        ? Image.network(
+                            _fotoPerfilUrl!,
+                            width: 40,
+                            height: 40,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Center(
+                                child: Text(
+                                  _repartidorNombre != null &&
+                                          _repartidorNombre!.isNotEmpty
+                                      ? _repartidorNombre![0].toUpperCase()
+                                      : 'R',
+                                  style: const TextStyle(
+                                    color: Color(0xFFFFFFFF),
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              );
+                            },
+                          )
+                        : Center(
                             child: Text(
-                              _repartidorNombre != null && _repartidorNombre!.isNotEmpty
+                              _repartidorNombre != null &&
+                                      _repartidorNombre!.isNotEmpty
                                   ? _repartidorNombre![0].toUpperCase()
                                   : 'R',
                               style: const TextStyle(
@@ -2966,22 +3114,19 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                          );
-                        },
-                      )
-                    : Center(
-                        child: Text(
-                          _repartidorNombre != null && _repartidorNombre!.isNotEmpty
-                              ? _repartidorNombre![0].toUpperCase()
-                              : 'R',
-                          style: const TextStyle(
-                            color: Color(0xFFFFFFFF),
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
                           ),
-                        ),
-                      ),
-              ),
+                  ),
+                ),
+                if (_esRepartidorMaster)
+                  const Positioned(
+                    right: -1,
+                    bottom: -1,
+                    child: RepartidorMasterBadgeOverlay(
+                      size: 16,
+                      iconSize: 10,
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(width: 8),
             // Nombre del repartidor - Usar Expanded para evitar overflow
@@ -2990,10 +3135,25 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text(
-                    'Repartidor',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    overflow: TextOverflow.ellipsis,
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Flexible(
+                        child: Text(
+                          'Repartidor',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (_esRepartidorMaster) ...[
+                        const SizedBox(width: 6),
+                        const RepartidorMasterChip(),
+                      ],
+                    ],
                   ),
                   if (_repartidorNombre != null)
                     Text(
@@ -3216,7 +3376,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   builder: (context) => const RepartidorPerfilScreen(),
                 ),
               );
-              // Si se solicitó un pago, recargar el saldo (se reseteará a 0)
+              await _obtenerNombreRepartidor();
               if (resultado == true) {
                 await _cargarSaldo();
               }
@@ -3271,55 +3431,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             _buildBannerNotificacion(),
           
           // ✅ BANNER "REPARTIDOR MASTER" - Solo visible para repartidores master
-          if (_esRepartidorMaster)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    const Color(0xFFFF9800),
-                    const Color(0xFFFFB74D),
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFFFF9800).withOpacity(0.3),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(
-                      Icons.workspace_premium,
-                      color: Colors.white,
-                      size: 24,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  const Text(
-                    'Repartidor Master',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+          if (_esRepartidorMaster) const RepartidorMasterBannerCompact(),
           
           // ✅ INDICADOR DE MODO OFFLINE
           if (!_isOnline)
@@ -3359,6 +3471,67 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               ),
             ),
           ),
+
+          // Ordenar lista por cercanía (repartidor)
+          if (!_esRecolector)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              color: AppColors.darkBg,
+              child: Center(
+                child: Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: _ordenandoCercania ? null : _ordenarOrdenesPorCercania,
+                      icon: _ordenandoCercania
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.near_me, size: 20),
+                      label: Text(
+                        _modoOrdenCercania
+                            ? 'Actualizar cercanía'
+                            : 'Ordenar por cercanía',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1976D2),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 10,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(25),
+                        ),
+                      ),
+                    ),
+                    if (_modoOrdenCercania)
+                      OutlinedButton(
+                        onPressed: _desactivarOrdenCercania,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.darkTextMuted,
+                          side: const BorderSide(color: AppColors.darkBorder),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(25),
+                          ),
+                        ),
+                        child: const Text('Quitar orden'),
+                      ),
+                  ],
+                ),
+              ),
+            ),
 
           // Botón "Ver Ruta Optimizada" si hay órdenes con orden_ruta
           if (_tieneRutaOptimizada)
@@ -3566,25 +3739,18 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            const Color(0xFFFFD700).withOpacity(0.2), // Dorado claro
-            const Color(0xFFFFA500).withOpacity(0.15), // Naranja claro
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: RemesaPuraUiTheme.fondoTarjeta,
         borderRadius: BorderRadius.circular(8),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFFFFD700).withOpacity(0.3),
+            color: Colors.black.withOpacity(0.2),
             blurRadius: 8,
             offset: const Offset(0, 3),
           ),
         ],
         border: Border.all(
-          color: const Color(0xFFFFD700).withOpacity(0.8),
-          width: 2,
+          color: RemesaPuraUiTheme.borde,
+          width: 1.5,
         ),
       ),
       child: InkWell(
@@ -3638,18 +3804,23 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF1A1A1A),
+                          color: RemesaPuraUiTheme.fondoDestacado,
                           borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                            color: RemesaPuraUiTheme.borde.withOpacity(0.5),
+                          ),
                         ),
                         child: Text(
                           '#${numeroRemesa ?? (orden.id.length > 8 ? orden.id.substring(0, 8) : orden.id)}',
                           style: const TextStyle(
-                            color: Color(0xFFFFD700),
+                            color: RemesaPuraUiTheme.acento,
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
+                      const SizedBox(width: 6),
+                      _buildBadgeSecuenciaCercania(orden),
                     ],
                   ),
                   // Chip de estado (solo POR ENVIAR o ENTREGADO)
@@ -3663,27 +3834,26 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      const Color(0xFFFFD700).withOpacity(0.3),
-                      const Color(0xFFFFA500).withOpacity(0.2),
-                    ],
-                  ),
+                  color: RemesaPuraUiTheme.fondoDestacado,
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                    color: const Color(0xFFFFD700),
-                    width: 1.5,
+                    color: RemesaPuraUiTheme.borde.withOpacity(0.65),
+                    width: 1,
                   ),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.monetization_on, color: Color(0xFFFFD700), size: 20),
+                    const Icon(
+                      Icons.monetization_on,
+                      color: RemesaPuraUiTheme.acento,
+                      size: 20,
+                    ),
                     const SizedBox(width: 8),
                     Text(
                       'Cantidad: \$${cantidadRemesa.toStringAsFixed(2)}',
                       style: const TextStyle(
-                        color: Color(0xFF1A1A1A),
+                        color: AppColors.darkText,
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
                       ),
@@ -3701,7 +3871,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                     : 'Sin firma ni foto: valida número de remesa e identificación del destinatario.',
                 style: TextStyle(
                   fontSize: 10,
-                  color: const Color(0xFF5D4037).withOpacity(0.85),
+                  color: AppColors.darkTextMuted,
                   fontStyle: FontStyle.italic,
                 ),
               ),
@@ -3756,8 +3926,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               ] else if (orden.direccionDestino.isNotEmpty) ...[
                 // Si NO es recogida en sucursal: mostrar dirección del destinatario
                 _buildInfoRow(
-                  Icons.location_on, 
-                  'Dirección:', 
+                  Icons.location_on,
+                  'Dirección:',
                   _formatearDireccionCompleta(orden),
                 ),
                 const SizedBox(height: 4),
@@ -3785,8 +3955,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   VolonexActionButton(
                     label: 'Entregar Remesa',
                     icon: Icons.check_circle,
-                    backgroundColor: const Color(0xFFFFD700),
-                    foregroundColor: const Color(0xFF1A1A1A),
+                    backgroundColor: RemesaPuraUiTheme.acentoFuerte,
+                    foregroundColor: AppColors.onAccentButton,
                     onPressed: () => _mostrarDetallesOrden(orden),
                   ),
               ] else if (estado == 'ENTREGADO EN SUCURSAL') ...[
@@ -3931,6 +4101,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                           ),
                         ),
                         const SizedBox(width: 6),
+                        _buildBadgeSecuenciaCercania(orden),
+                        if (_modoOrdenCercania && _secuenciaCercania.containsKey(orden.id))
+                          const SizedBox(width: 6),
                         _buildChipTipoOrden(tipoInfo),
                         if (esUrgente) ...[
                           const SizedBox(width: 6),
@@ -4247,12 +4420,14 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                           Icons.store,
                           'Sucursal:',
                           _sucursalesInfo[orden.id]!['nombre'] ?? 'Sin nombre',
+                          onLightSurface: true,
                         ),
                         const SizedBox(height: 4),
                         _buildInfoRow(
                           Icons.location_on,
                           'Dirección:',
                           _formatearDireccionSucursal(_sucursalesInfo[orden.id]!),
+                          onLightSurface: true,
                         ),
                         if (_sucursalesInfo[orden.id]!['es_principal'] == true) ...[
                           const SizedBox(height: 8),
@@ -4521,30 +4696,38 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     );
   }
 
-  Widget _buildInfoRow(IconData icon, String label, String value) {
+  Widget _buildInfoRow(
+    IconData icon,
+    String label,
+    String value, {
+    bool onLightSurface = false,
+  }) {
+    final muted =
+        onLightSurface ? AppColors.textMutedOnLight : AppColors.darkTextMuted;
+    final valueColor = onLightSurface ? AppColors.textOnLight : AppColors.darkText;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, color: AppColors.darkTextMuted, size: 14),
+        Icon(icon, color: muted, size: 14),
         const SizedBox(width: 4),
         Expanded(
           child: RichText(
             text: TextSpan(
-              style: const TextStyle(
-                color: AppColors.darkTextMuted,
+              style: TextStyle(
+                color: muted,
                 fontSize: 11,
               ),
               children: [
                 TextSpan(
                   text: '$label ',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.w500,
-                    color: AppColors.darkTextMuted,
+                    color: muted,
                   ),
                 ),
                 TextSpan(
                   text: value,
-                  style: const TextStyle(color: AppColors.darkText),
+                  style: TextStyle(color: valueColor),
                 ),
               ],
             ),
@@ -4726,7 +4909,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF2C2C2C),
+                  color: AppColors.textOnLight,
                 ),
               ),
             ),
@@ -4740,7 +4923,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               '¿Estás afirmando que la remesa #${orden.numeroRemesa ?? orden.numeroOrden} la estás entregando en $nombreSucursal?',
               style: const TextStyle(
                 fontSize: 15,
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 height: 1.5,
               ),
             ),
@@ -4761,7 +4944,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                       'La remesa quedará en $nombreSucursal esperando que la sucursal la entregue al destinatario final.',
                       style: const TextStyle(
                         fontSize: 12,
-                        color: Color(0xFF666666),
+                        color: AppColors.textMutedOnLight,
                       ),
                     ),
                   ),
@@ -5323,13 +5506,13 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.lock, color: const Color(0xFF666666), size: 16),
+              Icon(Icons.lock, color: AppColors.textMutedOnLight, size: 16),
               const SizedBox(width: 6),
               Flexible(
                 child: Text(
                   _obtenerMensajeOrdenEsperandoRecoleccion(orden.repartidor),
                   style: const TextStyle(
-                    color: Color(0xFF666666),
+                    color: AppColors.textMutedOnLight,
                     fontSize: 12,
                     fontWeight: FontWeight.w500,
                   ),
@@ -5886,7 +6069,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             const Text(
               'Listo para recoger',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),
@@ -5896,7 +6079,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         content: Text(
           'La orden está lista para que el destinatario ${orden.receptor} pase a recogerla en la sucursal. ¿Seguro?',
           style: const TextStyle(
-            color: Color(0xFF2C2C2C),
+            color: AppColors.textOnLight,
             fontSize: 15,
           ),
         ),
@@ -5905,7 +6088,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
             style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF666666),
+              foregroundColor: AppColors.textMutedOnLight,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             ),
             child: const Text(
@@ -6352,7 +6535,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
-              color: Color(0xFF2C2C2C),
+              color: AppColors.darkText,
             ),
           ),
           content: const Text(
@@ -6360,7 +6543,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             '¿Quieres ir a Configuración ahora para cambiar este permiso?',
             style: TextStyle(
               fontSize: 14,
-              color: Color(0xFF666666),
+              color: AppColors.darkTextMuted,
             ),
           ),
           actions: [
@@ -6368,7 +6551,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               onPressed: () => Navigator.of(context).pop(),
               child: const Text(
                 'Cancelar',
-                style: TextStyle(color: Color(0xFF666666)),
+                style: TextStyle(color: AppColors.darkTextMuted),
               ),
             ),
             ElevatedButton(
@@ -6427,7 +6610,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             Text(
               'Foto Obligatoria',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),
@@ -6437,7 +6620,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         content: const Text(
           '❌ Error: Debes tomar una foto de la entrega primero para poder realizar la entrega exitosamente.',
           style: TextStyle(
-            color: Color(0xFF666666),
+            color: AppColors.textMutedOnLight,
             fontSize: 14,
             height: 1.4,
           ),
@@ -6446,7 +6629,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF666666),
+              foregroundColor: AppColors.textMutedOnLight,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             ),
             child: const Text(
@@ -6503,7 +6686,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             Text(
               'Cobro Obligatorio',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),
@@ -6517,7 +6700,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             Text(
               '💰 El cliente debe pagar:',
               style: const TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
               ),
@@ -6545,7 +6728,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             const Text(
               '❌ Error: Debes cobrar al cliente antes de entregar la orden.',
               style: TextStyle(
-                color: Color(0xFF666666),
+                color: AppColors.textMutedOnLight,
                 fontSize: 14,
                 height: 1.4,
               ),
@@ -6556,7 +6739,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF666666),
+              foregroundColor: AppColors.textMutedOnLight,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             ),
             child: const Text(
@@ -6638,7 +6821,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               child: Text(
               'Verificar Bultos',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
                 ),
@@ -6654,7 +6837,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             const Text(
               '📦 Antes de marcar como entregada, verifica:',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
               ),
@@ -6674,7 +6857,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   const Text(
                     'Cantidad de Bultos:',
                     style: TextStyle(
-                      color: Color(0xFF666666),
+                      color: AppColors.textMutedOnLight,
                       fontSize: 12,
                     ),
                   ),
@@ -6705,7 +6888,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                     child: Text(
                       '¿Entregaste todos los bultos correctamente?',
                       style: TextStyle(
-                        color: Color(0xFF2C2C2C),
+                        color: AppColors.textOnLight,
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),
@@ -6721,7 +6904,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
             style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF666666),
+              foregroundColor: AppColors.textMutedOnLight,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             ),
             child: const Text(
@@ -6825,7 +7008,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             const Text(
               '⚠️ Debes completar lo siguiente:',
               style: TextStyle(
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
               ),
@@ -6871,7 +7054,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                         child: Text(
                           error.replaceAll(RegExp(r'[📦💰✍️📷]'), '').trim(),
                           style: TextStyle(
-                            color: const Color(0xFF2C2C2C),
+                            color: AppColors.textOnLight,
                             fontSize: 13,
                             height: 1.4,
                             fontWeight: FontWeight.w500,
@@ -6915,7 +7098,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF666666),
+              foregroundColor: AppColors.textMutedOnLight,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             ),
             child: const Text(
@@ -6996,7 +7179,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                       width: 40,
                       height: 4,
                       decoration: BoxDecoration(
-                        color: Colors.grey[300],
+                        color: AppColors.darkBorder,
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -7006,7 +7189,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFF2C2C2C),
+                        color: AppColors.darkText,
                       ),
                     ),
                     const SizedBox(height: 20),
@@ -7024,14 +7207,14 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF2C2C2C),
+                          color: AppColors.darkText,
                         ),
                       ),
                       subtitle: const Text(
                         'Usar la cámara para tomar una nueva foto',
                         style: TextStyle(
                           fontSize: 13,
-                          color: Color(0xFF666666),
+                          color: AppColors.darkTextMuted,
                         ),
                       ),
                       onTap: () => Navigator.pop(context, 'camara'),
@@ -7050,14 +7233,14 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF2C2C2C),
+                          color: AppColors.darkText,
                         ),
                       ),
                       subtitle: const Text(
                         'Seleccionar una foto de tu galería',
                         style: TextStyle(
                           fontSize: 13,
-                          color: Color(0xFF666666),
+                          color: AppColors.darkTextMuted,
                         ),
                       ),
                       onTap: () => Navigator.pop(context, 'galeria'),
@@ -7940,7 +8123,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                           style: const TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
-                            color: Color(0xFF2C2C2C),
+                            color: AppColors.darkText,
                           ),
                         ),
                         const SizedBox(height: 4),
@@ -7948,14 +8131,14 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                           _formatearFechaString(fecha),
                           style: TextStyle(
                             fontSize: 12,
-                            color: Colors.grey[600],
+                            color: AppColors.darkTextMuted,
                           ),
                         ),
                       ],
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close, color: Color(0xFF666666)),
+                    icon: const Icon(Icons.close, color: AppColors.darkTextMuted),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
@@ -7970,7 +8153,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                     mensaje,
                     style: const TextStyle(
                       fontSize: 16,
-                      color: Color(0xFF2C2C2C),
+                      color: AppColors.darkText,
                       height: 1.5,
                     ),
                   ),

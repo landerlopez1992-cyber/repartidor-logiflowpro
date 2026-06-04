@@ -350,7 +350,7 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
                 style: const TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF2C2C2C),
+                  color: AppColors.darkText,
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -359,7 +359,7 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
               // Texto de carga
               const Text(
                 'Iniciando sistema de paquetería...',
-                style: TextStyle(fontSize: 16, color: Color(0xFF666666)),
+                style: TextStyle(fontSize: 16, color: AppColors.darkTextMuted),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),

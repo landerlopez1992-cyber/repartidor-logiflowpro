@@ -346,7 +346,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
       case 'EN TRANSITO':
         return const Color(0xFF2196F3); // Azul
       default:
-        return const Color(0xFF666666); // Gris
+        return AppColors.darkTextMuted; // Gris
     }
   }
 
@@ -510,14 +510,14 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
             Icon(
               Icons.local_shipping_outlined,
               size: 64,
-              color: Colors.grey[400],
+              color: AppColors.darkTextMuted,
             ),
             const SizedBox(height: 16),
             Text(
               'No hay órdenes nuevas',
               style: TextStyle(
                 fontSize: 18,
-                color: Colors.grey[600],
+                color: AppColors.darkTextMuted,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -526,7 +526,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
               'Las nuevas órdenes asignadas aparecerán aquí',
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.grey[500],
+                color: AppColors.darkTextMuted,
               ),
             ),
           ],
@@ -683,7 +683,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                                       fontWeight: orden['notificacion_leida'] == false 
                                           ? FontWeight.bold 
                                           : FontWeight.w600,
-                                      color: const Color(0xFF2C2C2C),
+                                      color: AppColors.darkText,
                                     ),
                                   ),
                                 ),
@@ -707,7 +707,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                                   Icon(
                                     Icons.location_on,
                                     size: 14,
-                                    color: Colors.grey[600],
+                                    color: AppColors.darkTextMuted,
                                   ),
                                   const SizedBox(width: 4),
                                   Expanded(
@@ -718,7 +718,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                                       ].where((s) => s.isNotEmpty).join(', '),
                                       style: TextStyle(
                                         fontSize: 13,
-                                        color: Colors.grey[700],
+                                        color: AppColors.darkTextMuted,
                                         fontWeight: FontWeight.w500,
                                       ),
                                       maxLines: 2,
@@ -753,7 +753,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                                   _formatearFecha(fechaCreacion),
                                   style: TextStyle(
                                     fontSize: 12,
-                                    color: Colors.grey[600],
+                                    color: AppColors.darkTextMuted,
                                   ),
                                 ),
                               ],
@@ -781,14 +781,14 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
             Icon(
               Icons.payment_outlined,
               size: 64,
-              color: Colors.grey[400],
+              color: AppColors.darkTextMuted,
             ),
             const SizedBox(height: 16),
             Text(
               'No hay notificaciones de pagos',
               style: TextStyle(
                 fontSize: 18,
-                color: Colors.grey[600],
+                color: AppColors.darkTextMuted,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -797,7 +797,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
               'Las notificaciones de pagos aceptados, rechazados o cancelados aparecerán aquí',
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.grey[500],
+                color: AppColors.darkTextMuted,
               ),
               textAlign: TextAlign.center,
             ),
@@ -831,7 +831,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
           colorEstado = const Color(0xFFDC2626); // Rojo
         } else {
           estado = 'INFO';
-          colorEstado = const Color(0xFF666666); // Gris
+          colorEstado = AppColors.darkTextMuted; // Gris
         }
 
         // Extraer cantidad del mensaje si es posible
@@ -902,7 +902,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                                     style: TextStyle(
                                       fontSize: 16,
                                       fontWeight: leida ? FontWeight.normal : FontWeight.bold,
-                                      color: leida ? const Color(0xFF666666) : const Color(0xFF2C2C2C),
+                                      color: leida ? AppColors.darkTextMuted : AppColors.darkText,
                                     ),
                                   ),
                                 ),
@@ -933,7 +933,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                               mensaje,
                               style: TextStyle(
                                 fontSize: 14,
-                                color: leida ? const Color(0xFF999999) : const Color(0xFF666666),
+                                color: leida ? AppColors.darkTextMuted : AppColors.darkTextMuted,
                               ),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
@@ -943,7 +943,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                               _formatearFecha(fecha),
                               style: TextStyle(
                                 fontSize: 12,
-                                color: leida ? Colors.grey[500] : Colors.grey[600],
+                                color: leida ? AppColors.darkTextMuted : AppColors.darkTextMuted,
                               ),
                             ),
                           ],
@@ -991,14 +991,14 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
             Icon(
               Icons.notifications_outlined,
               size: 64,
-              color: Colors.grey[400],
+              color: AppColors.darkTextMuted,
             ),
             const SizedBox(height: 16),
             Text(
               'No hay notificaciones generales',
               style: TextStyle(
                 fontSize: 18,
-                color: Colors.grey[600],
+                color: AppColors.darkTextMuted,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -1007,7 +1007,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
               'Las notificaciones push enviadas desde el administrador aparecerán aquí',
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.grey[500],
+                color: AppColors.darkTextMuted,
               ),
               textAlign: TextAlign.center,
             ),
@@ -1078,7 +1078,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                                     style: TextStyle(
                                       fontSize: 16,
                                       fontWeight: leida ? FontWeight.normal : FontWeight.bold,
-                                      color: leida ? const Color(0xFF666666) : const Color(0xFF2C2C2C),
+                                      color: leida ? AppColors.darkTextMuted : AppColors.darkText,
                                     ),
                                   ),
                                 ),
@@ -1098,7 +1098,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                               mensaje,
                               style: TextStyle(
                                 fontSize: 14,
-                                color: leida ? const Color(0xFF999999) : const Color(0xFF666666),
+                                color: leida ? AppColors.darkTextMuted : AppColors.darkTextMuted,
                               ),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
@@ -1108,7 +1108,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                               _formatearFecha(fecha),
                               style: TextStyle(
                                 fontSize: 12,
-                                color: leida ? Colors.grey[500] : Colors.grey[600],
+                                color: leida ? AppColors.darkTextMuted : AppColors.darkTextMuted,
                               ),
                             ),
                           ],
@@ -1118,7 +1118,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                       // Icono de flecha
                       Icon(
                         Icons.chevron_right,
-                        color: leida ? Colors.grey[300] : Colors.grey[400],
+                        color: leida ? AppColors.darkBorder : AppColors.darkTextMuted,
                         size: 24,
                       ),
                     ],
@@ -1181,7 +1181,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                           style: const TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
-                            color: Color(0xFF2C2C2C),
+                            color: AppColors.darkText,
                           ),
                         ),
                         const SizedBox(height: 4),
@@ -1189,14 +1189,14 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                           _formatearFecha(fecha),
                           style: TextStyle(
                             fontSize: 12,
-                            color: Colors.grey[600],
+                            color: AppColors.darkTextMuted,
                           ),
                         ),
                       ],
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close, color: Color(0xFF666666)),
+                    icon: const Icon(Icons.close, color: AppColors.darkTextMuted),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
@@ -1211,7 +1211,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                     mensaje,
                     style: const TextStyle(
                       fontSize: 16,
-                      color: Color(0xFF2C2C2C),
+                      color: AppColors.darkText,
                       height: 1.5,
                     ),
                   ),
@@ -1374,7 +1374,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
     } else if (tipo == 'PAGO_RECHAZADO' || tipo == 'PAGO_CANCELADO') {
       colorEstado = const Color(0xFFDC2626);
     } else {
-      colorEstado = const Color(0xFF666666);
+      colorEstado = AppColors.darkTextMuted;
     }
 
     // Mostrar modal con el contenido completo PRIMERO
@@ -1419,7 +1419,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                           style: const TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
-                            color: Color(0xFF2C2C2C),
+                            color: AppColors.darkText,
                           ),
                         ),
                         const SizedBox(height: 4),
@@ -1427,14 +1427,14 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                           _formatearFecha(fecha),
                           style: TextStyle(
                             fontSize: 12,
-                            color: Colors.grey[600],
+                            color: AppColors.darkTextMuted,
                           ),
                         ),
                       ],
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close, color: Color(0xFF666666)),
+                    icon: const Icon(Icons.close, color: AppColors.darkTextMuted),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
@@ -1449,7 +1449,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                     mensaje,
                     style: const TextStyle(
                       fontSize: 16,
-                      color: Color(0xFF2C2C2C),
+                      color: AppColors.darkText,
                       height: 1.5,
                     ),
                   ),

@@ -11,6 +11,7 @@ import '../services/orden_cache_service.dart';
 import '../services/orden_estado_sync_helper.dart';
 import '../services/configuracion_service.dart';
 import 'detalle_orden_screen.dart';
+import '../config/app_colors.dart';
 
 class QRScannerFullscreen extends StatefulWidget {
   final String? repartidorNombre;
@@ -285,7 +286,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF2C2C2C),
+                  color: AppColors.darkText,
                 ),
               ),
             ),
@@ -299,7 +300,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
               text: TextSpan(
                 style: const TextStyle(
                   fontSize: 16,
-                  color: Color(0xFF2C2C2C),
+                  color: AppColors.darkText,
                   height: 1.5,
                 ),
                 children: [
@@ -341,7 +342,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
                       'Orden #$numeroOrden asignada a: $repartidorAsignado',
                       style: const TextStyle(
                         fontSize: 13,
-                        color: Color(0xFF2C2C2C),
+                        color: AppColors.textOnLight,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -411,7 +412,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF2C2C2C),
+                  color: AppColors.darkText,
                 ),
               ),
             ),
@@ -425,7 +426,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
               'Has escaneado una orden en tránsito. ¿Qué deseas hacer?',
               style: TextStyle(
                 fontSize: 16,
-                color: Color(0xFF2C2C2C),
+                color: AppColors.darkText,
                 height: 1.5,
               ),
             ),
@@ -445,7 +446,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
                     style: const TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFF2C2C2C),
+                      color: AppColors.textOnLight,
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -453,7 +454,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
                     'Emisor: ${orden.emisor}',
                     style: const TextStyle(
                       fontSize: 14,
-                      color: Color(0xFF666666),
+                      color: AppColors.textMutedOnLight,
                     ),
                   ),
                 ],
@@ -514,7 +515,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF2C2C2C),
+                  color: AppColors.textOnLight,
                 ),
               ),
             ),
@@ -528,7 +529,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
               'La orden está lista para que el destinatario ${orden.receptor} pase a recogerla en la sucursal. ¿Qué deseas hacer?',
               style: const TextStyle(
                 fontSize: 16,
-                color: Color(0xFF2C2C2C),
+                color: AppColors.textOnLight,
                 height: 1.5,
               ),
             ),
@@ -548,7 +549,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
                     style: const TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFF2C2C2C),
+                      color: AppColors.textOnLight,
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -556,7 +557,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
                     'Destinatario: ${orden.receptor}',
                     style: const TextStyle(
                       fontSize: 14,
-                      color: Color(0xFF666666),
+                      color: AppColors.textMutedOnLight,
                     ),
                   ),
                 ],
@@ -569,7 +570,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
           TextButton(
             onPressed: () => Navigator.of(context).pop('ver'),
             style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF37474F),
+              foregroundColor: AppColors.botonPrincipal,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             ),
             child: const Text(
@@ -585,7 +586,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
           TextButton(
             onPressed: () => Navigator.of(context).pop('denegar'),
             style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF666666),
+              foregroundColor: AppColors.textMutedOnLight,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             ),
             child: const Text(
@@ -940,7 +941,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF2C2C2C),
+                  color: AppColors.darkText,
                 ),
               ),
             ),
@@ -954,7 +955,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
               text: TextSpan(
                 style: const TextStyle(
                   fontSize: 16,
-                  color: Color(0xFF2C2C2C),
+                  color: AppColors.darkText,
                   height: 1.5,
                 ),
                 children: [
@@ -996,7 +997,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
                       'Orden #$numeroOrden asignada a: $repartidorAsignado',
                       style: const TextStyle(
                         fontSize: 13,
-                        color: Color(0xFF2C2C2C),
+                        color: AppColors.textOnLight,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -1016,7 +1017,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
               Navigator.of(context).pop(true); // Continuar
             },
             style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF666666),
+              foregroundColor: AppColors.textMutedOnLight,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             ),
             child: const Text('No molestar más'),
@@ -1391,7 +1392,7 @@ class _BultosScannerModalState extends State<_BultosScannerModal> {
                     style: const TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
-                      color: Color(0xFF2C2C2C),
+                      color: AppColors.darkText,
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -1425,7 +1426,7 @@ class _BultosScannerModalState extends State<_BultosScannerModal> {
                       'Escanea el siguiente bulto...',
                       style: TextStyle(
                         fontSize: 14,
-                        color: Colors.grey[600],
+                        color: AppColors.darkTextMuted,
                       ),
                     ),
                 ],
@@ -1487,7 +1488,7 @@ class _BultosScannerModalState extends State<_BultosScannerModal> {
                     child: TextButton(
                       onPressed: () => Navigator.of(context).pop(false),
                       style: TextButton.styleFrom(
-                        foregroundColor: const Color(0xFF666666),
+                        foregroundColor: AppColors.darkTextMuted,
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
                       child: const Text('Cancelar'),
@@ -1503,7 +1504,7 @@ class _BultosScannerModalState extends State<_BultosScannerModal> {
                         backgroundColor: const Color(0xFF4CAF50),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 12),
-                        disabledBackgroundColor: Colors.grey[300],
+                        disabledBackgroundColor: AppColors.darkBorder,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),

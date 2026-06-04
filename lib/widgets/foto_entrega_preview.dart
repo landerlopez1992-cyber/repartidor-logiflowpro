@@ -129,7 +129,7 @@ class FotoEntregaPreview extends StatelessWidget {
   Widget _placeholder() {
     return Container(
       color: const Color(0xFFE8F5E9),
-      child: Icon(Icons.image_not_supported, size: alto * 0.4, color: AppColors.textoSecundario),
+      child: Icon(Icons.image_not_supported, size: alto * 0.4, color: const Color(0xFF2E7D32)),
     );
   }
 }

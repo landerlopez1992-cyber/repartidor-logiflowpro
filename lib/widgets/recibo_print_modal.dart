@@ -6,6 +6,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:http/http.dart' as http;
 import '../models/orden.dart';
 import '../main.dart';
+import '../config/app_colors.dart';
 
 class ReciboPrintModal extends StatefulWidget {
   final Orden orden;
@@ -662,7 +663,7 @@ class _ReciboPrintModalState extends State<ReciboPrintModal> {
                                         child: const Icon(
                                           Icons.business,
                                           size: 30,
-                                          color: Color(0xFF666666),
+                                          color: AppColors.darkTextMuted,
                                         ),
                                       );
                                     },
@@ -679,7 +680,7 @@ class _ReciboPrintModalState extends State<ReciboPrintModal> {
                                   child: const Icon(
                                     Icons.business,
                                     size: 30,
-                                    color: Color(0xFF666666),
+                                    color: AppColors.darkTextMuted,
                                   ),
                                 ),
                             ],

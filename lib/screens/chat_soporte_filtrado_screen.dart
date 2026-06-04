@@ -912,10 +912,13 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                 ),
                 Container(
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: AppColors.darkSurface,
+                    border: const Border(
+                      top: BorderSide(color: AppColors.darkBorder, width: 0.5),
+                    ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
+                        color: Colors.black.withOpacity(0.25),
                         blurRadius: 10,
                         offset: const Offset(0, -2),
                       ),
@@ -1117,7 +1120,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     return Container(
       width: 200,
       height: 200,
-      color: Colors.grey[300],
+      color: AppColors.darkBorder,
       child: Center(
         child: cargando
             ? const CircularProgressIndicator(strokeWidth: 2)
