@@ -49,10 +49,14 @@ import '../widgets/volonex_dialog.dart';
 import '../widgets/volonex_ui.dart';
 import '../utils/entrega_foto_util.dart';
 import '../widgets/foto_entrega_preview.dart';
+import '../widgets/foto_entrega_selector_sheet.dart';
 import '../utils/repartidor_nombre_util.dart';
 import '../utils/repartidor_master_util.dart';
+import '../services/repartidor_seguridad_service.dart';
 import '../widgets/repartidor_master_badge.dart';
 import '../services/repartidor_saldo_service.dart';
+import '../services/repartidor_perfil_cache_service.dart';
+import '../services/repartidor_perfil_foto_cache_service.dart';
 
 class RepartidorMobileScreen extends StatefulWidget {
   const RepartidorMobileScreen({super.key});
@@ -71,6 +75,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   bool _isLoading = true;
   String? _repartidorNombre;
   String? _fotoPerfilUrl;
+  String? _fotoPerfilLocalPath;
   bool _fotoEntregaObligatoria = true; // Por defecto activado
   bool _esRepartidorMaster = false; // Indica si el repartidor es master
   String? _tipoRepartidor; // 'REPARTIDOR' o 'RECOLECTOR'
@@ -96,6 +101,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   Timer? _timerUbicacion; // Timer para actualizar cada X segundos
   Timer? _timerVerificarNotificaciones; // Timer para verificar notificaciones periódicamente
   String? _tenantId;
+  String? _nombreEmpresa;
   bool _rastreoTiempoReal = false;
   int _intervaloActualizacion = 30; // segundos
   String? _paisOperacion; // País de operación del tenant
@@ -501,6 +507,55 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   }
 
 
+  Future<void> _resolverFotoPerfilLocalHeader() async {
+    if (_repartidorId == null || _repartidorId!.isEmpty) return;
+    final path = await RepartidorPerfilFotoCacheService.rutaLocal(_repartidorId!);
+    if (mounted) setState(() => _fotoPerfilLocalPath = path);
+  }
+
+  Future<void> _cachearFotoPerfilHeader(String? url) async {
+    if (_repartidorId == null || url == null || url.isEmpty) return;
+    final path = await RepartidorPerfilFotoCacheService.descargarYCachear(
+      repartidorId: _repartidorId!,
+      url: url,
+    );
+    if (mounted && path != null) setState(() => _fotoPerfilLocalPath = path);
+  }
+
+  Widget _buildAvatarFotoPerfil(double size) {
+    final inicial = _repartidorNombre != null && _repartidorNombre!.isNotEmpty
+        ? _repartidorNombre![0].toUpperCase()
+        : 'R';
+    if (_fotoPerfilLocalPath != null) {
+      final f = File(_fotoPerfilLocalPath!);
+      if (f.existsSync()) {
+        return Image.file(
+          f,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => Center(
+            child: Text(inicial, style: TextStyle(color: Colors.white, fontSize: size * 0.4)),
+          ),
+        );
+      }
+    }
+    if (_fotoPerfilUrl != null && _fotoPerfilUrl!.isNotEmpty) {
+      return Image.network(
+        _fotoPerfilUrl!,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Center(
+          child: Text(inicial, style: TextStyle(color: Colors.white, fontSize: size * 0.4)),
+        ),
+      );
+    }
+    return Center(
+      child: Text(inicial, style: TextStyle(color: Colors.white, fontSize: size * 0.4)),
+    );
+  }
+
   Future<void> _obtenerNombreRepartidor() async {
     try {
       final user = supabase.auth.currentUser;
@@ -513,6 +568,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           final cachedTipo = prefs.getString('cached_repartidor_tipo_${user.id}');
           final cachedFoto = prefs.getString('cached_repartidor_foto_${user.id}');
           
+          final cachedUsuarioId =
+              prefs.getString('cached_repartidor_usuario_id_${user.id}');
           if (cachedNombre != null) {
             print('💾 Datos de repartidor cargados desde caché');
             setState(() {
@@ -521,7 +578,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               _esRepartidorMaster = cachedMaster ?? false;
               _tipoRepartidor = cachedTipo ?? 'REPARTIDOR';
               _esRecolector = cachedTipo == 'RECOLECTOR';
+              if (cachedUsuarioId != null) _repartidorId = cachedUsuarioId;
             });
+            await _resolverFotoPerfilLocalHeader();
             
             // Verificar conexión para actualizar en segundo plano
             final syncService = SyncService();
@@ -539,7 +598,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         try {
           final response = await supabase
               .from('usuarios')
-              .select('nombre, foto_perfil, repartidor_master, tipo_repartidor')
+              .select('id, nombre, foto_perfil, repartidor_master, tipo_repartidor')
               .eq('auth_id', user.id)  // USAR auth_id en lugar de id
               .limit(1)
               .maybeSingle();
@@ -552,6 +611,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           final tipoRepartidor = response['tipo_repartidor'] as String? ?? 'REPARTIDOR';
           final nombre = response['nombre'] as String?;
           final foto = response['foto_perfil'] as String?;
+          final usuarioId = response['id']?.toString();
           final esMaster = RepartidorMasterUtil.parseFlag(response['repartidor_master']);
           
           // ✅ Guardar en caché para uso offline
@@ -561,6 +621,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             await RepartidorMasterUtil.saveCached(user.id, esMaster);
             await prefs.setString('cached_repartidor_tipo_${user.id}', tipoRepartidor);
             if (foto != null) await prefs.setString('cached_repartidor_foto_${user.id}', foto);
+            if (usuarioId != null) {
+              await prefs.setString('cached_repartidor_usuario_id_${user.id}', usuarioId);
+            }
             print('💾 Datos de repartidor guardados en caché');
           } catch (cacheError) {
             print('⚠️ Error guardando en caché: $cacheError');
@@ -569,10 +632,13 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           setState(() {
             _repartidorNombre = RepartidorNombreUtil.normalizar(nombre);
             _fotoPerfilUrl = foto;
+            if (usuarioId != null) _repartidorId = usuarioId;
             _esRepartidorMaster = esMaster;
             _tipoRepartidor = tipoRepartidor;
             _esRecolector = tipoRepartidor == 'RECOLECTOR';
           });
+          await _cachearFotoPerfilHeader(foto);
+          await _resolverFotoPerfilLocalHeader();
           print('🔍 Repartidor Master: $_esRepartidorMaster');
           print('🔍 Tipo Repartidor: $_tipoRepartidor (Es Recolector: $_esRecolector)');
         } catch (e) {
@@ -587,13 +653,17 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               final cachedTipo = prefs.getString('cached_repartidor_tipo_${user.id}');
               final cachedFoto = prefs.getString('cached_repartidor_foto_${user.id}');
               
+              final cachedUsuarioId =
+                  prefs.getString('cached_repartidor_usuario_id_${user.id}');
               setState(() {
                 _repartidorNombre = cachedNombre;
                 _fotoPerfilUrl = cachedFoto;
                 _esRepartidorMaster = cachedMaster ?? false;
                 _tipoRepartidor = cachedTipo ?? 'REPARTIDOR';
                 _esRecolector = cachedTipo == 'RECOLECTOR';
+                if (cachedUsuarioId != null) _repartidorId = cachedUsuarioId;
               });
+              await _resolverFotoPerfilLocalHeader();
               return;
             }
           } catch (cacheError) {
@@ -1539,11 +1609,14 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               final remitenteId =
                   record['remitente_auth_id']?.toString() ?? '';
               if (remitenteId.isNotEmpty) {
-                final data = await supabase
+                var qUsu = supabase
                     .from('usuarios')
                     .select('nombre, rol')
-                    .eq('auth_id', remitenteId)
-                    .maybeSingle();
+                    .eq('auth_id', remitenteId);
+                if (_tenantId != null) {
+                  qUsu = qUsu.eq('tenant_id', _tenantId!);
+                }
+                final data = await qUsu.maybeSingle();
                 if (data != null) {
                   final rol = data['rol']?.toString() ?? '';
                   final nombre = data['nombre']?.toString() ?? '';
@@ -1604,6 +1677,25 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       final user = supabase.auth.currentUser;
       if (user == null) return;
 
+      if (_repartidorId == null) {
+        final prefs = await SharedPreferences.getInstance();
+        final cachedId = prefs.getString('cached_repartidor_usuario_id_${user.id}');
+        final perfilCache = await RepartidorPerfilCacheService.getCachedPerfilData();
+        final idCache = cachedId ?? perfilCache?['id']?.toString();
+        if (idCache != null && mounted) {
+          setState(() => _repartidorId = idCache);
+          await _resolverFotoPerfilLocalHeader();
+        }
+      }
+
+      if (!SyncService().isOnline) {
+        if (_repartidorId != null) {
+          await RepartidorNotificacionesPushService.instance
+              .initForRepartidor(_repartidorId!);
+        }
+        return;
+      }
+
       final response = await supabase
           .from('usuarios')
           .select('id')
@@ -1612,15 +1704,16 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           .maybeSingle();
 
       if (response != null && mounted) {
-        setState(() {
-          _repartidorId = response['id'].toString();
-        });
+        final id = response['id'].toString();
+        setState(() => _repartidorId = id);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('cached_repartidor_usuario_id_${user.id}', id);
         print('✅ Repartidor ID obtenido: $_repartidorId');
         await RepartidorNotificacionesPushService.instance
             .initForRepartidor(_repartidorId!);
+        await _resolverFotoPerfilLocalHeader();
       }
     } catch (e) {
-      // Solo imprimir error si el widget aún está montado
       if (mounted) {
         print('❌ Error obteniendo repartidor ID: $e');
       }
@@ -2707,22 +2800,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     }
   }
 
-  List<Orden> get _ordenesFiltradas {
-    // Generar clave de caché basada en dependencias
-    final nuevaCacheKey =
-        '${_ordenes.length}_$_filtroEstado$_filtroRepartidor${_searchController.text}_$_esRecolector$_esRepartidorMaster$_modoOrdenCercania${_secuenciaCercania.length}';
-    
-    // Si la caché es válida, retornarla
-    if (_ordenesFiltradasCache != null && _cacheKeyFiltradas == nuevaCacheKey) {
-      return _ordenesFiltradasCache!;
-    }
-    
-    // Recalcular solo si es necesario
-    // Nunca mostrar órdenes cuya entrega gestiona el colaborador (también si vienen de caché).
+  /// Lista tras filtros de pestaña/búsqueda, sin ordenamiento (base para «ordenar por cercanía»).
+  List<Orden> _filtrarOrdenesLista() {
     var filtradas =
         _ordenes.where((orden) => !orden.entregaPorVendedor).toList();
 
-    // Filtrar por estado (diferentes estados para recolectores vs repartidores)
     if (_esRecolector) {
       // Filtros específicos para recolectores
       switch (_filtroEstado) {
@@ -2795,14 +2877,23 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           .toList();
     }
 
-    // Aplicar ordenamiento según configuración
+    return filtradas;
+  }
+
+  List<Orden> get _ordenesFiltradas {
+    final nuevaCacheKey =
+        '${_ordenes.length}_$_filtroEstado$_filtroRepartidor${_searchController.text}_$_esRecolector$_esRepartidorMaster$_modoOrdenCercania${_secuenciaCercania.length}';
+
+    if (_ordenesFiltradasCache != null && _cacheKeyFiltradas == nuevaCacheKey) {
+      return _ordenesFiltradasCache!;
+    }
+
+    var filtradas = _filtrarOrdenesLista();
     filtradas = _aplicarOrdenamiento(filtradas);
 
-    // Guardar en caché
     _ordenesFiltradasCache = filtradas;
     _cacheKeyFiltradas = nuevaCacheKey;
-    
-    // Log solo cuando se recalcula (no en cada acceso)
+
     print('🔍 [FILTRO] Recalculado: ${filtradas.length} órdenes filtradas (filtro: $_filtroEstado)');
 
     return filtradas;
@@ -2822,14 +2913,18 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     var ordenadasActivas = List<Orden>.from(ordenesActivas);
     var ordenadasBloqueadas = List<Orden>.from(ordenesBloqueadas);
 
-    // Orden explícito por cercanía (botón en pantalla principal)
+    // Orden por cercanía (botón): todas las tarjetas visibles, numeradas 1..n
     if (_modoOrdenCercania && _secuenciaCercania.isNotEmpty) {
-      ordenadasActivas.sort((a, b) {
-        final sa = _secuenciaCercania[a.id] ?? 9999;
-        final sb = _secuenciaCercania[b.id] ?? 9999;
+      final lista = List<Orden>.from(ordenes);
+      lista.sort((a, b) {
+        final sa = _secuenciaCercania[a.id];
+        final sb = _secuenciaCercania[b.id];
+        if (sa == null && sb == null) return 0;
+        if (sa == null) return 1;
+        if (sb == null) return -1;
         return sa.compareTo(sb);
       });
-      return [...ordenadasActivas, ...ordenadasBloqueadas];
+      return lista;
     }
 
     // Si hay que ordenar por distancia, necesitamos calcular las distancias primero
@@ -2939,12 +3034,13 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     setState(() => _ordenandoCercania = true);
 
     try {
-      final activas = _ordenesFiltradas
-          .where((o) => o.estado.trim().toUpperCase() != 'POR ENVIAR')
-          .toList();
+      // Mismas órdenes que ve el repartidor (pestaña + búsqueda), sin excluir POR ENVIAR
+      final visibles = _filtrarOrdenesLista();
 
-      if (activas.isEmpty) {
-        _mostrarMensaje('No hay órdenes activas para ordenar');
+      if (visibles.isEmpty) {
+        _mostrarMensaje(
+          'No hay órdenes en este filtro para ordenar por cercanía',
+        );
         return;
       }
 
@@ -2952,7 +3048,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           await PaisesService.obtenerPaisOperacionActual();
 
       final resultado = await OrdenProximidadService.ordenarPorCercania(
-        ordenes: activas,
+        ordenes: visibles,
         paisOperacion: pais,
         sucursalesPorOrdenId: _sucursalesInfo,
       );
@@ -2961,6 +3057,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         _mostrarMensaje(
           'Activa el GPS y concede permiso de ubicación para ordenar por cercanía',
         );
+        return;
+      }
+
+      if (resultado.secuencia.isEmpty) {
+        _mostrarMensaje('No se pudo calcular el orden por cercanía');
         return;
       }
 
@@ -2973,7 +3074,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         _ordenesFiltradasCache = null;
         _cacheKeyFiltradas = null;
       });
-      _mostrarMensaje('Órdenes ordenadas de la más cercana a la más lejana');
+      _mostrarMensaje(
+        '${resultado.secuencia.length} órdenes ordenadas de la más cercana a la más lejana',
+      );
     } catch (e) {
       print('⚠️ Ordenar por cercanía: $e');
       _mostrarMensaje('No se pudo ordenar por cercanía. Intenta de nuevo.');
@@ -3002,18 +3105,26 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 26,
-          height: 26,
-          decoration: const BoxDecoration(
-            color: Color(0xFF4CAF50),
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: AppColors.botonPrincipal,
             shape: BoxShape.circle,
+            border: Border.all(color: AppColors.onAccentButton, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 4,
+                offset: const Offset(0, 1),
+              ),
+            ],
           ),
           alignment: Alignment.center,
           child: Text(
             '$n',
             style: const TextStyle(
-              color: Colors.white,
-              fontSize: 13,
+              color: AppColors.onAccentButton,
+              fontSize: 15,
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -3080,28 +3191,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                         : null,
                   ),
                   child: ClipOval(
-                    child: _fotoPerfilUrl != null && _fotoPerfilUrl!.isNotEmpty
-                        ? Image.network(
-                            _fotoPerfilUrl!,
-                            width: 40,
-                            height: 40,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Center(
-                                child: Text(
-                                  _repartidorNombre != null &&
-                                          _repartidorNombre!.isNotEmpty
-                                      ? _repartidorNombre![0].toUpperCase()
-                                      : 'R',
-                                  style: const TextStyle(
-                                    color: Color(0xFFFFFFFF),
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              );
-                            },
-                          )
+                    child: (_fotoPerfilLocalPath != null ||
+                            (_fotoPerfilUrl != null && _fotoPerfilUrl!.isNotEmpty))
+                        ? _buildAvatarFotoPerfil(40)
                         : Center(
                             child: Text(
                               _repartidorNombre != null &&
@@ -3358,6 +3450,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   builder: (context) => QRScannerFullscreen(
                     repartidorNombre: _repartidorNombre,
                     esRepartidorMaster: _esRepartidorMaster,
+                    tenantId: _tenantId,
+                    nombreEmpresa: _nombreEmpresa,
                   ),
                 ),
               );
@@ -3689,6 +3783,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       onTap: () {
         setState(() {
           _filtroEstado = label;
+          _modoOrdenCercania = false;
+          _secuenciaCercania = {};
+          _distanciaMetrosCercania = {};
           _ordenesFiltradasCache = null;
           _cacheKeyFiltradas = null;
         });
@@ -3706,6 +3803,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       onTap: () {
         setState(() {
           _filtroRepartidor = label == 'MÍAS' ? 'MÍAS' : null;
+          _modoOrdenCercania = false;
+          _secuenciaCercania = {};
+          _distanciaMetrosCercania = {};
           _ordenesFiltradasCache = null;
           _cacheKeyFiltradas = null;
         });
@@ -3767,6 +3867,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 children: [
                   Row(
                     children: [
+                      _buildBadgeSecuenciaCercania(orden),
+                      if (_modoOrdenCercania &&
+                          _secuenciaCercania.containsKey(orden.id))
+                        const SizedBox(width: 8),
                       // Badge de REMESA
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -3819,8 +3923,6 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                           ),
                         ),
                       ),
-                      const SizedBox(width: 6),
-                      _buildBadgeSecuenciaCercania(orden),
                     ],
                   ),
                   // Chip de estado (solo POR ENVIAR o ENTREGADO)
@@ -4085,6 +4187,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   Expanded(
                     child: Row(
                       children: [
+                        _buildBadgeSecuenciaCercania(orden),
+                        if (_modoOrdenCercania &&
+                            _secuenciaCercania.containsKey(orden.id))
+                          const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
@@ -4101,9 +4207,6 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                           ),
                         ),
                         const SizedBox(width: 6),
-                        _buildBadgeSecuenciaCercania(orden),
-                        if (_modoOrdenCercania && _secuenciaCercania.containsKey(orden.id))
-                          const SizedBox(width: 6),
                         _buildChipTipoOrden(tipoInfo),
                         if (esUrgente) ...[
                           const SizedBox(width: 6),
@@ -7157,102 +7260,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     
     try {
       // Mostrar opciones: Cámara o Galería
-      final opcion = await showModalBottomSheet<String>(
-        context: context,
-        builder: (context) => SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(20),
-                    topRight: Radius.circular(20),
-                  ),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.darkBorder,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Seleccionar foto de entrega',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.darkText,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    ListTile(
-                      leading: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1976D2).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(Icons.camera_alt, color: Color(0xFF1976D2), size: 24),
-                      ),
-                      title: const Text(
-                        'Tomar foto',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.darkText,
-                        ),
-                      ),
-                      subtitle: const Text(
-                        'Usar la cámara para tomar una nueva foto',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: AppColors.darkTextMuted,
-                        ),
-                      ),
-                      onTap: () => Navigator.pop(context, 'camara'),
-                    ),
-                    ListTile(
-                      leading: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF4CAF50).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(Icons.photo_library, color: Color(0xFF4CAF50), size: 24),
-                      ),
-                      title: const Text(
-                        'Elegir de galería',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.darkText,
-                        ),
-                      ),
-                      subtitle: const Text(
-                        'Seleccionar una foto de tu galería',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: AppColors.darkTextMuted,
-                        ),
-                      ),
-                      onTap: () => Navigator.pop(context, 'galeria'),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+      final opcion = await FotoEntregaSelectorSheet.show(context);
 
       if (opcion == null) return;
 
@@ -7430,6 +7438,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               
               // También guardar en cached_tenant_id para consistencia
               await prefs.setString('cached_tenant_id_${user.id}', tenantId);
+              final nombreCache =
+                  await RepartidorSeguridadService.nombreEmpresaDesdeCache(user.id);
+              if (nombreCache != null && mounted) {
+                setState(() => _nombreEmpresa = nombreCache);
+              }
             }
           } else {
             // Si no hay cached_user_data, intentar cached_tenant_id
@@ -7487,6 +7500,24 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 _tenantId = tenantIdFromDB;
               });
               print('✅ Tenant ID obtenido: $_tenantId');
+            }
+
+            try {
+              final tenantData = await supabase
+                  .from('tenants')
+                  .select('nombre')
+                  .eq('id', tenantIdFromDB)
+                  .maybeSingle();
+              final nombre = tenantData?['nombre']?.toString();
+              if (nombre != null && nombre.isNotEmpty && mounted) {
+                setState(() => _nombreEmpresa = nombre);
+                await RepartidorSeguridadService.guardarNombreEmpresaEnCache(
+                  user.id,
+                  nombre,
+                );
+              }
+            } catch (e) {
+              print('⚠️ Error cargando nombre de empresa: $e');
             }
           }
         } catch (e) {

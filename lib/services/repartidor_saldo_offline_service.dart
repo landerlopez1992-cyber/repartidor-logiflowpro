@@ -68,13 +68,13 @@ class RepartidorSaldoOfflineService {
     return sum;
   }
 
-  /// Saldo mostrado = servidor (o caché) + pendiente en cola, salvo solicitud de pago abierta.
+  /// Saldo mostrado = servidor (o caché) + entregas aún en cola offline.
+  /// La solicitud de nómina pendiente no reduce el saldo visible hasta que la empresa apruebe.
   static double combinarSaldoVisible({
     required double saldoServidor,
     required double pendienteEnCola,
-    required bool solicitudPendiente,
+    bool solicitudPendiente = false,
   }) {
-    if (solicitudPendiente) return 0;
     return saldoServidor + pendienteEnCola;
   }
 }

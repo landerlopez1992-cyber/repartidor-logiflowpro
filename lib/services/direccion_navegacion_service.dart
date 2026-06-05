@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:url_launcher/url_launcher.dart';
 import '../main.dart';
 import '../models/orden.dart';
@@ -85,7 +87,6 @@ class DireccionNavegacionService {
     partes.add(v);
   }
 
-  /// ¿La orden aún debe ir al punto de sucursal (no al destinatario final)?
   static bool _navegarASucursal(Orden orden) {
     if (!orden.recogerEnSucursal) return false;
     final e = orden.estado.trim().toUpperCase();
@@ -94,7 +95,6 @@ class DireccionNavegacionService {
         e == 'ENTREGADO EN SUCURSAL';
   }
 
-  /// ¿Ir al colaborador/vendedor para recoger el pedido?
   static bool _navegarAColaborador(Orden orden) {
     return OrdenRecogidaColaboradorUi.esRecogidaColaborador(orden) &&
         OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(orden);
@@ -112,11 +112,7 @@ class DireccionNavegacionService {
     }
 
     if (_navegarAColaborador(orden)) {
-      return _desdeCamposOrden(
-        orden,
-        pais,
-        tipo: 'colaborador',
-      );
+      return _desdeCamposOrden(orden, pais, tipo: 'colaborador');
     }
 
     if ((orden.tipoOrden ?? '').toUpperCase() == 'RECOGIDA') {
@@ -172,9 +168,7 @@ class DireccionNavegacionService {
     }
 
     final sinPais = partes.join(', ');
-    if (sinPais.isNotEmpty &&
-        !_contieneAlgunPais(sinPais) &&
-        pais != null) {
+    if (sinPais.isNotEmpty && !_contieneAlgunPais(sinPais) && pais != null) {
       _agregarParte(partes, pais);
     }
 
@@ -184,7 +178,6 @@ class DireccionNavegacionService {
     );
   }
 
-  /// Carga sucursal desde BD si la orden tiene [sucursalId].
   static Future<Map<String, dynamic>?> cargarSucursalOrden(Orden orden) async {
     if (!orden.recogerEnSucursal) return null;
     if (orden.sucursalId == null || orden.sucursalId!.isEmpty) return null;
@@ -212,7 +205,6 @@ class DireccionNavegacionService {
     return null;
   }
 
-  /// Abre Google Maps con la dirección postal completa (prioridad sobre coordenadas sueltas).
   static Future<bool> abrirDestinoEnGoogleMaps({
     required Orden orden,
     Map<String, dynamic>? sucursal,
@@ -242,69 +234,67 @@ class DireccionNavegacionService {
         print('🗺️ Navegación (${res.tipoDestino}): $destino');
       } else if (latitudFallback != null && longitudFallback != null) {
         destino = '$latitudFallback,$longitudFallback';
-        print('🗺️ Navegación (coordenadas, sin dirección textual)');
+        print('🗺️ Navegación (coordenadas): $destino');
       } else {
         return false;
       }
 
-      return _lanzarGoogleMaps(destino);
+      return _lanzarMapaExterno(destino);
     } catch (e) {
       print('❌ abrirDestinoEnGoogleMaps: $e');
       return false;
     }
   }
 
-  static Future<bool> _lanzarGoogleMaps(String destino) async {
-    final encoded = Uri.encodeComponent(destino);
+  /// Intenta abrir mapa sin depender de [canLaunchUrl] (falla en Android 11+ sin queries).
+  static Future<bool> _lanzarMapaExterno(String destino) async {
+    final q = Uri.encodeQueryComponent(destino);
+    final uris = <Uri>[];
 
-    try {
-      final appUri = Uri.parse(
-        'comgooglemaps://?q=$encoded&directionsmode=driving',
+    if (Platform.isIOS) {
+      uris.add(Uri.parse('comgooglemaps://?q=$q&directionsmode=driving'));
+      uris.add(Uri.parse('maps://?q=$q'));
+      uris.add(Uri.parse('https://maps.apple.com/?q=$q'));
+    } else {
+      uris.add(Uri.parse('google.navigation:q=$q'));
+      uris.add(Uri.parse('comgooglemaps://?q=$q&directionsmode=driving'));
+      uris.add(
+        Uri.parse(
+          'intent://maps.google.com/maps?q=$q#Intent;scheme=https;package=com.google.android.apps.maps;end',
+        ),
       );
-      if (await canLaunchUrl(appUri)) {
-        return launchUrl(appUri, mode: LaunchMode.externalApplication);
-      }
-    } catch (e) {
-      print('⚠️ Google Maps app: $e');
     }
 
-    try {
-      final webSearch = Uri.parse(
-        'https://www.google.com/maps/search/?api=1&query=$encoded',
-      );
-      if (await canLaunchUrl(webSearch)) {
-        return launchUrl(webSearch, mode: LaunchMode.externalApplication);
-      }
-    } catch (e) {
-      print('⚠️ Google Maps web search: $e');
-    }
-
-    try {
-      final dirUri = Uri.https('www.google.com', '/maps/dir/', {
+    uris.add(
+      Uri.parse('https://www.google.com/maps/search/?api=1&query=$q'),
+    );
+    uris.add(
+      Uri.https('www.google.com', '/maps/dir/', {
         'api': '1',
         'destination': destino,
         'travelmode': 'driving',
-      });
-      if (await canLaunchUrl(dirUri)) {
-        return launchUrl(dirUri, mode: LaunchMode.externalApplication);
-      }
-    } catch (e) {
-      print('⚠️ Google Maps dir: $e');
-    }
+      }),
+    );
+    uris.add(Uri.parse('geo:0,0?q=$q'));
 
-    try {
-      final geoUri = Uri.parse('geo:0,0?q=$encoded');
-      if (await canLaunchUrl(geoUri)) {
-        return launchUrl(geoUri, mode: LaunchMode.externalApplication);
+    for (final uri in uris) {
+      try {
+        final ok = await launchUrl(
+          uri,
+          mode: LaunchMode.externalApplication,
+        );
+        if (ok) {
+          print('✅ Mapa abierto con: $uri');
+          return true;
+        }
+      } catch (e) {
+        print('⚠️ launchUrl falló ($uri): $e');
       }
-    } catch (e) {
-      print('⚠️ geo: $e');
     }
 
     return false;
   }
 
-  /// Dirección completa para geocodificación (misma lógica que Google Maps).
   static Future<DireccionNavegacionResultado> resolverConPaisOrden(
     Orden orden, {
     Map<String, dynamic>? sucursal,

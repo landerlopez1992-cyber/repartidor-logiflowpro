@@ -16,6 +16,8 @@ import '../services/auth_error_handler.dart';
 import '../services/repartidor_notificaciones_push_service.dart';
 import '../services/repartidor_saldo_service.dart';
 import '../services/repartidor_saldo_offline_service.dart';
+import '../services/repartidor_perfil_foto_cache_service.dart';
+import '../services/repartidor_solicitud_pago_offline_service.dart';
 import '../services/repartidor_solicitud_pago_service.dart';
 import '../widgets/repartidor_solicitud_pago_dialogs.dart';
 import '../services/repartidor_historial_pago_service.dart';
@@ -39,6 +41,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   bool _isLoading = true;
   bool _isEditing = false;
   String? _fotoPerfilUrl;
+  String? _fotoPerfilLocalPath;
   String? _repartidorId;
   String? _tenantId;
   
@@ -55,6 +58,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   double _saldo = 0.0;
   double _saldoServidor = 0.0;
   double _saldoPendienteSync = 0.0;
+  bool _solicitudPendiente = false;
   String _monedaSaldo = 'USD';
   String _metodoPago = 'por_orden';
   RepartidorSolicitudPreview? _previewPago;
@@ -117,6 +121,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     _saldoServidor = r.saldoServidor;
     _saldoPendienteSync = r.saldoPendienteSync;
     _monedaSaldo = r.moneda;
+    _solicitudPendiente = r.solicitudPendiente;
   }
 
   Future<void> _persistirMasterFlag(bool esMaster) async {
@@ -197,6 +202,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           if (!_esRecolector) {
             await _cargarEstadisticasSemanales();
           }
+          await _cachearFotoPerfilLocal(_repartidorId!, response['foto_perfil']?.toString());
           await _cargarHistorialPagos();
           await _cargarSaldo();
           await _cargarPreviewPago();
@@ -245,6 +251,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
               if (!_esRecolector) {
                 await _cargarEstadisticasSemanales();
               }
+              await _cachearFotoPerfilLocal(_repartidorId!, response['foto_perfil']?.toString());
               await _cargarHistorialPagos();
               await _cargarSaldo();
               await _cargarPreviewPago();
@@ -305,6 +312,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
       
       // Cargar saldo desde caché
       await _cargarSaldoDesdeCache();
+      await _cargarPreviewPago();
+      await _resolverFotoPerfilLocal();
     } catch (e) {
       print('❌ Error cargando desde caché: $e');
       setState(() {
@@ -332,10 +341,43 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     }
   }
 
+  Future<void> _cachearFotoPerfilLocal(String repartidorId, String? url) async {
+    if (url == null || url.isEmpty) {
+      await _resolverFotoPerfilLocal();
+      return;
+    }
+    final path = await RepartidorPerfilFotoCacheService.descargarYCachear(
+      repartidorId: repartidorId,
+      url: url,
+    );
+    if (mounted && path != null) {
+      setState(() => _fotoPerfilLocalPath = path);
+    }
+  }
+
+  Future<void> _resolverFotoPerfilLocal() async {
+    if (_repartidorId == null) return;
+    final path = await RepartidorPerfilFotoCacheService.rutaLocal(_repartidorId!);
+    if (mounted) setState(() => _fotoPerfilLocalPath = path);
+  }
+
+  ImageProvider? _imagenPerfilProvider() {
+    if (_fotoPerfilLocalPath != null) {
+      final f = File(_fotoPerfilLocalPath!);
+      if (f.existsSync()) return FileImage(f);
+    }
+    if (_isOnline && _fotoPerfilUrl != null && _fotoPerfilUrl!.isNotEmpty) {
+      return NetworkImage(_fotoPerfilUrl!);
+    }
+    return null;
+  }
+
   // Cargar historial desde caché
   Future<void> _cargarHistorialDesdeCache() async {
     try {
-      final historialCache = await RepartidorPerfilCacheService.getCachedHistorialPagos();
+      final historialCache = _repartidorId != null
+          ? await RepartidorSolicitudPagoOfflineService.historialConLocales(_repartidorId!)
+          : await RepartidorPerfilCacheService.getCachedHistorialPagos();
       setState(() {
         _historialNomina =
             historialCache.map((s) => HistorialNominaItem(solicitud: s)).toList();
@@ -374,6 +416,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             moneda: moneda,
             solicitudPendiente: solicitudPendiente,
           ));
+          _solicitudPendiente = solicitudPendiente;
         });
         print(
           '💾 Saldo caché: \$${saldoServidor.toStringAsFixed(2)} '
@@ -586,6 +629,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   }
 
   Future<void> _seleccionarFoto() async {
+    if (_repartidorId == null) return;
     try {
       final XFile? image = await _picker.pickImage(
         source: ImageSource.gallery,
@@ -594,32 +638,64 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         imageQuality: 80,
       );
 
-      if (image != null) {
-        // Subir imagen a Supabase Storage
-        final file = File(image.path);
-        final fileName = '${_repartidorId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-        
-        await supabase.storage
-            .from('fotos-perfil')
-            .upload(fileName, file);
+      if (image == null) return;
 
-        // Obtener URL pública
-        final publicUrl = supabase.storage
-            .from('fotos-perfil')
-            .getPublicUrl(fileName);
+      final file = File(image.path);
+      final localPath = await RepartidorPerfilFotoCacheService.guardarArchivoLocal(
+        repartidorId: _repartidorId!,
+        origen: file,
+      );
 
-        setState(() {
-          _fotoPerfilUrl = publicUrl;
+      setState(() {
+        _fotoPerfilLocalPath = localPath ?? image.path;
+      });
+
+      final perfilCache = await RepartidorPerfilCacheService.getCachedPerfilData();
+      if (perfilCache != null) {
+        await RepartidorPerfilCacheService.cachePerfilData({
+          ...perfilCache,
+          'foto_perfil_local': _fotoPerfilLocalPath,
         });
-
-        // Actualizar en la base de datos
-        await supabase
-            .from('usuarios')
-            .update({'foto_perfil': publicUrl})
-            .eq('id', _repartidorId!);
-
-        _mostrarMensaje('Foto actualizada correctamente', Colors.green);
       }
+
+      if (!_isOnline) {
+        await SyncService().addOperation(
+          type: 'upload_foto_perfil',
+          ordenId: _repartidorId!,
+          data: {
+            'repartidor_id': _repartidorId!,
+            'file_path': _fotoPerfilLocalPath,
+          },
+        );
+        _mostrarMensaje(
+          'Foto guardada en el dispositivo. Se subirá al reconectar.',
+          Colors.green,
+        );
+        return;
+      }
+
+      final fileName = '${_repartidorId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      await supabase.storage.from('fotos-perfil').upload(fileName, file);
+      final publicUrl = supabase.storage.from('fotos-perfil').getPublicUrl(fileName);
+
+      setState(() => _fotoPerfilUrl = publicUrl);
+      await supabase
+          .from('usuarios')
+          .update({'foto_perfil': publicUrl})
+          .eq('id', _repartidorId!);
+
+      if (perfilCache != null) {
+        await RepartidorPerfilCacheService.cachePerfilData({
+          ...perfilCache,
+          'foto_perfil': publicUrl,
+        });
+      }
+      await RepartidorPerfilFotoCacheService.vincularUrlLocal(
+        repartidorId: _repartidorId!,
+        localPath: _fotoPerfilLocalPath ?? file.path,
+        publicUrl: publicUrl,
+      );
+      _mostrarMensaje('Foto actualizada correctamente', Colors.green);
     } catch (e) {
       _mostrarMensaje('Error al actualizar foto: $e', Colors.red);
     }
@@ -825,10 +901,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             child: CircleAvatar(
               radius: 60,
               backgroundColor: const Color(0xFF4CAF50),
-              backgroundImage: _fotoPerfilUrl != null
-                  ? NetworkImage(_fotoPerfilUrl!)
-                  : null,
-              child: _fotoPerfilUrl == null
+              backgroundImage: _imagenPerfilProvider(),
+              child: _imagenPerfilProvider() == null
                   ? const Icon(
                       Icons.person,
                       size: 60,
@@ -1653,7 +1727,6 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         await _cargarHistorialDesdeCache();
       }
     } else {
-      // Sin conexión, cargar desde caché
       print('📴 Sin conexión - Cargando historial desde caché');
       await _cargarHistorialDesdeCache();
     }
@@ -1696,9 +1769,15 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   }
 
   Future<void> _cargarPreviewPago() async {
-    if (_repartidorId == null || !_isOnline) return;
-    try {
-      final p = await RepartidorSolicitudPagoService.cargarPreview(_repartidorId!);
+    if (_repartidorId == null) return;
+
+    if (!_isOnline) {
+      final saldoR = await RepartidorSaldoService.cargarSaldo(_repartidorId!);
+      final p = await RepartidorSolicitudPagoOfflineService.previewDesdeCache(
+        _repartidorId!,
+        saldoOverride: saldoR.saldoServidor,
+        solicitudPendienteOverride: saldoR.solicitudPendiente,
+      );
       if (!mounted || p == null) return;
       final pendienteCola = p.esPorOrden
           ? await RepartidorSaldoOfflineService.totalPendienteEnCola()
@@ -1706,19 +1785,55 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
       setState(() {
         _previewPago = p;
         _metodoPago = p.metodoPago;
-        if (p.esPorOrden) {
-          _saldoServidor = p.saldoAcumulado;
-          _saldoPendienteSync = pendienteCola;
-          _saldo = RepartidorSaldoOfflineService.combinarSaldoVisible(
-            saldoServidor: p.saldoAcumulado,
-            pendienteEnCola: pendienteCola,
-            solicitudPendiente: false,
-          );
-          _monedaSaldo = p.moneda;
-        }
+        _saldoServidor = p.saldoAcumulado;
+        _saldoPendienteSync = pendienteCola;
+        _saldo = RepartidorSaldoOfflineService.combinarSaldoVisible(
+          saldoServidor: p.saldoAcumulado,
+          pendienteEnCola: pendienteCola,
+          solicitudPendiente: p.solicitudPendiente,
+        );
+        _solicitudPendiente = p.solicitudPendiente;
+        _monedaSaldo = p.moneda;
+      });
+      return;
+    }
+
+    try {
+      final p = await RepartidorSolicitudPagoService.cargarPreview(_repartidorId!);
+      if (!mounted || p == null) return;
+      await RepartidorSolicitudPagoOfflineService.cachePreview(_repartidorId!, p);
+      final pendienteCola = p.esPorOrden
+          ? await RepartidorSaldoOfflineService.totalPendienteEnCola()
+          : 0.0;
+      setState(() {
+        _previewPago = p;
+        _metodoPago = p.metodoPago;
+        _saldoServidor = p.saldoAcumulado;
+        _saldoPendienteSync = pendienteCola;
+        _saldo = RepartidorSaldoOfflineService.combinarSaldoVisible(
+          saldoServidor: p.saldoAcumulado,
+          pendienteEnCola: pendienteCola,
+          solicitudPendiente: p.solicitudPendiente,
+        );
+        _solicitudPendiente = p.solicitudPendiente;
+        _monedaSaldo = p.moneda;
       });
     } catch (e) {
-      print('⚠️ Preview solicitud pago: $e');
+      print('⚠️ Preview solicitud pago online, usando caché: $e');
+      final saldoR = await RepartidorSaldoService.cargarSaldo(_repartidorId!);
+      final pCache = await RepartidorSolicitudPagoOfflineService.previewDesdeCache(
+        _repartidorId!,
+        saldoOverride: saldoR.saldoServidor,
+        solicitudPendienteOverride: saldoR.solicitudPendiente,
+      );
+      if (mounted && pCache != null) {
+        setState(() {
+          _previewPago = pCache;
+          _metodoPago = pCache.metodoPago;
+          _monedaSaldo = pCache.moneda;
+          _solicitudPendiente = pCache.solicitudPendiente;
+        });
+      }
     }
   }
 
@@ -1757,6 +1872,12 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
 
   Future<List<String>> _obtenerOrdenesIdsParaSolicitud() async {
     final nombre = _nombreController.text.trim();
+    if (!_isOnline) {
+      return RepartidorSolicitudPagoOfflineService.ordenesIdsDesdeCache(
+        repartidorNombre: nombre,
+        esRecolector: _esRecolector,
+      );
+    }
     final estadoObjetivo = _esRecolector ? 'RECOGIDO' : 'ENTREGADO';
 
     final todas = await supabase
@@ -1805,6 +1926,30 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
 
     setState(() => _isLoading = true);
     try {
+      if (!_isOnline) {
+        await RepartidorSolicitudPagoOfflineService.encolarSolicitud(
+          repartidorId: _repartidorId!,
+          tenantId: _tenantId!,
+          repartidorNombre: _nombreController.text.trim(),
+          moneda: moneda ?? _monedaSaldo,
+          monto: monto,
+          totalOrdenes: ordenesIds.length,
+          ordenesIds: ordenesIds,
+          kilometrosRecorridos: kilometros,
+          diasTrabajados: diasTrabajados,
+          metodoPago: _previewPago?.metodoPago ?? 'por_orden',
+        );
+        _mostrarMensaje(
+          'Solicitud guardada. Se enviará cuando haya conexión.',
+          Colors.green,
+        );
+        if (mounted) setState(() => _solicitudPendiente = true);
+        await _cargarSaldo();
+        await _cargarPreviewPago();
+        await _cargarHistorialDesdeCache();
+        return;
+      }
+
       final map = await RepartidorSolicitudPagoService.crearSolicitud(
         repartidorId: _repartidorId!,
         tenantId: _tenantId!,
@@ -1838,6 +1983,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
       }
 
       _mostrarMensaje('Solicitud de pago enviada correctamente', Colors.green);
+      if (mounted) setState(() => _solicitudPendiente = true);
       await _cargarSaldo();
       await _cargarPreviewPago();
       await _cargarHistorialPagos();
@@ -1850,10 +1996,6 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   }
 
   Future<void> _mostrarModalSolicitarPago() async {
-    if (!_isOnline) {
-      _mostrarMensaje('Necesitas conexión para solicitar el pago', Colors.orange);
-      return;
-    }
     if (_repartidorId == null) return;
 
     await _cargarPreviewPago();
@@ -1892,9 +2034,9 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     }
 
     final ordenesIds = await _obtenerOrdenesIdsParaSolicitud();
-    if (_saldoPendienteSync > 0) {
+    if (_isOnline && _saldoPendienteSync > 0) {
       _mostrarMensaje(
-        'Hay entregas pendientes de sincronizar. Conéctate y espera a que se suban antes de solicitar el pago.',
+        'Hay entregas pendientes de sincronizar. Espera a que se suban antes de solicitar el pago.',
         Colors.orange,
       );
       return;
@@ -1918,32 +2060,33 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     );
   }
 
-  Widget _buildHistorialPagos() {
-    return InkWell(
-      onTap: () {
-        if (_repartidorId != null) {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => HistorialPagosCompletoScreen(
-                repartidorId: _repartidorId!,
-                repartidorNombre: _nombreController.text.trim(),
-              ),
-            ),
-          );
-        }
-      },
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.darkSurface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.darkBorder),
+  void _abrirHistorialPagosCompleto() {
+    if (_repartidorId == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => HistorialPagosCompletoScreen(
+          repartidorId: _repartidorId!,
+          repartidorNombre: _nombreController.text.trim(),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      ),
+    );
+  }
+
+  Widget _buildHistorialPagos() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.darkSurface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.darkBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: _abrirHistorialPagosCompleto,
+            borderRadius: BorderRadius.circular(8),
+            child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text(
@@ -1961,36 +2104,53 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            if (_cargandoHistorial)
-              const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: CircularProgressIndicator(),
-                ),
-              )
-            else if (_historialNomina.isEmpty)
-              const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: Text(
-                    'Sin nóminas registradas. Al solicitar y cobrar un pago verás el detalle aquí.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: AppColors.darkTextMuted,
-                    ),
+          ),
+          const SizedBox(height: 12),
+          if (_cargandoHistorial)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(16.0),
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else if (_historialNomina.isEmpty)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(16.0),
+                child: Text(
+                  'Sin nóminas registradas. Al solicitar un pago verás el estado aquí hasta que la empresa lo apruebe.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: AppColors.darkTextMuted,
                   ),
                 ),
-              )
-            else
-              ..._historialNomina
-                  .take(2)
-                  .map((item) => HistorialPagoDetalleCard(item: item, expanded: false)),
-            if (_historialNomina.length > 2)
-              Padding(
-                padding: const EdgeInsets.only(top: 8.0),
-                child: Center(
+              ),
+            )
+          else
+            Center(
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 360),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: _historialNomina
+                      .take(2)
+                      .map(
+                        (item) => HistorialPagoResumenCard(
+                          item: item,
+                          onTap: _abrirHistorialPagosCompleto,
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+            ),
+          if (_historialNomina.length > 2)
+            Padding(
+              padding: const EdgeInsets.only(top: 8.0),
+              child: Center(
+                child: InkWell(
+                  onTap: _abrirHistorialPagosCompleto,
                   child: Text(
                     'Ver historial completo (${_historialNomina.length} registros)',
                     style: const TextStyle(
@@ -2001,8 +2161,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                   ),
                 ),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }

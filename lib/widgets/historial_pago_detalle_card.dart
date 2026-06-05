@@ -2,7 +2,111 @@ import 'package:flutter/material.dart';
 import '../config/app_colors.dart';
 import '../services/repartidor_historial_pago_service.dart';
 
-/// Tarjeta detallada de una solicitud de nómina (tema oscuro).
+/// Tarjeta compacta para el perfil (sin detalle de órdenes; tap abre historial completo).
+class HistorialPagoResumenCard extends StatelessWidget {
+  const HistorialPagoResumenCard({
+    super.key,
+    required this.item,
+    this.onTap,
+  });
+
+  final HistorialNominaItem item;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ui = HistorialPagoDetalleCard._estadoUi(item.estado);
+    final metodoLabel = HistorialNominaItem.etiquetaMetodo(item.metodo);
+    final esPendiente = item.estado == 'PENDIENTE';
+    final ordenesTxt = item.totalOrdenes > 0
+        ? '${item.totalOrdenes} orden${item.totalOrdenes == 1 ? '' : 'es'}'
+        : null;
+
+    final card = Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.darkElevated,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: ui.color.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 32,
+            height: 32,
+            child: esPendiente
+                ? Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: ui.color,
+                    ),
+                  )
+                : Icon(ui.icon, color: ui.color, size: 22),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  ui.label,
+                  style: TextStyle(
+                    color: ui.color,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+                Text(
+                  metodoLabel,
+                  style: const TextStyle(color: AppColors.darkTextMuted, fontSize: 11),
+                ),
+                if (ordenesTxt != null && item.metodo == 'por_orden')
+                  Text(
+                    ordenesTxt,
+                    style: const TextStyle(color: AppColors.darkTextMuted, fontSize: 11),
+                  ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '\$${item.monto.toStringAsFixed(2)}',
+                style: const TextStyle(
+                  color: AppColors.darkText,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Text(
+                item.moneda,
+                style: const TextStyle(color: AppColors.darkTextMuted, fontSize: 10),
+              ),
+            ],
+          ),
+          if (onTap != null) ...[
+            const SizedBox(width: 6),
+            const Icon(Icons.chevron_right, color: AppColors.darkTextMuted, size: 18),
+          ],
+        ],
+      ),
+    );
+
+    if (onTap == null) return card;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: card,
+    );
+  }
+}
+
+/// Tarjeta detallada de una solicitud de nómina (tema oscuro, pantalla historial completo).
 class HistorialPagoDetalleCard extends StatelessWidget {
   const HistorialPagoDetalleCard({
     super.key,
@@ -21,7 +125,7 @@ class HistorialPagoDetalleCard extends StatelessWidget {
         '${fecha.hour.toString().padLeft(2, '0')}:${fecha.minute.toString().padLeft(2, '0')}';
   }
 
-  ({Color color, IconData icon, String label}) _estadoUi(String estado) {
+  static ({Color color, IconData icon, String label}) _estadoUi(String estado) {
     switch (estado) {
       case 'PENDIENTE':
         return (color: AppColors.botonPrincipal, icon: Icons.pending, label: 'Pendiente de revisión');
@@ -38,7 +142,8 @@ class HistorialPagoDetalleCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ui = _estadoUi(item.estado);
+    final ui = HistorialPagoDetalleCard._estadoUi(item.estado);
+    final esPendiente = item.estado == 'PENDIENTE';
     final metodoLabel = HistorialNominaItem.etiquetaMetodo(item.metodo);
     final km = item.kilometros;
     final dias = item.diasTrabajados;
@@ -57,12 +162,16 @@ class HistorialPagoDetalleCard extends StatelessWidget {
           tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
           childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
           leading: Container(
-            padding: const EdgeInsets.all(8),
+            width: 38,
+            height: 38,
+            padding: const EdgeInsets.all(6),
             decoration: BoxDecoration(
               color: ui.color.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Icon(ui.icon, color: ui.color, size: 22),
+            child: esPendiente
+                ? CircularProgressIndicator(strokeWidth: 2.2, color: ui.color)
+                : Icon(ui.icon, color: ui.color, size: 22),
           ),
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -115,24 +224,13 @@ class HistorialPagoDetalleCard extends StatelessWidget {
                 item.dineroEnviado ? 'Sí — marcado como pagado' : 'Pendiente de marcar en empresa',
               ),
             ],
-            if (item.metodo == 'por_orden') ...[
+            if (item.metodo == 'por_orden' && item.totalOrdenes > 0) ...[
               const Divider(color: AppColors.darkBorder, height: 20),
               _fila(
                 Icons.local_shipping_outlined,
-                'Órdenes en esta nómina',
+                'Órdenes incluidas',
                 '${item.totalOrdenes} orden${item.totalOrdenes == 1 ? '' : 'es'}',
               ),
-              if (item.ordenesDetalle.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                ...item.ordenesDetalle.map(_ordenTile),
-              ] else if (item.totalOrdenes > 0)
-                const Padding(
-                  padding: EdgeInsets.only(top: 4),
-                  child: Text(
-                    'Detalle de órdenes no disponible en este registro.',
-                    style: TextStyle(color: AppColors.darkTextMuted, fontSize: 11),
-                  ),
-                ),
             ],
             if (item.metodo == 'por_distancia' && km != null && km > 0) ...[
               const Divider(color: AppColors.darkBorder, height: 20),
@@ -184,54 +282,6 @@ class HistorialPagoDetalleCard extends StatelessWidget {
     );
   }
 
-  Widget _ordenTile(Map<String, dynamic> orden) {
-    final num = orden['numero_orden']?.toString() ?? orden['id']?.toString() ?? '—';
-    final receptor = orden['receptor']?.toString() ?? '';
-    final fecha = orden['fecha_entrega'] != null
-        ? formatearFecha(DateTime.tryParse(orden['fecha_entrega'].toString()))
-        : '—';
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppColors.darkElevated,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.darkBorder.withValues(alpha: 0.5)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.check_circle_outline, size: 16, color: AppColors.exito),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Orden #$num',
-                  style: const TextStyle(
-                    color: AppColors.darkText,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                if (receptor.isNotEmpty)
-                  Text(
-                    receptor,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: AppColors.darkTextMuted, fontSize: 11),
-                  ),
-                Text(
-                  'Entregada: $fecha',
-                  style: const TextStyle(color: AppColors.darkTextMuted, fontSize: 10),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 /// Fila compacta de acreditación de saldo por entrega.

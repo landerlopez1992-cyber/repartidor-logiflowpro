@@ -82,6 +82,73 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
     }
   }
 
+  /// Logo sin caja de fondo (solo imagen sobre el degradado oscuro).
+  Widget _buildLogoSinFondo() {
+    const size = 140.0;
+    const margin = EdgeInsets.only(bottom: 32);
+
+    if (widget.empresaLogoUrl != null && widget.empresaLogoUrl!.isNotEmpty) {
+      return Padding(
+        padding: margin,
+        child: Image.network(
+          widget.empresaLogoUrl!,
+          width: size,
+          height: size,
+          fit: BoxFit.contain,
+          filterQuality: FilterQuality.high,
+          errorBuilder: (context, error, stackTrace) {
+            return _logoFallbackLetra(size);
+          },
+        ),
+      );
+    }
+
+    if (widget.empresaNombre != null && widget.empresaNombre!.isNotEmpty) {
+      return Padding(
+        padding: margin,
+        child: _logoFallbackLetra(size),
+      );
+    }
+
+    return Padding(
+      padding: margin,
+      child: Image.asset(
+        'assets/logo_julio.png',
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.high,
+        errorBuilder: (context, error, stackTrace) {
+          return const Icon(
+            Icons.delivery_dining,
+            size: 72,
+            color: AppColors.botonPrincipal,
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _logoFallbackLetra(double size) {
+    final letra = widget.empresaNombre?.isNotEmpty == true
+        ? widget.empresaNombre![0].toUpperCase()
+        : 'V';
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Center(
+        child: Text(
+          letra,
+          style: const TextStyle(
+            fontSize: 56,
+            fontWeight: FontWeight.bold,
+            color: AppColors.botonPrincipal,
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _simulateLoading() async {
     final stages = [
       {'text': 'Inicializando sistema', 'duration': 1.0},
@@ -143,111 +210,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Logo de la empresa
-                  if (widget.empresaLogoUrl != null && widget.empresaLogoUrl!.isNotEmpty)
-                    Container(
-                      width: 120,
-                      height: 120,
-                      margin: const EdgeInsets.only(bottom: 32),
-                      decoration: BoxDecoration(
-                        color: AppColors.darkSurface,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.2),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: Image.network(
-                          widget.empresaLogoUrl!,
-                          fit: BoxFit.contain,
-                          errorBuilder: (context, error, stackTrace) {
-                            return Container(
-                              color: AppColors.darkSurface,
-                              child: Center(
-                                child: Text(
-                                  widget.empresaNombre?.isNotEmpty == true
-                                      ? widget.empresaNombre![0].toUpperCase()
-                                      : 'L',
-                                  style: const TextStyle(
-                                    fontSize: 48,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.header,
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    )
-                  else if (widget.empresaNombre != null && widget.empresaNombre!.isNotEmpty)
-                    Container(
-                      width: 120,
-                      height: 120,
-                      margin: const EdgeInsets.only(bottom: 32),
-                      decoration: BoxDecoration(
-                        color: AppColors.darkSurface,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.2),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: Text(
-                          widget.empresaNombre![0].toUpperCase(),
-                          style: const TextStyle(
-                            fontSize: 48,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF37474F),
-                          ),
-                        ),
-                      ),
-                    )
-                  else
-                    // Usar logo local si no hay logo de empresa
-                    Container(
-                      width: 120,
-                      height: 120,
-                      margin: const EdgeInsets.only(bottom: 32),
-                      decoration: BoxDecoration(
-                        color: AppColors.darkSurface,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.2),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: Image.asset(
-                          'assets/logo_julio.png',
-                          fit: BoxFit.contain,
-                          errorBuilder: (context, error, stackTrace) {
-                            return const Center(
-                              child: Icon(
-                                Icons.delivery_dining,
-                                size: 60,
-                                color: AppColors.header,
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                  
-                  // Nombre de la empresa
+                  _buildLogoSinFondo(),
                   if (widget.empresaNombre != null && widget.empresaNombre!.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 16),
@@ -256,7 +219,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
                         style: const TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.bold,
-                          color: AppColors.darkSurface,
+                          color: AppColors.darkText,
                         ),
                         textAlign: TextAlign.center,
                       ),

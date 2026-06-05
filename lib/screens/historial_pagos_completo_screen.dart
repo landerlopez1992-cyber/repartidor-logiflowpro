@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../config/app_colors.dart';
 import '../services/repartidor_historial_pago_service.dart';
 import '../services/repartidor_perfil_cache_service.dart';
+import '../services/repartidor_solicitud_pago_offline_service.dart';
 import '../services/sync_service.dart';
 import '../widgets/historial_pago_detalle_card.dart';
 import '../widgets/volonex_dialog.dart';
@@ -43,15 +44,16 @@ class _HistorialPagosCompletoScreenState extends State<HistorialPagosCompletoScr
 
     try {
       if (!SyncService().isOnline) {
-        final cache = await RepartidorPerfilCacheService.getCachedHistorialPagos();
-        if (cache != null && cache.isNotEmpty) {
-          setState(() {
-            _nominas = cache.map((s) => HistorialNominaItem(solicitud: s)).toList();
-            _acreditaciones = [];
-            _isLoading = false;
-          });
-          return;
-        }
+        final cache =
+            await RepartidorSolicitudPagoOfflineService.historialConLocales(
+          widget.repartidorId,
+        );
+        setState(() {
+          _nominas = cache.map((s) => HistorialNominaItem(solicitud: s)).toList();
+          _acreditaciones = [];
+          _isLoading = false;
+        });
+        return;
       }
 
       final nominas = await RepartidorHistorialPagoService.cargarHistorial(widget.repartidorId);
@@ -71,8 +73,21 @@ class _HistorialPagosCompletoScreenState extends State<HistorialPagosCompletoScr
     } catch (e) {
       print('❌ Error historial pagos: $e');
       if (!mounted) return;
+      final cache =
+          await RepartidorSolicitudPagoOfflineService.historialConLocales(
+        widget.repartidorId,
+      );
+      if (cache.isNotEmpty) {
+        setState(() {
+          _nominas = cache.map((s) => HistorialNominaItem(solicitud: s)).toList();
+          _acreditaciones = [];
+          _error = null;
+          _isLoading = false;
+        });
+        return;
+      }
       setState(() {
-        _error = '$e';
+        _error = 'Sin conexión. No hay historial guardado en el dispositivo.';
         _isLoading = false;
       });
     }

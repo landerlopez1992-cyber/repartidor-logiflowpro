@@ -532,8 +532,12 @@ class SyncService {
             return 3;
           case 'mark_delivered':
             return 4;
-          default:
+          case 'solicitud_pago_repartidor':
             return 5;
+          case 'upload_foto_perfil':
+            return 6;
+          default:
+            return 7;
         }
       }
       return prio(a['type']?.toString() ?? '').compareTo(prio(b['type']?.toString() ?? ''));
@@ -815,6 +819,63 @@ class SyncService {
           );
           final payload = res as Map<String, dynamic>? ?? {};
           return payload['ok'] == true;
+
+        case 'solicitud_pago_repartidor':
+          if (!_isOnline) return false;
+          final repId = data['repartidor_id']?.toString() ?? ordenId;
+          final raw = await supabase.rpc(
+            'repartidor_crear_solicitud_pago',
+            params: {
+              'p_repartidor_id': repId,
+              'p_monto': data['monto'] ?? 0,
+              'p_moneda': data['moneda'] ?? 'USD',
+              'p_total_ordenes': data['total_ordenes'] ?? 0,
+              'p_ordenes_incluidas': data['ordenes_incluidas'] ?? [],
+              'p_kilometros_recorridos': data['kilometros_recorridos'],
+              'p_repartidor_nombre': data['repartidor_nombre'],
+              'p_tenant_id': data['tenant_id'],
+              'p_dias_trabajados': data['dias_trabajados'],
+            },
+          );
+          final map = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+          if (map['ok'] == true) {
+            final localId = data['local_id']?.toString();
+            if (localId != null && localId.isNotEmpty) {
+              // Limpieza local tras sincronizar (import diferido evitado: prefs por servicio)
+              try {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.remove('local_solicitud_pago_$repId');
+              } catch (_) {}
+            }
+            return true;
+          }
+          print('⚠️ solicitud_pago_repartidor sync: $map');
+          return false;
+
+        case 'upload_foto_perfil':
+          if (!_isOnline) return false;
+          final repIdFoto = data['repartidor_id']?.toString() ?? ordenId;
+          Uint8List bytes;
+          final filePath = data['file_path']?.toString();
+          if (filePath != null && filePath.isNotEmpty) {
+            final file = File(filePath);
+            if (!await file.exists()) return false;
+            bytes = Uint8List.fromList(await file.readAsBytes());
+          } else {
+            final b64 = data['photo_base64']?.toString() ?? '';
+            if (b64.isEmpty) return false;
+            bytes = base64Decode(b64);
+          }
+          final fileName =
+              'perfil_${repIdFoto}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+          await supabase.storage.from('fotos-perfil').uploadBinary(fileName, bytes);
+          final publicUrl =
+              supabase.storage.from('fotos-perfil').getPublicUrl(fileName);
+          await supabase
+              .from('usuarios')
+              .update({'foto_perfil': publicUrl})
+              .eq('id', repIdFoto);
+          return true;
           
         default:
           print('⚠️ Tipo de operación desconocido: $type');

@@ -1,11 +1,53 @@
 import 'package:flutter/material.dart';
 import '../services/repartidor_solicitud_pago_service.dart';
 import '../config/app_colors.dart';
+import 'volonex_dialog.dart';
 import 'volonex_ui.dart';
 
-/// Diálogos para solicitar nómina según método de pago de la empresa.
+/// Diálogos para solicitar nómina — tema oscuro Volonex.
 class RepartidorSolicitudPagoDialogs {
   RepartidorSolicitudPagoDialogs._();
+
+  static InputDecoration _campoOscuro({
+    required String label,
+    String? hint,
+    String? suffix,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      suffixText: suffix,
+      labelStyle: const TextStyle(color: AppColors.darkTextMuted),
+      hintStyle: const TextStyle(color: AppColors.darkTextMuted),
+      filled: true,
+      fillColor: AppColors.darkElevated,
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppColors.darkBorder),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppColors.botonPrincipal, width: 1.5),
+      ),
+    );
+  }
+
+  static Widget _cajaDestacada(String texto, {Color? color}) {
+    final c = color ?? AppColors.exito;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: c.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.withValues(alpha: 0.5)),
+      ),
+      child: Text(
+        texto,
+        style: TextStyle(fontWeight: FontWeight.w600, color: c, fontSize: 14),
+      ),
+    );
+  }
 
   static Future<({double distancia, double monto})?> modalPorDistancia(
     BuildContext context,
@@ -20,6 +62,7 @@ class RepartidorSolicitudPagoDialogs {
     final ok = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
+      barrierColor: Colors.black54,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSt) {
           final dist = double.tryParse(distanciaCtrl.text.trim()) ?? 0;
@@ -27,86 +70,50 @@ class RepartidorSolicitudPagoDialogs {
             tarifa: preview.tarifa,
             distancia: dist,
           );
-          return AlertDialog(
-            backgroundColor: const Color(0xFFFFFFFF),
-            insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-            constraints: const BoxConstraints(maxWidth: 420),
-            title: const Row(
+          return VolonexDialog(
+            title: 'Recorrido del período',
+            leading: const Icon(Icons.route, color: AppColors.botonPrincipal, size: 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.route, color: Color(0xFFFF9800)),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Recorrido del período',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textOnLight),
+                Text(
+                  'Tarifa: ${preview.tarifa.toStringAsFixed(2)} ${preview.moneda} por $unidadLabel.',
+                  style: const TextStyle(color: AppColors.darkTextMuted, fontSize: 13),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: distanciaCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  style: const TextStyle(color: AppColors.darkText),
+                  onChanged: (_) => setSt(() {}),
+                  decoration: _campoOscuro(
+                    label: 'Total $unidadLabel recorridos',
+                    hint: preview.unidadEsMilla ? 'Ej: 45.5' : 'Ej: 100',
+                    suffix: unidadCorto,
                   ),
+                ),
+                const SizedBox(height: 12),
+                _cajaDestacada(
+                  'Total a solicitar: ${montoCalc.toStringAsFixed(2)} ${preview.moneda}',
                 ),
               ],
             ),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Tarifa de la empresa: ${preview.tarifa.toStringAsFixed(2)} ${preview.moneda} por $unidadLabel.',
-                    style: const TextStyle(fontSize: 13, color: AppColors.textMutedOnLight),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: distanciaCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    onChanged: (_) => setSt(() {}),
-                    decoration: InputDecoration(
-                      labelText: 'Total $unidadLabel recorridos',
-                      hintText: preview.unidadEsMilla ? 'Ej: 45.5' : 'Ej: 100',
-                      suffixText: unidadCorto,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE8F5E9),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFF4CAF50)),
-                    ),
-                    child: Text(
-                      'Total a solicitar: ${montoCalc.toStringAsFixed(2)} ${preview.moneda}',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF2E7D32),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+            actions: _accionesEnviar(
+              ctx,
+              onEnviar: () {
+                if (dist <= 0) {
+                  _snack(ctx, 'Ingresa la distancia recorrida');
+                  return;
+                }
+                if (montoCalc <= 0) {
+                  _snack(ctx, 'No se pudo calcular el monto');
+                  return;
+                }
+                distanciaFinal = dist;
+                Navigator.pop(ctx, true);
+              },
             ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF9800)),
-                onPressed: () {
-                  if (dist <= 0) {
-                    ScaffoldMessenger.of(ctx).showSnackBar(
-                      const SnackBar(content: Text('Ingresa la distancia recorrida'), backgroundColor: Colors.red),
-                    );
-                    return;
-                  }
-                  if (montoCalc <= 0) {
-                    ScaffoldMessenger.of(ctx).showSnackBar(
-                      const SnackBar(content: Text('No se pudo calcular el monto'), backgroundColor: Colors.red),
-                    );
-                    return;
-                  }
-                  distanciaFinal = dist;
-                  Navigator.pop(ctx, true);
-                },
-                child: const Text('Enviar solicitud'),
-              ),
-            ],
           );
         },
       ),
@@ -135,7 +142,7 @@ class RepartidorSolicitudPagoDialogs {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('No hay días nuevos desde tu última nómina aceptada'),
-          backgroundColor: Colors.orange,
+          backgroundColor: AppColors.botonPrincipal,
         ),
       );
       return false;
@@ -144,70 +151,40 @@ class RepartidorSolicitudPagoDialogs {
     final ok = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFFFFFFFF),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-        constraints: const BoxConstraints(maxWidth: 420),
-        title: const Row(
-          children: [
-            Icon(Icons.calendar_month, color: Color(0xFFFF9800)),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Nómina por días trabajados',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textOnLight),
-              ),
-            ),
-          ],
-        ),
-        content: Column(
+      barrierColor: Colors.black54,
+      builder: (ctx) => VolonexDialog(
+        title: 'Nómina por días trabajados',
+        leading: const Icon(Icons.calendar_month, color: AppColors.botonPrincipal, size: 24),
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               'Última nómina aceptada: $fechaTxt',
-              style: const TextStyle(fontSize: 13, color: AppColors.textMutedOnLight),
+              style: const TextStyle(fontSize: 13, color: AppColors.darkTextMuted),
             ),
             if (preview.diasLaborablesEtiqueta.isNotEmpty) ...[
               const SizedBox(height: 8),
               Text(
-                'Días laborables (empresa): ${preview.diasLaborablesEtiqueta}',
-                style: const TextStyle(fontSize: 13, color: AppColors.textMutedOnLight),
+                'Días laborables: ${preview.diasLaborablesEtiqueta}',
+                style: const TextStyle(fontSize: 13, color: AppColors.darkTextMuted),
               ),
             ],
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             Text(
-              'Días laborables a cobrar: $dias',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textOnLight),
+              'Días a cobrar: $dias',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.darkText),
             ),
             const SizedBox(height: 6),
             Text(
               'Tarifa: ${preview.tarifa.toStringAsFixed(2)} ${preview.moneda} / día',
-              style: const TextStyle(fontSize: 13, color: AppColors.textMutedOnLight),
+              style: const TextStyle(fontSize: 13, color: AppColors.darkTextMuted),
             ),
             const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFE8F5E9),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFF4CAF50)),
-              ),
-              child: Text(
-                'Total: ${monto.toStringAsFixed(2)} ${preview.moneda}',
-                style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF2E7D32)),
-              ),
-            ),
+            _cajaDestacada('Total: ${monto.toStringAsFixed(2)} ${preview.moneda}'),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF9800)),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Enviar solicitud'),
-          ),
-        ],
+        actions: _accionesEnviar(ctx, onEnviar: () => Navigator.pop(ctx, true)),
       ),
     );
     return ok == true;
@@ -225,101 +202,69 @@ class RepartidorSolicitudPagoDialogs {
     final ok = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
+      barrierColor: Colors.black54,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSt) => AlertDialog(
-          backgroundColor: const Color(0xFFFFFFFF),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-          constraints: const BoxConstraints(maxWidth: 420),
-          title: const Row(
+        builder: (ctx, setSt) => VolonexDialog(
+          title: 'Solicitar pago',
+          leading: const Icon(Icons.payment, color: AppColors.botonPrincipal, size: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.payment, color: Color(0xFFFF9800)),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Solicitar pago',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textOnLight),
-                ),
+              _cajaDestacada(
+                'Saldo disponible: ${saldo.toStringAsFixed(2)} $moneda',
+              ),
+              const SizedBox(height: 12),
+              Text(
+                totalOrdenes > 0
+                    ? 'Órdenes pendientes de cobro: $totalOrdenes'
+                    : 'Sin órdenes nuevas; puedes cobrar el saldo acumulado.',
+                style: const TextStyle(fontSize: 13, color: AppColors.darkTextMuted, height: 1.4),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: montoCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: const TextStyle(color: AppColors.darkText, fontSize: 16),
+                decoration: _campoOscuro(label: 'Monto a solicitar'),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Moneda',
+                style: TextStyle(fontSize: 12, color: AppColors.darkTextMuted),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                children: [
+                  VolonexUi.filterChip(
+                    label: 'USD',
+                    selected: monedaSel == 'USD',
+                    onTap: () => setSt(() => monedaSel = 'USD'),
+                  ),
+                  VolonexUi.filterChip(
+                    label: 'CUP',
+                    selected: monedaSel == 'CUP',
+                    onTap: () => setSt(() => monedaSel = 'CUP'),
+                  ),
+                ],
               ),
             ],
           ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE8F5E9),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFF4CAF50)),
-                  ),
-                  child: Text(
-                    'Saldo disponible: ${saldo.toStringAsFixed(2)} $moneda',
-                    style: const TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF2E7D32)),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  totalOrdenes > 0
-                      ? 'Órdenes pendientes de cobro: $totalOrdenes'
-                      : 'Sin órdenes nuevas; puedes cobrar solo el saldo acumulado.',
-                  style: const TextStyle(fontSize: 13, color: AppColors.textMutedOnLight),
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: montoCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: 'Monto a solicitar',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    VolonexUi.materialFilterChip(
-                      label: 'USD',
-                      selected: monedaSel == 'USD',
-                      onSelected: (v) => setSt(() => monedaSel = 'USD'),
-                    ),
-                    const SizedBox(width: 8),
-                    VolonexUi.materialFilterChip(
-                      label: 'CUP',
-                      selected: monedaSel == 'CUP',
-                      onSelected: (v) => setSt(() => monedaSel = 'CUP'),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+          actions: _accionesEnviar(
+            ctx,
+            onEnviar: () {
+              final m = double.tryParse(montoCtrl.text.trim());
+              if (m == null || m <= 0) {
+                _snack(ctx, 'Monto inválido');
+                return;
+              }
+              if (m > saldo + 0.001) {
+                _snack(ctx, 'No puede superar el saldo (${saldo.toStringAsFixed(2)})');
+                return;
+              }
+              Navigator.pop(ctx, true);
+            },
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF9800)),
-              onPressed: () {
-                final m = double.tryParse(montoCtrl.text.trim());
-                if (m == null || m <= 0) {
-                  ScaffoldMessenger.of(ctx).showSnackBar(
-                    const SnackBar(content: Text('Monto inválido'), backgroundColor: Colors.red),
-                  );
-                  return;
-                }
-                if (m > saldo + 0.001) {
-                  ScaffoldMessenger.of(ctx).showSnackBar(
-                    SnackBar(
-                      content: Text('No puede superar el saldo (${saldo.toStringAsFixed(2)})'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                  return;
-                }
-                Navigator.pop(ctx, true);
-              },
-              child: const Text('Enviar'),
-            ),
-          ],
         ),
       ),
     );
@@ -330,5 +275,29 @@ class RepartidorSolicitudPagoDialogs {
       return (monto: monto, moneda: monedaSel);
     }
     return null;
+  }
+
+  static List<Widget> _accionesEnviar(BuildContext ctx, {required VoidCallback onEnviar}) {
+    return [
+      TextButton(
+        onPressed: () => Navigator.pop(ctx, false),
+        child: const Text('Cancelar', style: TextStyle(color: AppColors.darkTextMuted)),
+      ),
+      ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.botonPrincipal,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+        ),
+        onPressed: onEnviar,
+        child: const Text('Enviar', style: TextStyle(fontWeight: FontWeight.bold)),
+      ),
+    ];
+  }
+
+  static void _snack(BuildContext ctx, String msg) {
+    ScaffoldMessenger.of(ctx).showSnackBar(
+      SnackBar(content: Text(msg), backgroundColor: AppColors.error),
+    );
   }
 }

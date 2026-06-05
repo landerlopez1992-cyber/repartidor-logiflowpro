@@ -100,12 +100,14 @@ class _MapaRepartidorScreenState extends State<MapaRepartidorScreen> {
           .eq('nombre', nombreRepartidorARastrear)
           .eq('rol', 'REPARTIDOR');
       
-      if (tenantIdOrden != null && tenantIdOrden.isNotEmpty) {
-        query = query.eq('tenant_id', tenantIdOrden);
-        print('🔒 Filtrando repartidor por tenant_id: $tenantIdOrden');
-      } else {
-        print('⚠️ No hay tenant_id disponible, búsqueda sin filtro de tenant (puede ser peligroso)');
+      if (tenantIdOrden == null || tenantIdOrden.isEmpty) {
+        setState(() {
+          _error = 'No se pudo verificar la empresa. No es posible cargar el mapa.';
+        });
+        return;
       }
+      query = query.eq('tenant_id', tenantIdOrden);
+      print('🔒 Filtrando repartidor por tenant_id: $tenantIdOrden');
       
       final response = await query.limit(1).maybeSingle();
 

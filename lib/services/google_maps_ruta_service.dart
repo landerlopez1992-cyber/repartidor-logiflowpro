@@ -35,10 +35,7 @@ class GoogleMapsRutaService {
       }
 
       final uri = Uri.https('www.google.com', '/maps/dir/', params);
-      if (await canLaunchUrl(uri)) {
-        return launchUrl(uri, mode: LaunchMode.externalApplication);
-      }
-      return false;
+      return launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (e) {
       print('⚠️ Google Maps ruta direcciones: $e');
       return false;
@@ -109,10 +106,7 @@ class GoogleMapsRutaService {
       }
 
       final uri = Uri.https('www.google.com', '/maps/dir/', params);
-      if (await canLaunchUrl(uri)) {
-        return launchUrl(uri, mode: LaunchMode.externalApplication);
-      }
-      return false;
+      return launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (e) {
       print('⚠️ Google Maps ruta coords: $e');
       return false;

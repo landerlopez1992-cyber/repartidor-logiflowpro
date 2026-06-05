@@ -24,10 +24,13 @@ import '../utils/remesa_pura_entrega_ui.dart';
 import '../utils/entrega_foto_util.dart';
 import '../config/app_colors.dart';
 import '../widgets/volonex_dialog.dart';
+import '../widgets/remesa_validacion_dialogs.dart';
 import '../widgets/foto_entrega_preview.dart';
+import '../widgets/foto_entrega_selector_sheet.dart';
 import '../models/entrega_progreso.dart';
 import '../services/entrega_progreso_service.dart';
 import '../widgets/entrega_progreso_panel.dart';
+import '../services/repartidor_seguridad_service.dart';
 
 class DetalleOrdenScreen extends StatefulWidget {
   final Orden orden;
@@ -97,6 +100,25 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     _suscribirseACambiosOrden();
 
     WidgetsBinding.instance.addPostFrameCallback((_) => _refrescarProgresoEntrega());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _validarSeguridadAlAbrir());
+  }
+
+  Future<void> _validarSeguridadAlAbrir() async {
+    final ctx = await RepartidorSeguridadService.cargarContexto();
+    final acceso = RepartidorSeguridadService.evaluarAccesoOrden(
+      orden: widget.orden,
+      ctx: ctx,
+    );
+    if (acceso == RepartidorOrdenAcceso.permitido || !mounted) return;
+
+    await RepartidorSeguridadService.mostrarDialogoAccesoDenegado(
+      context: context,
+      motivo: acceso,
+      ctx: ctx,
+      numeroOrden: widget.orden.numeroOrden,
+      repartidorAsignado: widget.orden.repartidor,
+    );
+    if (mounted) Navigator.of(context).pop();
   }
 
   List<EntregaPaso> get _pasosEntregaRequeridos =>
@@ -510,11 +532,16 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       if (isOnline) {
         // Intentar cargar desde Supabase si hay conexión
         try {
-          final response = await supabase
+          var qOrden = supabase
               .from('ordenes')
               .select('*, destinatarios!left(nombre, telefono, direccion, municipio, provincia, consejo_popular_batey)')
-              .eq('id', _ordenActual.id)
-              .single();
+              .eq('id', _ordenActual.id);
+          final tenantSesion =
+              (await RepartidorSeguridadService.cargarContexto()).tenantId;
+          if (tenantSesion != null && tenantSesion.isNotEmpty) {
+            qOrden = qOrden.eq('tenant_id', tenantSesion);
+          }
+          final response = await qOrden.single();
           
           // Debug: verificar datos
           print('🔍 DEBUG - Datos recibidos:');
@@ -2001,27 +2028,10 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       }
     }
     
-    // Confirmación final
-    final confirmado = await showDialog<bool>(
+    final confirmado = await RemesaValidacionDialogs.confirmarEntregaFinal(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Confirmar Entrega de Remesa'),
-        content: Text('¿Confirmas que entregaste la remesa #$numeroRemesa correctamente al destinatario?\n\nCantidad: \$${(_ordenActual.cantidadRemesa ?? 0.0).toStringAsFixed(2)}'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFFD700),
-              foregroundColor: const Color(0xFF1A1A1A),
-            ),
-            child: const Text('Confirmar'),
-          ),
-        ],
-      ),
+      numeroRemesa: numeroRemesa,
+      cantidad: _ordenActual.cantidadRemesa ?? 0.0,
     );
     
     if (confirmado != true) return;
@@ -2167,394 +2177,24 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     }
   }
   
-  // Modal explicativo para validación de remesa
-  Future<bool?> _mostrarModalValidacionRemesa(String numeroRemesa, String nombreDestinatario) async {
-    return showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFFFFFFFF),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.security, color: Color(0xFFFFD700), size: 28),
-            SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                'Validación de Remesa',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textOnLight,
-                ),
-              ),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    const Color(0xFFFFD700).withOpacity(0.2),
-                    const Color(0xFFFFA500).withOpacity(0.1),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFFFD700), width: 2),
-              ),
-              child: Column(
-                children: [
-                  const Text(
-                    'Número de Remesa',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppColors.textMutedOnLight,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '#$numeroRemesa',
-                    style: const TextStyle(
-                      fontSize: 32,
-                      color: Color(0xFF1A1A1A),
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 2,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Instrucciones de Seguridad:',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textOnLight,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              '1. Pregunta al destinatario por el número de remesa: #$numeroRemesa',
-              style: const TextStyle(
-                fontSize: 14,
-                color: AppColors.textMutedOnLight,
-                height: 1.5,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '2. Verifica el ID/carné de identidad del destinatario',
-              style: const TextStyle(
-                fontSize: 14,
-                color: AppColors.textMutedOnLight,
-                height: 1.5,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '   Nombre completo: $nombreDestinatario',
-              style: const TextStyle(
-                fontSize: 13,
-                color: AppColors.textMutedOnLight,
-                fontStyle: FontStyle.italic,
-                height: 1.4,
-              ),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              '3. Confirma que el nombre y apellido del ID coinciden con el destinatario de la remesa',
-              style: TextStyle(
-                fontSize: 14,
-                color: AppColors.textMutedOnLight,
-                height: 1.5,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar', style: TextStyle(color: AppColors.textMutedOnLight)),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFFD700),
-              foregroundColor: const Color(0xFF1A1A1A),
-            ),
-            child: const Text('Continuar'),
-          ),
-        ],
-      ),
-    );
-  }
-  
-  // Verificar número RMSA - Solo confirmación visual, sin campo de texto
-  Future<bool?> _pedirNumeroRMSA(String numeroRemesaEsperado) async {
-    return showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFFFFFFFF),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.verified_user, color: Color(0xFFFFD700), size: 24),
-            SizedBox(width: 12),
-            Expanded(
-              child: Text('Verificar Número RMSA'),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Por favor, verifica que el cliente conoce el número de remesa:',
-              style: TextStyle(
-                fontSize: 15,
-                color: AppColors.textOnLight,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const SizedBox(height: 20),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFD700).withOpacity(0.15),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFFFD700), width: 2),
-              ),
-              child: Column(
-                children: [
-                  const Text(
-                    'Número de Remesa:',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: AppColors.textMutedOnLight,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '#$numeroRemesaEsperado',
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1A1A1A),
-                      letterSpacing: 1.2,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFE3F2FD),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFF1976D2), width: 1),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.info_outline, color: Color(0xFF1976D2), size: 20),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Pregunta al cliente por el número y verifica que lo conoce correctamente.',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Color(0xFF1976D2),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            style: TextButton.styleFrom(
-              foregroundColor: AppColors.textMutedOnLight,
-            ),
-            child: const Text('Cancelar', style: TextStyle(color: AppColors.textMutedOnLight)),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              // Confirmar que el repartidor verificó el número
-              Navigator.pop(context, true);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFFD700),
-              foregroundColor: const Color(0xFF1A1A1A),
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.check_circle, size: 20),
-                SizedBox(width: 8),
-                Text(
-                  'Verificar',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-  
-  // Verificar ID/carné del destinatario
-  Future<bool?> _verificarIDDestinatario(String nombreDestinatarioEsperado) async {
-    final controller = TextEditingController();
-    
-    return showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFFFFFFFF),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.credit_card, color: Color(0xFFFFD700), size: 24),
-            SizedBox(width: 12),
-            Text('Verificar ID/Carné'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Verifica el ID/carné de identidad del destinatario:',
-              style: TextStyle(
-                fontSize: 14,
-                color: AppColors.textMutedOnLight,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFE3F2FD),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFF1976D2)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Nombre esperado:',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppColors.textMutedOnLight,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    nombreDestinatarioEsperado,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1976D2),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              decoration: const InputDecoration(
-                labelText: 'Nombre completo del ID/Carné',
-                hintText: 'Escribe el nombre tal como aparece en el ID',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.person),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF3E0),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.info_outline, color: Color(0xFFFF9800), size: 20),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Confirma que el nombre y apellido coinciden exactamente con el destinatario',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textMutedOnLight,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar', style: TextStyle(color: AppColors.textMutedOnLight)),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final nombreID = controller.text.trim().toUpperCase();
-              final nombreEsperado = nombreDestinatarioEsperado.toUpperCase();
-              
-              // Verificar que el nombre del ID contenga palabras clave del nombre esperado
-              final palabrasEsperadas = nombreEsperado.split(' ');
-              final coincide = palabrasEsperadas.any((palabra) => 
-                palabra.isNotEmpty && nombreID.contains(palabra)
-              ) || nombreID.contains(nombreEsperado);
-              
-              if (coincide || nombreID == nombreEsperado) {
-                Navigator.pop(context, true);
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('⚠️ Verifica que el nombre del ID coincida con el destinatario'),
-                    backgroundColor: Color(0xFFFF9800),
-                  ),
-                );
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFFD700),
-              foregroundColor: const Color(0xFF1A1A1A),
-            ),
-            child: const Text('Confirmar'),
-          ),
-        ],
-      ),
-    );
-  }
+  Future<bool?> _mostrarModalValidacionRemesa(String numeroRemesa, String nombreDestinatario) =>
+      RemesaValidacionDialogs.mostrarValidacionRemesa(
+        context: context,
+        numeroRemesa: numeroRemesa,
+        nombreDestinatario: nombreDestinatario,
+      );
+
+  Future<bool?> _pedirNumeroRMSA(String numeroRemesaEsperado) =>
+      RemesaValidacionDialogs.pedirNumeroRmsa(
+        context: context,
+        numeroRemesaEsperado: numeroRemesaEsperado,
+      );
+
+  Future<bool?> _verificarIDDestinatario(String nombreDestinatarioEsperado) =>
+      RemesaValidacionDialogs.verificarIdDestinatario(
+        context: context,
+        nombreDestinatarioEsperado: nombreDestinatarioEsperado,
+      );
 
   /// Recogida con empresa: datos del colaborador para coordinar la recolección del pedido.
   Widget _buildColaboradorRecogidaCard() {
@@ -3791,7 +3431,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     if (!ok) {
       _mostrarMensaje(
         res.esValida
-            ? 'No se pudo abrir Google Maps.\n\nDirección: ${res.direccionCompleta}'
+            ? 'No se pudo abrir el mapa. Instala Google Maps o abre manualmente:\n\n${res.direccionCompleta}'
             : 'No hay dirección completa (calle, municipio, provincia y país) para navegar.',
       );
     }
@@ -5483,150 +5123,12 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     }
     
     final cantidadRemesa = _ordenActual.cantidadRemesa ?? 0.0;
-    final resultado = await showDialog<bool>(
+    final resultado = await RemesaValidacionDialogs.confirmarEntregaEnOrden(
       context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFFFFFFFF),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        title: const Row(
-          children: [
-            Icon(Icons.attach_money, color: Color(0xFF1976D2), size: 24),
-            SizedBox(width: 12),
-            Text(
-              'Confirmar Entrega de Remesa',
-              style: TextStyle(
-                color: AppColors.textOnLight,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '💰 Antes de continuar, verifica:',
-              style: TextStyle(
-                color: AppColors.textOnLight,
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1976D2).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFF1976D2)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Cantidad de Remesa:',
-                    style: TextStyle(
-                      color: AppColors.textMutedOnLight,
-                      fontSize: 12,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '\$${cantidadRemesa.toStringAsFixed(2)}',
-                    style: const TextStyle(
-                      color: Color(0xFF1976D2),
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFF4CAF50).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.check_circle, color: Color(0xFF4CAF50), size: 16),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '¿Entregaste la remesa correctamente al cliente?',
-                      style: TextStyle(
-                        color: AppColors.textOnLight,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actionsOverflowButtonSpacing: 12,
-        actions: [
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.textMutedOnLight,
-                    side: const BorderSide(color: Color(0xFFE0E0E0), width: 1.5),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: const Text(
-                    'Cancelar',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4CAF50),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: 0,
-                  ),
-                  child: const Text(
-                    'Sí, Confirmar',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+      cantidadRemesa: cantidadRemesa,
     );
-    
-    if (resultado == true) {
+
+    if (resultado) {
       // La remesa es solo una validación antes de entregar
       // No necesitamos actualizar ningún campo en la BD
       // Solo retornamos true para indicar que la validación pasó
@@ -6312,102 +5814,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     
     try {
       // Mostrar opciones: Cámara o Galería
-      final opcion = await showModalBottomSheet<String>(
-        context: context,
-        builder: (context) => SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(20),
-                    topRight: Radius.circular(20),
-                  ),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.darkBorder,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Seleccionar foto de entrega',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.darkText,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    ListTile(
-                      leading: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1976D2).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(Icons.camera_alt, color: Color(0xFF1976D2), size: 24),
-                      ),
-                      title: const Text(
-                        'Tomar foto',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.darkText,
-                        ),
-                      ),
-                      subtitle: const Text(
-                        'Usar la cámara para tomar una nueva foto',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: AppColors.darkTextMuted,
-                        ),
-                      ),
-                      onTap: () => Navigator.pop(context, 'camara'),
-                    ),
-                    ListTile(
-                      leading: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF4CAF50).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(Icons.photo_library, color: Color(0xFF4CAF50), size: 24),
-                      ),
-                      title: const Text(
-                        'Elegir de galería',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.darkText,
-                        ),
-                      ),
-                      subtitle: const Text(
-                        'Seleccionar una foto de tu galería',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: AppColors.darkTextMuted,
-                        ),
-                      ),
-                      onTap: () => Navigator.pop(context, 'galeria'),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+      final opcion = await FotoEntregaSelectorSheet.show(context);
 
       if (opcion == null) return;
 

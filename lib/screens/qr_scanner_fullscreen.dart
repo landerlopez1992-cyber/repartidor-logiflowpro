@@ -12,15 +12,20 @@ import '../services/orden_estado_sync_helper.dart';
 import '../services/configuracion_service.dart';
 import 'detalle_orden_screen.dart';
 import '../config/app_colors.dart';
+import '../services/repartidor_seguridad_service.dart';
 
 class QRScannerFullscreen extends StatefulWidget {
   final String? repartidorNombre;
   final bool esRepartidorMaster;
+  final String? tenantId;
+  final String? nombreEmpresa;
 
   const QRScannerFullscreen({
     super.key,
     this.repartidorNombre,
     this.esRepartidorMaster = false,
+    this.tenantId,
+    this.nombreEmpresa,
   });
 
   @override
@@ -56,44 +61,93 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
         _handled = true;
         try {
           final syncService = SyncService();
+          final sesion = await RepartidorSeguridadService.cargarContexto();
+          final ctx = RepartidorSesionContext(
+            tenantId: widget.tenantId ?? sesion.tenantId,
+            nombreEmpresa: widget.nombreEmpresa ?? sesion.nombreEmpresa,
+            repartidorNombre: widget.repartidorNombre ?? sesion.repartidorNombre,
+            esMaster: widget.esRepartidorMaster || sesion.esMaster,
+          );
+
           Orden? orden;
           
-          // ✅ INTENTO 1: Cargar desde Supabase si hay conexión
+          // ✅ INTENTO 1: Cargar desde Supabase si hay conexión (siempre filtrar por tenant)
           if (syncService.isOnline) {
             try {
               print('📡 Buscando orden en Supabase (online)...');
-              final data = await supabase.from('ordenes').select('*').eq('id', value).single();
+              if (ctx.tenantId == null || ctx.tenantId!.isEmpty) {
+                throw Exception('tenant_id no disponible');
+              }
+              final data = await supabase
+                  .from('ordenes')
+                  .select('*')
+                  .eq('id', value)
+                  .eq('tenant_id', ctx.tenantId!)
+                  .maybeSingle();
               if (!mounted) return;
-              orden = Orden.fromJson(data);
-              print('✅ Orden encontrada en Supabase: ${orden.numeroOrden}');
+              if (data != null) {
+                orden = Orden.fromJson(data);
+                print('✅ Orden encontrada en Supabase: ${orden.numeroOrden}');
+              } else {
+                // Puede ser QR de otra empresa Volonex
+                final ajena = await supabase
+                    .from('ordenes')
+                    .select('id, tenant_id, numero_orden')
+                    .eq('id', value)
+                    .maybeSingle();
+                if (ajena != null &&
+                    ajena['tenant_id']?.toString() != ctx.tenantId) {
+                  await RepartidorSeguridadService.mostrarDialogoAccesoDenegado(
+                    context: context,
+                    motivo: RepartidorOrdenAcceso.otraEmpresa,
+                    ctx: ctx,
+                    numeroOrden: ajena['numero_orden']?.toString() ?? value,
+                  );
+                  _handled = false;
+                  return;
+                }
+              }
             } catch (e) {
               print('⚠️ Error al buscar en Supabase: $e');
-              // Continuar para buscar en caché
             }
           }
           
-          // ✅ INTENTO 2: Buscar en caché local si no se encontró online o no hay conexión
+          // ✅ INTENTO 2: Buscar en caché local (solo órdenes de MI empresa)
           if (orden == null) {
-            print('💾 Buscando orden en caché local (offline o error en Supabase)...');
+            print('💾 Buscando orden en caché local...');
             final ordenesCache = await OrdenCacheService.getCachedOrders();
             try {
-              orden = ordenesCache.firstWhere((o) => o.id == value);
+              orden = ordenesCache.firstWhere(
+                (o) =>
+                    o.id == value &&
+                    (ctx.tenantId == null ||
+                        o.tenantId == null ||
+                        o.tenantId == ctx.tenantId),
+              );
               print('✅ Orden encontrada en caché: ${orden.numeroOrden}');
             } catch (e) {
-              print('❌ Orden no encontrada en caché');
-              // No se encontró ni online ni en caché
+              print('❌ Orden no encontrada en caché de la empresa');
               if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      syncService.isOnline 
-                        ? 'Orden no encontrada' 
-                        : 'Sin conexión y orden no disponible offline.\nConéctate a internet para escanear esta orden.'
+                if (ctx.tenantId == null) {
+                  await RepartidorSeguridadService.mostrarDialogoAccesoDenegado(
+                    context: context,
+                    motivo: RepartidorOrdenAcceso.sesionInvalida,
+                    ctx: ctx,
+                    numeroOrden: value,
+                  );
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        syncService.isOnline
+                            ? 'Orden no encontrada en ${ctx.nombreEmpresa}'
+                            : 'Sin conexión y esta orden no está disponible offline para ${ctx.nombreEmpresa}.',
+                      ),
+                      backgroundColor: const Color(0xFFDC2626),
+                      duration: const Duration(seconds: 4),
                     ),
-                    backgroundColor: const Color(0xFFDC2626),
-                    duration: const Duration(seconds: 3),
-                  ),
-                );
+                  );
+                }
               }
               _handled = false;
               return;
@@ -104,23 +158,41 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
             _handled = false;
             return;
           }
-          
-          // Validar si la orden está asignada al repartidor
+
+          final acceso = RepartidorSeguridadService.evaluarAccesoOrden(
+            orden: orden,
+            ctx: ctx,
+          );
+          if (acceso != RepartidorOrdenAcceso.permitido) {
+            await RepartidorSeguridadService.mostrarDialogoAccesoDenegado(
+              context: context,
+              motivo: acceso,
+              ctx: ctx,
+              numeroOrden: orden.numeroOrden,
+              repartidorAsignado: orden.repartidor,
+            );
+            if (!mounted) return;
+            _handled = false;
+            return;
+          }
+
           final ordenAsignadaA = orden.repartidor;
-          final esMiOrden = ordenAsignadaA != null && 
-                           widget.repartidorNombre != null &&
-                           ordenAsignadaA.trim().toUpperCase() == widget.repartidorNombre!.trim().toUpperCase();
+          final esMiOrden = RepartidorSeguridadService.nombresRepartidorCoinciden(
+            ordenAsignadaA,
+            ctx.repartidorNombre,
+          );
           
-          if (!esMiOrden && ordenAsignadaA != null && ordenAsignadaA.isNotEmpty) {
-            // La orden no está asignada a este repartidor
-            if (widget.esRepartidorMaster) {
-              // Repartidor master: mostrar modal de confirmación
-              final continuar = await _mostrarModalRepartidorMaster(
-                orden.numeroOrden,
-                ordenAsignadaA,
-              );
-              if (!mounted) return;
-              if (continuar == true) {
+          if (ctx.esMaster &&
+              !esMiOrden &&
+              ordenAsignadaA != null &&
+              ordenAsignadaA.isNotEmpty) {
+            // Master: confirmar antes de abrir orden de otro repartidor (misma empresa)
+            final continuar = await _mostrarModalRepartidorMaster(
+              orden.numeroOrden,
+              ordenAsignadaA,
+            );
+            if (!mounted) return;
+            if (continuar == true) {
                 // Si está en "EN TRANSITO", mostrar modal de recibir orden
                 if (orden.estado == 'EN TRANSITO') {
                   final accion = await _mostrarModalConfirmacionRecibir(orden);
@@ -161,15 +233,8 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
                     MaterialPageRoute(builder: (_) => DetalleOrdenScreen(orden: orden!)),
                   );
                 }
-              } else {
-                // Cancelar, permitir escanear otra orden
-                _handled = false;
-              }
             } else {
-              // Repartidor normal: mostrar modal de error
-              await _mostrarModalOrdenNoAsignada(orden.numeroOrden, ordenAsignadaA);
-              if (!mounted) return;
-              // Permitir escanear otra orden
+              // Cancelar, permitir escanear otra orden
               _handled = false;
             }
           } else {

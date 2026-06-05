@@ -103,18 +103,21 @@ class RepartidorHistorialPagoService {
 
     final ordenesMap = <String, Map<String, dynamic>>{};
     if (todosIds.isNotEmpty) {
-      final ids = todosIds.toList();
-      // Supabase inFilter limit — chunks de 80
-      for (var i = 0; i < ids.length; i += 80) {
-        final chunk = ids.sublist(i, i + 80 > ids.length ? ids.length : i + 80);
-        final ordenes = await supabase
-            .from('ordenes')
-            .select('id, numero_orden, fecha_entrega, estado, receptor')
-            .inFilter('id', chunk);
-        for (final o in List<Map<String, dynamic>>.from(ordenes)) {
-          final oid = o['id']?.toString();
-          if (oid != null) ordenesMap[oid] = o;
+      try {
+        final ids = todosIds.toList();
+        for (var i = 0; i < ids.length; i += 80) {
+          final chunk = ids.sublist(i, i + 80 > ids.length ? ids.length : i + 80);
+          final ordenes = await supabase
+              .from('ordenes')
+              .select('id, numero_orden, fecha_entrega, estado, destinatario_nombre')
+              .inFilter('id', chunk);
+          for (final o in List<Map<String, dynamic>>.from(ordenes)) {
+            final oid = o['id']?.toString();
+            if (oid != null) ordenesMap[oid] = o;
+          }
         }
+      } catch (e) {
+        print('⚠️ Detalle de órdenes en historial de nómina (se muestran solicitudes): $e');
       }
     }
 

@@ -5,12 +5,14 @@ import 'dart:io' show Platform;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../main.dart';
+import '../services/repartidor_seguridad_service.dart';
 import 'repartidor_mobile_screen.dart';
 import 'aviso_ubicacion_destacado_screen.dart';
 import 'loading_data_screen.dart';
 import '../services/sesion_offline_cleanup.dart';
 import '../services/auth_error_handler.dart';
 import '../services/sync_service.dart';
+import '../services/repartidor_seguridad_service.dart';
 import '../config/app_colors.dart';
 import '../widgets/volonex_dialog.dart';
 
@@ -183,6 +185,10 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
               if (tenantData != null) {
                 empresaNombre = tenantData['nombre'] ?? 'VolonexPro+';
                 empresaLogoUrl = tenantData['logo_url'];
+                await RepartidorSeguridadService.guardarNombreEmpresaEnCache(
+                  response.user!.id,
+                  empresaNombre ?? 'VolonexPro+',
+                );
               }
             } catch (e) {
               print('⚠️ Error obteniendo datos de empresa: $e');
