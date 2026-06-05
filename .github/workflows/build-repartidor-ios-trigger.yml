@@ -25,6 +25,15 @@ jobs:
     runs-on: macos-latest
 
     steps:
+      - name: 'Supabase: estado → construyendo (inicio inmediato)'
+        run: |
+          curl -sfX PATCH \
+            "$SUPABASE_URL/rest/v1/logiflow_build_jobs?id=eq.${{ inputs.job_id }}" \
+            -H "apikey: $SUPABASE_SVC_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SVC_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"estado\":\"construyendo\",\"github_run_id\":\"${{ github.run_id }}\"}"
+
       - name: Checkout código (última versión de main)
         uses: actions/checkout@v4
         with:
@@ -66,15 +75,6 @@ jobs:
             > ~/Library/MobileDevice/Provisioning\ Profiles/repartidor.mobileprovision
 
           echo "✅ Certificado y perfil instalados"
-
-      - name: 'Supabase: estado → construyendo'
-        run: |
-          curl -sfX PATCH \
-            "$SUPABASE_URL/rest/v1/logiflow_build_jobs?id=eq.${{ inputs.job_id }}" \
-            -H "apikey: $SUPABASE_SVC_KEY" \
-            -H "Authorization: Bearer $SUPABASE_SVC_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{\"estado\":\"construyendo\",\"github_run_id\":\"${{ github.run_id }}\"}"
 
       - name: flutter pub get
         run: flutter pub get

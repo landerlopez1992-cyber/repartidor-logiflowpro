@@ -83,7 +83,7 @@ dependencies:
   table_calendar: ^3.1.2
   
   # Iconos de Font Awesome (para WhatsApp y otros)
-  font_awesome_flutter: ^10.7.0
+  font_awesome_flutter: ^11.0.0
   
   # Confeti para celebraciones
   confetti: ^0.7.0
