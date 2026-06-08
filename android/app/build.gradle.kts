@@ -33,29 +33,28 @@ android {
         versionName = flutter.versionName
     }
 
-    signingConfigs {
-        create("release") {
-            val keystorePropertiesFile = rootProject.file("key.properties")
-            if (keystorePropertiesFile.exists()) {
+    val keystorePropertiesFile = rootProject.file("key.properties")
+    val tieneKeystoreRelease = keystorePropertiesFile.exists()
+
+    if (tieneKeystoreRelease) {
+        signingConfigs {
+            create("release") {
                 val keystoreProperties = Properties()
                 keystoreProperties.load(keystorePropertiesFile.inputStream())
                 keyAlias = keystoreProperties["keyAlias"] as String?
                 keyPassword = keystoreProperties["keyPassword"] as String?
                 storeFile = file(keystoreProperties["storeFile"] as String?)
                 storePassword = keystoreProperties["storePassword"] as String?
-            } else {
-                // Si no hay keystore, usar debug (solo para desarrollo)
-                keyAlias = "androiddebugkey"
-                keyPassword = "android"
-                storeFile = file(System.getProperty("user.home") + "/.android/debug.keystore")
-                storePassword = "android"
             }
         }
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            // CI/GitHub: sin key.properties → firma debug automática de Flutter
+            if (tieneKeystoreRelease) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = false
             isShrinkResources = false
         }

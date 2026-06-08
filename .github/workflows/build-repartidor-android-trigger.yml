@@ -1,10 +1,7 @@
 name: '📱 Build Repartidor · Android (On-Demand)'
 
-# Repo destino: raíz del proyecto Flutter (ej. repartidor-logiflowpro), NO monorepo.
-# Copiar a: .github/workflows/build-repartidor-android-trigger.yml
-# Secrets en GitHub: SUPABASE_URL, SUPABASE_SERVICE_KEY (mismo nombre que en monorepo)
-#
-# Activado desde Super Admin → App móvil → Compilar (Edge Function logiflow-build-trigger)
+# Repo: repartidor-logiflowpro (App Repartidor · Repartidor Logiflow Pro)
+# Secrets: SUPABASE_URL, SUPABASE_SERVICE_KEY
 
 on:
   workflow_dispatch:
@@ -18,14 +15,17 @@ env:
   SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
   SUPABASE_SVC_KEY:  ${{ secrets.SUPABASE_SERVICE_KEY }}
   STORAGE_BUCKET:    logiflow-descargas
+  GRADLE_OPTS:       -Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -XX:+HeapDumpOnOutOfMemoryError
+  JAVA_TOOL_OPTIONS: -Xmx4g
 
 jobs:
   build-android:
     name: 'Compilar APK y subir a Supabase Storage'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
-      - name: 'Supabase: estado → construyendo (inicio inmediato)'
+      - name: 'Supabase: estado → construyendo'
         run: |
           curl -sfX PATCH \
             "$SUPABASE_URL/rest/v1/logiflow_build_jobs?id=eq.${{ inputs.job_id }}" \
@@ -34,7 +34,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"estado\":\"construyendo\",\"github_run_id\":\"${{ github.run_id }}\"}"
 
-      - name: Checkout código (última versión de main)
+      - name: Checkout código (main)
         uses: actions/checkout@v4
         with:
           ref: main
@@ -46,17 +46,27 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Configurar Flutter (stable)
+      - name: Configurar Flutter 3.44.1
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.44.1'
           cache: true
+
+      - name: Verificar entorno
+        run: |
+          flutter --version
+          dart --version
+          java -version
 
       - name: flutter pub get
         run: flutter pub get
 
       - name: flutter build apk --release
-        run: flutter build apk --release --verbose
+        run: |
+          set -o pipefail
+          flutter build apk --release 2>&1 | tee build.log
+          test -f build/app/outputs/flutter-apk/app-release.apk
 
       - name: 'Supabase: estado → subiendo'
         run: |
@@ -68,9 +78,12 @@ jobs:
             -d '{"estado":"subiendo"}'
 
       - name: Subir APK a Supabase Storage
-        id: upload
         run: |
           APK=$(find build/app/outputs/flutter-apk -name 'app-release.apk' | head -1)
+          if [ -z "$APK" ]; then
+            echo "❌ No se encontró app-release.apk"
+            exit 1
+          fi
           echo "APK: $APK ($(du -sh "$APK" | cut -f1))"
 
           curl -sfX POST \
@@ -110,9 +123,25 @@ jobs:
         if: failure()
         run: |
           ERR_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          HINT=""
+          if [ -f build.log ]; then
+            HINT=$(grep -E "Error:|FAILURE|Exception|IconData|keystore|OutOfMemory" build.log | tail -5 | tr '\n' ' ' | head -c 400)
+          fi
+          MSG="Build fallido. Ver log: $ERR_URL"
+          if [ -n "$HINT" ]; then
+            MSG="$MSG | $HINT"
+          fi
           curl -sfX PATCH \
             "$SUPABASE_URL/rest/v1/logiflow_build_jobs?id=eq.${{ inputs.job_id }}" \
             -H "apikey: $SUPABASE_SVC_KEY" \
             -H "Authorization: Bearer $SUPABASE_SVC_KEY" \
             -H "Content-Type: application/json" \
-            -d "{\"estado\":\"error\",\"error_mensaje\":\"Build fallido. Ver log: $ERR_URL\"}"
+            -d "$(python3 -c "import json,sys; print(json.dumps({'estado':'error','error_mensaje':sys.argv[1]}))" "$MSG")"
+
+      - name: Subir build.log si falló
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-android-${{ github.run_id }}
+          path: build.log
+          if-no-files-found: ignore

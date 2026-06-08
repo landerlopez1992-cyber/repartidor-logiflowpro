@@ -1,10 +1,10 @@
 name: '🍎 Build Repartidor · iOS (On-Demand)'
 
-# Repo destino: raíz del proyecto Flutter (ej. repartidor-logiflowpro).
-# Copiar a: .github/workflows/build-repartidor-ios-trigger.yml
-#
-# Secrets: SUPABASE_URL, SUPABASE_SERVICE_KEY,
-#   IOS_CERTIFICATE_BASE64, IOS_CERTIFICATE_PASSWORD, IOS_PROVISIONING_BASE64
+# Requiere secrets en GitHub (repo repartidor-logiflowpro → Settings → Secrets):
+#   SUPABASE_URL, SUPABASE_SERVICE_KEY
+#   IOS_CERTIFICATE_BASE64   → contenido base64 del .p12 (NO el comando)
+#   IOS_CERTIFICATE_PASSWORD → contraseña del .p12
+#   IOS_PROVISIONING_BASE64  → contenido base64 del .mobileprovision
 
 on:
   workflow_dispatch:
@@ -23,9 +23,10 @@ jobs:
   build-ios:
     name: 'Compilar IPA y subir a Supabase Storage'
     runs-on: macos-latest
+    timeout-minutes: 45
 
     steps:
-      - name: 'Supabase: estado → construyendo (inicio inmediato)'
+      - name: 'Supabase: estado → construyendo'
         run: |
           curl -sfX PATCH \
             "$SUPABASE_URL/rest/v1/logiflow_build_jobs?id=eq.${{ inputs.job_id }}" \
@@ -34,16 +35,43 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"estado\":\"construyendo\",\"github_run_id\":\"${{ github.run_id }}\"}"
 
-      - name: Checkout código (última versión de main)
+      - name: Validar secrets iOS (certificados Apple)
+        env:
+          IOS_CERTIFICATE_BASE64:   ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_BASE64:  ${{ secrets.IOS_PROVISIONING_BASE64 }}
+        run: |
+          set -e
+          fail() { echo "::error::$1"; exit 1; }
+
+          if [ -z "$IOS_CERTIFICATE_BASE64" ]; then
+            fail "IOS_CERTIFICATE_BASE64 está vacío. En GitHub → Settings → Secrets → Actions, pega el base64 del archivo .p12 (no el comando base64 -i ...)."
+          fi
+          if echo "$IOS_CERTIFICATE_BASE64" | grep -q "base64 -i"; then
+            fail "IOS_CERTIFICATE_BASE64 contiene un comando de terminal, no el certificado. Ejecuta el comando en tu Mac y pega SOLO el resultado."
+          fi
+          if [ -z "$IOS_CERTIFICATE_PASSWORD" ] || [ "$IOS_CERTIFICATE_PASSWORD" = ".p12" ]; then
+            fail "IOS_CERTIFICATE_PASSWORD incorrecto. Debe ser la contraseña del certificado .p12, no la extensión del archivo."
+          fi
+          if [ -z "$IOS_PROVISIONING_BASE64" ]; then
+            fail "IOS_PROVISIONING_BASE64 está vacío. Pega el base64 del perfil .mobileprovision."
+          fi
+          if echo "$IOS_PROVISIONING_BASE64" | grep -q "base64 -i"; then
+            fail "IOS_PROVISIONING_BASE64 contiene un comando, no el perfil. Pega el resultado del base64 en tu Mac."
+          fi
+          echo "✅ Secrets iOS presentes (formato básico OK)"
+
+      - name: Checkout código (main)
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 1
 
-      - name: Configurar Flutter (stable)
+      - name: Configurar Flutter 3.44.1
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.44.1'
           cache: true
 
       - name: Habilitar plataforma iOS
@@ -55,14 +83,14 @@ jobs:
           IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
           IOS_PROVISIONING_BASE64:  ${{ secrets.IOS_PROVISIONING_BASE64 }}
           KEYCHAIN_PASS:            logiflow-${{ github.run_id }}
-        working-directory: '.'
         run: |
+          set -e
           security create-keychain -p "$KEYCHAIN_PASS" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASS" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
 
-          echo "$IOS_CERTIFICATE_BASE64" | base64 --decode > cert.p12
+          echo "$IOS_CERTIFICATE_BASE64" | base64 -D > cert.p12
           security import cert.p12 -k build.keychain \
             -P "$IOS_CERTIFICATE_PASSWORD" \
             -T /usr/bin/codesign \
@@ -71,13 +99,22 @@ jobs:
             -s -k "$KEYCHAIN_PASS" build.keychain
 
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "$IOS_PROVISIONING_BASE64" | base64 --decode \
+          echo "$IOS_PROVISIONING_BASE64" | base64 -D \
             > ~/Library/MobileDevice/Provisioning\ Profiles/repartidor.mobileprovision
 
           echo "✅ Certificado y perfil instalados"
 
       - name: flutter pub get
         run: flutter pub get
+
+      - name: Ajustar ExportOptions.plist (Team ID)
+        env:
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          if [ -n "$IOS_TEAM_ID" ]; then
+            /usr/libexec/PlistBuddy -c "Add :teamID string $IOS_TEAM_ID" ios/ExportOptions.plist 2>/dev/null \
+              || /usr/libexec/PlistBuddy -c "Set :teamID $IOS_TEAM_ID" ios/ExportOptions.plist
+          fi
 
       - name: flutter build ipa --release
         run: flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
@@ -92,9 +129,12 @@ jobs:
             -d '{"estado":"subiendo"}'
 
       - name: Subir IPA a Supabase Storage
-        id: upload
         run: |
           IPA=$(find build/ios/ipa -name '*.ipa' | head -1)
+          if [ -z "$IPA" ]; then
+            echo "❌ No se encontró IPA"
+            exit 1
+          fi
           echo "IPA: $IPA ($(du -sh "$IPA" | cut -f1))"
 
           curl -sfX POST \
@@ -134,9 +174,13 @@ jobs:
         if: failure()
         run: |
           ERR_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          MSG="Build iOS fallido. Ver log: $ERR_URL"
+          if [ -z "${{ secrets.IOS_CERTIFICATE_BASE64 }}" ]; then
+            MSG="iOS: falta secret IOS_CERTIFICATE_BASE64 en GitHub. Ver log: $ERR_URL"
+          fi
           curl -sfX PATCH \
             "$SUPABASE_URL/rest/v1/logiflow_build_jobs?id=eq.${{ inputs.job_id }}" \
             -H "apikey: $SUPABASE_SVC_KEY" \
             -H "Authorization: Bearer $SUPABASE_SVC_KEY" \
             -H "Content-Type: application/json" \
-            -d "{\"estado\":\"error\",\"error_mensaje\":\"Build iOS fallido. Ver log: $ERR_URL\"}"
+            -d "$(python3 -c "import json,sys; print(json.dumps({'estado':'error','error_mensaje':sys.argv[1]}))" "$MSG")"
