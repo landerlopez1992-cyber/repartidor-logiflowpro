@@ -42,6 +42,7 @@ import '../services/repartidor_notificacion_service.dart';
 import '../services/repartidor_notificaciones_push_service.dart';
 import '../services/repartidor_chat_soporte_service.dart';
 import '../services/repartidor_chat_mensaje_sonido_service.dart';
+import '../utils/entrega_vendedor_filtro.dart';
 import '../utils/orden_tipo_tarjeta_repartidor.dart';
 import '../utils/orden_recogida_colaborador_ui.dart';
 import '../utils/remesa_pura_entrega_ui.dart';
@@ -935,6 +936,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             
             // 🔒 OBLIGATORIO: Filtrar por tenant_id (ya validado arriba que no es null)
             query = query.eq('tenant_id', _tenantId!);
+            query = EntregaVendedorFiltro.excluirEnConsulta(query);
             
             print('📋 Filtro usado: tipo_orden = RECOGIDA, repartidor_nombre = "$repartidorNombre", tenant_id = "$_tenantId"');
           } else if (_esRepartidorMaster) {
@@ -947,6 +949,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             
             // 🔒 OBLIGATORIO: Filtrar por tenant_id (ya validado arriba que no es null)
             query = query.eq('tenant_id', _tenantId!);
+            query = EntregaVendedorFiltro.excluirEnConsulta(query);
             
             print('📋 Filtro usado: tenant_id = "$_tenantId" (MASTER - todas las órdenes de envío y remesas puras, excluyendo RECOGIDA en código)');
             print('📋 IMPORTANTE: NO se filtra por repartidor_nombre para masters');
@@ -993,6 +996,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             
             // 🔒 SEGURIDAD OBLIGATORIA: SIEMPRE filtrar por tenant_id para repartidores normales
             queryAsignadas = queryAsignadas.eq('tenant_id', _tenantId!);
+            queryAsignadas = EntregaVendedorFiltro.excluirEnConsulta(queryAsignadas);
             
             try {
               final todasOrdenesAsignadas = await queryAsignadas.limit(100);
@@ -1001,6 +1005,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               // - Si interruptor ACTIVO: Solo Master puede verlas (repartidores normales NO)
               // - Si interruptor DESACTIVO: NADIE puede verlas (ni normales ni Master)
               ordenesAsignadas = todasOrdenesAsignadas.where((orden) {
+                if (!EntregaVendedorFiltro.incluirFila(orden)) return false;
                 final tipoOrden = orden['tipo_orden']?.toString();
                 final recogerEnSucursal = orden['recoger_en_sucursal'] == true;
                 final repartidorOrden = orden['repartidor_nombre']?.toString();
@@ -1117,12 +1122,13 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                       .select('*, destinatarios!left(nombre, telefono, direccion, municipio, provincia, consejo_popular_batey), sucursales!left(nombre, direccion, municipio, provincia, pais, es_principal)')
                       .eq('tenant_id', _tenantId!)
                       .eq('estado', 'POR ENVIAR')
-                      .eq('recoger_en_sucursal', true)
-                      .limit(100);
-                  final todasOrdenesPorEnviar = await queryPorEnviar;
+                      .eq('recoger_en_sucursal', true);
+                  queryPorEnviar = EntregaVendedorFiltro.excluirEnConsulta(queryPorEnviar);
+                  final todasOrdenesPorEnviar = await queryPorEnviar.limit(100);
                   // Filtrar en código: excluir solo las de RECOGIDA (incluir null y ENVIO)
                   // Y solo incluir órdenes sin repartidor asignado (repartidor_nombre = null o 'Sin asignar')
                   ordenesPorEnviarRecogida = todasOrdenesPorEnviar.where((orden) {
+                    if (!EntregaVendedorFiltro.incluirFila(orden)) return false;
                     final tipoOrden = orden['tipo_orden']?.toString();
                     final repartidorNombre = orden['repartidor_nombre']?.toString();
                     // Excluir órdenes de RECOGIDA

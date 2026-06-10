@@ -15,6 +15,7 @@ enum RepartidorOrdenAcceso {
   otraEmpresa,
   noAsignada,
   sesionInvalida,
+  entregaPorVendedor,
 }
 
 /// Contexto de sesión del repartidor (empresa + rol).
@@ -147,6 +148,10 @@ class RepartidorSeguridadService {
       return RepartidorOrdenAcceso.otraEmpresa;
     }
 
+    if (orden.entregaPorVendedor) {
+      return RepartidorOrdenAcceso.entregaPorVendedor;
+    }
+
     if (ctx.esMaster) {
       return RepartidorOrdenAcceso.permitido;
     }
@@ -199,6 +204,12 @@ class RepartidorSeguridadService {
         titulo = 'Sesión incompleta';
         mensaje =
             'No se pudo verificar su empresa. Cierre sesión e inicie de nuevo.';
+        break;
+      case RepartidorOrdenAcceso.entregaPorVendedor:
+        titulo = 'Entrega por vendedor';
+        mensaje =
+            'La orden $numeroOrden la entrega el vendedor de la tienda. '
+            'No está disponible en el panel del repartidor.';
         break;
       case RepartidorOrdenAcceso.permitido:
         return;
