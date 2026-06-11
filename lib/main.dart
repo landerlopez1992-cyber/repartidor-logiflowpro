@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'services/repartidor_telemetry_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'config/supabase_config.dart';
@@ -45,6 +46,8 @@ void main() async {
     // Continuar de todas formas para mostrar error en UI
   }
 
+  await RepartidorTelemetryService.instance.initialize();
+
   runApp(const RepartidorApp());
 }
 
@@ -56,13 +59,6 @@ class RepartidorApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Manejo global de errores de Flutter
-    FlutterError.onError = (FlutterErrorDetails details) {
-      FlutterError.presentError(details);
-      print('❌ ERROR DE FLUTTER: ${details.exception}');
-      print('📚 Stack: ${details.stack}');
-    };
-
     return MaterialApp(
       title: 'VolonexPro+',
       debugShowCheckedModeBanner: false,
