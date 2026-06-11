@@ -9,7 +9,10 @@ import 'goodbarber_sync_service.dart';
 import 'offline_storage_service.dart';
 import 'ubicacion_offline_service.dart';
 import 'repartidor_pantallas_offline_service.dart';
+import 'orden_cache_service.dart';
 // (imports limpiados por lints)
+
+const _ordenUpdateSyncTypes = {'update_orden_estado', 'mark_delivered'};
 
 /// Servicio de sincronización offline/online
 /// Maneja operaciones cuando no hay internet y las sincroniza cuando regresa la conexión
@@ -211,6 +214,38 @@ class SyncService {
     }
   }
 
+  /// Enriquece payload de órdenes con OFAC + timestamp local del dispositivo (auditoría legal).
+  Future<Map<String, dynamic>> enrichOrdenSyncPayload({
+    required String type,
+    required String ordenId,
+    required Map<String, dynamic> data,
+    required String operationTimestamp,
+  }) async {
+    if (!_ordenUpdateSyncTypes.contains(type)) {
+      return Map<String, dynamic>.from(data);
+    }
+
+    final payload = Map<String, dynamic>.from(data);
+
+    if (!payload.containsKey('ofac_declaracion_aceptada')) {
+      bool ofac = false;
+      try {
+        final cached = await OrdenCacheService.getCachedOrderById(ordenId);
+        if (cached?.ofacDeclaracionAceptada == true) {
+          ofac = true;
+        } else if (cached?.tieneRemesa == true) {
+          ofac = true;
+        }
+      } catch (e) {
+        print('⚠️ enrichOrdenSyncPayload OFAC cache: $e');
+      }
+      payload['ofac_declaracion_aceptada'] = ofac;
+    }
+
+    payload['ofac_declaracion_dispositivo_timestamp'] = operationTimestamp;
+    return payload;
+  }
+
   /// Agregar operación a la cola de sincronización
   Future<void> addOperation({
     required String type, // 'update_orden', 'upload_photo', 'upload_firma', etc.
@@ -224,6 +259,14 @@ class SyncService {
     print('📝 Tipo: $type');
     print('📝 Orden ID: $ordenId');
     print('📝 Datos: $data');
+
+    final operationTimestamp = DateTime.now().toIso8601String();
+    final enrichedData = await enrichOrdenSyncPayload(
+      type: type,
+      ordenId: ordenId,
+      data: data,
+      operationTimestamp: operationTimestamp,
+    );
     
     // 🔒 OFFLINE-FIRST: Deduplicar por (type + orden_id).
     // Si ya existe una operación del mismo tipo para la misma orden, la reemplazamos
@@ -236,8 +279,8 @@ class SyncService {
       final existing = _pendingOperations[existingIndex];
       _pendingOperations[existingIndex] = {
         ...existing,
-        'data': data,
-        'timestamp': DateTime.now().toIso8601String(),
+        'data': enrichedData,
+        'timestamp': operationTimestamp,
         // reset de retries porque es una intención nueva/actualizada del usuario
         'retries': 0,
       };
@@ -247,8 +290,8 @@ class SyncService {
         'id': DateTime.now().millisecondsSinceEpoch.toString(),
         'type': type,
         'orden_id': ordenId,
-        'data': data,
-        'timestamp': DateTime.now().toIso8601String(),
+        'data': enrichedData,
+        'timestamp': operationTimestamp,
         'retries': 0,
       };
       _pendingOperations.add(operation);
@@ -635,7 +678,14 @@ class SyncService {
     
     final type = operation['type'];
     final ordenId = operation['orden_id'];
-    final data = operation['data'] as Map<String, dynamic>;
+    final rawData = operation['data'] as Map<String, dynamic>;
+    final opTs = operation['timestamp']?.toString() ?? DateTime.now().toIso8601String();
+    final data = await enrichOrdenSyncPayload(
+      type: type?.toString() ?? '',
+      ordenId: ordenId?.toString() ?? '',
+      data: rawData,
+      operationTimestamp: opTs,
+    );
     
     try {
       switch (type) {
@@ -794,9 +844,10 @@ class SyncService {
           return true;
           
         case 'mark_delivered':
-          // Marcar como entregado - Log detallado
+          // Marcar como entregado - Log detallado (incluye OFAC + timestamp dispositivo)
           print('📦 Marcando orden $ordenId como entregada en Supabase...');
           print('📝 Datos a actualizar: $data');
+          print('📝 OFAC sync: aceptada=${data['ofac_declaracion_aceptada']}, ts=${data['ofac_declaracion_dispositivo_timestamp']}');
           
           final response = await supabase
               .from('ordenes')

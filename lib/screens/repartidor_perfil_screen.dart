@@ -24,6 +24,8 @@ import '../services/repartidor_historial_pago_service.dart';
 import '../widgets/historial_pago_detalle_card.dart';
 import '../utils/repartidor_master_util.dart';
 import '../widgets/repartidor_master_badge.dart';
+import '../services/paises_service.dart';
+import '../utils/moneda_tenant_util.dart';
 
 class RepartidorPerfilScreen extends StatefulWidget {
   const RepartidorPerfilScreen({super.key});
@@ -44,6 +46,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   String? _fotoPerfilLocalPath;
   String? _repartidorId;
   String? _tenantId;
+  String? _paisOperacion;
   
   // Estadísticas semanales
   int _ordenesEntregadas = 0;
@@ -116,11 +119,23 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     super.dispose();
   }
 
+  Future<void> _cargarPaisOperacion() async {
+    try {
+      if (_tenantId == null) return;
+      final pais = await PaisesService.obtenerPaisOperacion(_tenantId!);
+      if (!mounted) return;
+      setState(() {
+        _paisOperacion = pais;
+        _monedaSaldo = MonedaTenantUtil.normalizarMoneda(_monedaSaldo, pais);
+      });
+    } catch (_) {}
+  }
+
   void _aplicarSaldoCargado(RepartidorSaldoCargado r) {
     _saldo = r.saldo;
     _saldoServidor = r.saldoServidor;
     _saldoPendienteSync = r.saldoPendienteSync;
-    _monedaSaldo = r.moneda;
+    _monedaSaldo = MonedaTenantUtil.normalizarMoneda(r.moneda, _paisOperacion);
     _solicitudPendiente = r.solicitudPendiente;
   }
 
@@ -198,6 +213,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             _esRepartidorMaster = esMaster;
             _isLoading = false;
           });
+          await _cargarPaisOperacion();
 
           if (!_esRecolector) {
             await _cargarEstadisticasSemanales();
@@ -247,6 +263,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                 _esRepartidorMaster = esMaster;
                 _isLoading = false;
               });
+              await _cargarPaisOperacion();
 
               if (!_esRecolector) {
                 await _cargarEstadisticasSemanales();
@@ -2051,6 +2068,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
       saldo: _saldoServidor,
       moneda: _monedaSaldo,
       totalOrdenes: ordenesIds.length,
+      paisOperacion: _paisOperacion,
     );
     if (r == null || !mounted) return;
     await _enviarSolicitudPago(

@@ -843,10 +843,12 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
           if (match != null) {
             cantidadTexto = match.group(1) ?? '';
             // Detectar moneda
-            if (mensaje.contains('\$') || mensaje.contains('USD')) {
-              cantidadTexto = '\$$cantidadTexto USD';
-            } else {
+            if (mensaje.contains('CUP') &&
+                !mensaje.contains('USD') &&
+                !mensaje.contains('\$')) {
               cantidadTexto = '$cantidadTexto CUP';
+            } else {
+              cantidadTexto = '\$$cantidadTexto USD';
             }
           }
         } catch (e) {

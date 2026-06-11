@@ -852,11 +852,14 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       
       if (isOnline) {
         try {
+          final tenantId = widget.orden.tenantId;
+          if (tenantId == null || tenantId.isEmpty) return;
           final response = await supabase
               .from('configuracion_envios')
               .select('foto_entrega_obligatoria')
-              .limit(1)
-              .single();
+              .eq('tenant_id', tenantId)
+              .maybeSingle();
+          if (response == null) return;
           
           if (mounted) {
             setState(() {

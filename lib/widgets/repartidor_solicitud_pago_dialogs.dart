@@ -3,6 +3,7 @@ import '../services/repartidor_solicitud_pago_service.dart';
 import '../config/app_colors.dart';
 import 'volonex_dialog.dart';
 import 'volonex_ui.dart';
+import '../utils/moneda_tenant_util.dart';
 
 /// Diálogos para solicitar nómina — tema oscuro Volonex.
 class RepartidorSolicitudPagoDialogs {
@@ -195,9 +196,10 @@ class RepartidorSolicitudPagoDialogs {
     required double saldo,
     required String moneda,
     required int totalOrdenes,
+    String? paisOperacion,
   }) async {
     final montoCtrl = TextEditingController(text: saldo > 0 ? saldo.toStringAsFixed(2) : '');
-    String monedaSel = moneda;
+    String monedaSel = MonedaTenantUtil.normalizarMoneda(moneda, paisOperacion);
 
     final ok = await showDialog<bool>(
       context: context,
@@ -241,11 +243,12 @@ class RepartidorSolicitudPagoDialogs {
                     selected: monedaSel == 'USD',
                     onTap: () => setSt(() => monedaSel = 'USD'),
                   ),
-                  VolonexUi.filterChip(
-                    label: 'CUP',
-                    selected: monedaSel == 'CUP',
-                    onTap: () => setSt(() => monedaSel = 'CUP'),
-                  ),
+                  if (MonedaTenantUtil.permiteCup(paisOperacion))
+                    VolonexUi.filterChip(
+                      label: 'CUP',
+                      selected: monedaSel == 'CUP',
+                      onTap: () => setSt(() => monedaSel = 'CUP'),
+                    ),
                 ],
               ),
             ],

@@ -27,6 +27,7 @@ import '../services/connectivity_assistant_service.dart';
 import '../services/shorebird_service.dart';
 import '../services/goodbarber_sync_service.dart';
 import '../services/paises_service.dart';
+import '../utils/moneda_tenant_util.dart';
 import '../services/orden_proximidad_service.dart';
 import 'repartidor_perfil_screen.dart';
 import 'chat_repartidor_lista_screen.dart';
@@ -125,7 +126,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   
   // Saldo del repartidor (pagos aceptados)
   double _saldo = 0.0;
-  String _monedaSaldo = 'CUP';
+  String _monedaSaldo = 'USD';
   
   // Cache para órdenes filtradas (evitar recalcular en cada rebuild)
   List<Orden>? _ordenesFiltradasCache;
@@ -450,11 +451,13 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   Future<void> _cargarConfiguracionFoto() async {
     try {
+      if (_tenantId == null || _tenantId!.isEmpty) return;
       final response = await supabase
           .from('configuracion_envios')
           .select('foto_entrega_obligatoria')
-          .limit(1)
-          .single();
+          .eq('tenant_id', _tenantId!)
+          .maybeSingle();
+      if (response == null) return;
       
       if (mounted) {
         setState(() {
@@ -475,6 +478,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         if (mounted && pais != null && pais.isNotEmpty) {
           setState(() {
             _paisOperacion = pais;
+            _monedaSaldo = MonedaTenantUtil.normalizarMoneda(_monedaSaldo, pais);
           });
           print('🌍 País de operación cargado: $_paisOperacion');
         }
@@ -484,6 +488,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         if (mounted && paisActual != null && paisActual.isNotEmpty) {
           setState(() {
             _paisOperacion = paisActual;
+            _monedaSaldo = MonedaTenantUtil.normalizarMoneda(_monedaSaldo, paisActual);
           });
           print('🌍 País de operación cargado del usuario: $_paisOperacion');
         }
@@ -1734,7 +1739,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       if (mounted) {
         setState(() {
           _saldo = r.saldo;
-          _monedaSaldo = r.moneda;
+          _monedaSaldo = MonedaTenantUtil.normalizarMoneda(r.moneda, _paisOperacion);
         });
       }
     } catch (e) {
@@ -1925,8 +1930,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               if (estadoAnterior != 'ACEPTADO' && estadoNuevo == 'ACEPTADO') {
                 print('💰💰💰 Pago aceptado detectado en tiempo real');
                 final monto = (pago['monto'] ?? 0.0).toDouble();
-                final moneda = pago['moneda']?.toString() ?? 'CUP';
-                final simbolo = moneda == 'USD' ? '\$' : 'CUP';
+                final moneda = pago['moneda']?.toString() ?? 'USD';
+                final simbolo = MonedaTenantUtil.simboloDisplay(moneda);
                 final pagoId = pago['id']?.toString() ?? '';
                 
                 _procesarAvisoPagoDesdePanel(
@@ -1942,8 +1947,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               if (estadoAnterior != 'CANCELADA' && estadoNuevo == 'CANCELADA') {
                 print('🚫🚫🚫 Pago cancelado detectado en tiempo real');
                 final monto = (pago['monto'] ?? 0.0).toDouble();
-                final moneda = pago['moneda']?.toString() ?? 'CUP';
-                final simbolo = moneda == 'USD' ? '\$' : 'CUP';
+                final moneda = pago['moneda']?.toString() ?? 'USD';
+                final simbolo = MonedaTenantUtil.simboloDisplay(moneda);
                 final pagoId = pago['id']?.toString() ?? '';
                 final motivoCancelacion = pago['motivo_cancelacion']?.toString() ?? '';
                 
@@ -1962,8 +1967,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               if (estadoAnterior != 'RECHAZADO' && estadoNuevo == 'RECHAZADO') {
                 print('❌❌❌ Pago rechazado detectado en tiempo real');
                 final monto = (pago['monto'] ?? 0.0).toDouble();
-                final moneda = pago['moneda']?.toString() ?? 'CUP';
-                final simbolo = moneda == 'USD' ? '\$' : 'CUP';
+                final moneda = pago['moneda']?.toString() ?? 'USD';
+                final simbolo = MonedaTenantUtil.simboloDisplay(moneda);
                 final pagoId = pago['id']?.toString() ?? '';
                 final motivoRechazo = pago['motivo_rechazo']?.toString() ?? '';
                 
@@ -2759,10 +2764,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   Future<void> _cargarConfiguracionPrioridad() async {
     try {
+      if (_tenantId == null || _tenantId!.isEmpty) return;
       final responseList = await supabase
           .from('configuracion_envios')
           .select('prioridad_urgentes, ordenar_por_fecha, ordenar_por_distancia')
-          .limit(1);
+          .eq('tenant_id', _tenantId!);
 
       bool configCambio = false;
       
@@ -7541,10 +7547,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   Future<void> _cargarConfiguracionRastreo() async {
     try {
+      if (_tenantId == null || _tenantId!.isEmpty) return;
       final response = await supabase
           .from('configuracion_envios')
           .select('rastreo_tiempo_real, intervalo_actualizacion')
-          .limit(1)
+          .eq('tenant_id', _tenantId!)
           .maybeSingle();
       
       if (response != null && mounted) {
@@ -7561,10 +7568,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   
   Future<void> _cargarConfiguracionRecogidaSucursal() async {
     try {
+      if (_tenantId == null || _tenantId!.isEmpty) return;
       final response = await supabase
           .from('configuracion_envios')
           .select('recoger_en_sucursal_solo_master')
-          .limit(1)
+          .eq('tenant_id', _tenantId!)
           .maybeSingle();
       
       if (response != null && mounted) {

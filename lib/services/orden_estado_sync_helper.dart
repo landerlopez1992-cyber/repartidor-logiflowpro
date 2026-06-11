@@ -33,12 +33,19 @@ class OrdenEstadoSyncHelper {
 
     final syncService = SyncService();
     final nuevoEstado = updateData['estado']?.toString().trim();
+    final operationTimestamp = DateTime.now().toIso8601String();
+    final payload = await syncService.enrichOrdenSyncPayload(
+      type: queueType,
+      ordenId: ordenId,
+      data: Map<String, dynamic>.from(updateData),
+      operationTimestamp: operationTimestamp,
+    );
 
     Future<void> encolar() async {
       await syncService.addOperation(
         type: queueType,
         ordenId: ordenId,
-        data: Map<String, dynamic>.from(updateData),
+        data: payload,
       );
     }
 
@@ -48,7 +55,7 @@ class OrdenEstadoSyncHelper {
     }
 
     try {
-      await supabase.from('ordenes').update(updateData).eq('id', ordenId);
+      await supabase.from('ordenes').update(payload).eq('id', ordenId);
 
       if (syncGoodBarber && nuevoEstado != null && nuevoEstado.isNotEmpty) {
         try {

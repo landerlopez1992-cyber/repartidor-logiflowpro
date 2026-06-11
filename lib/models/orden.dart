@@ -95,6 +95,9 @@ class Orden {
   /// Avisos «mi parte lista para recogida» por colaborador (no cambian el estado de la orden).
   final List<Map<String, dynamic>>? avisosRecogidaVendedor;
 
+  /// Declaración OFAC del cliente final (web / checkout).
+  final bool? ofacDeclaracionAceptada;
+
   Orden({
     required this.id,
     required this.numeroOrden,
@@ -125,7 +128,7 @@ class Orden {
     this.cantidadBultos = 1,
     this.requierePago = false,
     this.montoCobrar = 0.0,
-    this.moneda = 'CUP',
+    this.moneda = 'USD',
     this.precioTotalEnvio,
     this.monedaPrecioTotalEnvio,
     this.pagado = false,
@@ -156,6 +159,7 @@ class Orden {
     this.vendedorContactoTelefono,
     this.vendedorContactoEmail,
     this.avisosRecogidaVendedor,
+    this.ofacDeclaracionAceptada,
   });
 
   /// Pedido de tienda web: `pagada` en BD a veces significa cobro del cliente, no pago al repartidor.
@@ -402,7 +406,7 @@ class Orden {
       cantidadBultos: json['cantidad_bultos'] ?? 1,
       requierePago: json['requiere_pago'] ?? false,
       montoCobrar: (json['monto_cobrar'] ?? 0.0).toDouble(),
-      moneda: json['moneda'] ?? 'CUP',
+      moneda: json['moneda'] ?? 'USD',
       precioTotalEnvio: json['precio_total_envio']?.toDouble(),
       monedaPrecioTotalEnvio: json['moneda_precio_total_envio'] ?? json['moneda'] ?? 'USD',
       pagado: json['pagado'] ?? false,
@@ -437,6 +441,7 @@ class Orden {
       vendedorContactoTelefono: json['vendedor_contacto_telefono']?.toString(),
       vendedorContactoEmail: json['vendedor_contacto_email']?.toString(),
       avisosRecogidaVendedor: _parseAvisosRecogida(json['avisos_recogida_vendedor']),
+      ofacDeclaracionAceptada: _parseBool(json['ofac_declaracion_aceptada']),
     );
   }
 
@@ -550,6 +555,7 @@ class Orden {
       'vendedor_contacto_telefono': vendedorContactoTelefono,
       'vendedor_contacto_email': vendedorContactoEmail,
       'avisos_recogida_vendedor': avisosRecogidaVendedor,
+      'ofac_declaracion_aceptada': ofacDeclaracionAceptada,
     };
   }
 }
