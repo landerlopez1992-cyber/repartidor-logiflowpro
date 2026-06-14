@@ -12,6 +12,7 @@ import '../services/orden_estado_sync_helper.dart';
 import '../services/configuracion_service.dart';
 import 'detalle_orden_screen.dart';
 import '../config/app_colors.dart';
+import '../utils/mensaje_error_operacion.dart';
 import '../services/repartidor_seguridad_service.dart';
 
 class QRScannerFullscreen extends StatefulWidget {
@@ -836,7 +837,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
               const Icon(Icons.error_outline, color: Colors.white, size: 20),
               const SizedBox(width: 12),
               Expanded(
-                child: Text('Error al marcar como listo para recoger: ${e.toString()}'),
+                child: Text(mensajeErrorOperacion(e, contexto: 'orden')),
               ),
             ],
           ),
@@ -921,7 +922,7 @@ class _QRScannerFullscreenState extends State<QRScannerFullscreen> {
               const Icon(Icons.error_outline, color: Colors.white, size: 20),
               const SizedBox(width: 12),
               Expanded(
-                child: Text('Error al recibir orden: ${e.toString()}'),
+                child: Text(mensajeErrorOperacion(e, contexto: 'orden')),
               ),
             ],
           ),

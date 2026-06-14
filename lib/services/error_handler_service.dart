@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../config/app_colors.dart';
 import '../widgets/volonex_dialog.dart';
+import '../utils/mensaje_error_operacion.dart';
 
 /// Servicio para manejar errores y mostrar modales informativos (estilo VolonexPro+).
 class ErrorHandlerService {
@@ -12,7 +13,6 @@ class ErrorHandlerService {
     BuildContext context,
     String titulo,
     String mensaje, {
-    String? detalleTecnico,
     VoidCallback? onAceptar,
   }) async {
     if (!context.mounted) return;
@@ -23,52 +23,9 @@ class ErrorHandlerService {
       builder: (ctx) => VolonexDialog(
         title: titulo,
         leading: const Icon(Icons.error_outline, color: AppColors.error, size: 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(mensaje),
-            if (detalleTecnico != null && detalleTecnico.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: AppColors.darkElevated,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.darkBorder),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.bug_report, size: 14, color: AppColors.darkTextMuted),
-                        SizedBox(width: 6),
-                        Text(
-                          'Detalle técnico',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.darkTextMuted,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    SelectableText(
-                      detalleTecnico,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AppColors.darkTextMuted,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ],
+        child: Text(
+          mensaje,
+          style: const TextStyle(color: AppColors.darkText, fontSize: 14, height: 1.4),
         ),
         actions: [
           ElevatedButton(
@@ -163,51 +120,22 @@ class ErrorHandlerService {
     );
   }
 
-  /// Manejar error y mostrar modal apropiado
   static Future<void> handleError(
     BuildContext context,
     dynamic error, {
     String? titulo,
-    String? mensajePersonalizado,
+    String? contexto,
     VoidCallback? onAceptar,
   }) async {
     if (!context.mounted) return;
 
-    String tituloFinal = titulo ?? 'Error';
-    String mensaje = mensajePersonalizado ?? 'Ha ocurrido un error inesperado';
-    String? detalleTecnico;
-
-    final errorString = error.toString();
-
-    if (errorString.contains('SocketException') ||
-        errorString.contains('network') ||
-        errorString.contains('connection')) {
-      tituloFinal = 'Error de Conexión';
-      mensaje =
-          'No hay conexión a internet. Los datos se guardaron localmente y se sincronizarán cuando haya conexión.';
-      detalleTecnico = null;
-    } else if (errorString.contains('timeout')) {
-      tituloFinal = 'Tiempo de Espera Agotado';
-      mensaje =
-          'La operación tardó demasiado. Los datos se guardaron localmente y se sincronizarán más tarde.';
-    } else if (errorString.contains('permission') || errorString.contains('Permission')) {
-      tituloFinal = 'Permiso Denegado';
-      mensaje = 'No se tiene permiso para realizar esta operación.';
-      detalleTecnico = errorString;
-    } else if (errorString.contains('storage') || errorString.contains('Storage')) {
-      tituloFinal = 'Error de Almacenamiento';
-      mensaje =
-          'No se pudo guardar en el almacenamiento local. Verifica que haya espacio disponible.';
-      detalleTecnico = errorString;
-    } else {
-      detalleTecnico = errorString;
-    }
+    String tituloFinal = titulo ?? 'No se pudo completar';
+    final mensaje = mensajeErrorOperacion(error, contexto: contexto);
 
     await showErrorModal(
       context,
       tituloFinal,
       mensaje,
-      detalleTecnico: detalleTecnico,
       onAceptar: onAceptar,
     );
   }

@@ -28,6 +28,7 @@ import '../services/shorebird_service.dart';
 import '../services/goodbarber_sync_service.dart';
 import '../services/paises_service.dart';
 import '../utils/moneda_tenant_util.dart';
+import '../utils/mensaje_error_operacion.dart';
 import '../services/orden_proximidad_service.dart';
 import 'repartidor_perfil_screen.dart';
 import 'chat_repartidor_lista_screen.dart';
@@ -7418,7 +7419,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('❌ Error al seleccionar foto: ${e.toString()}'),
+            content: Text(mensajeErrorOperacion(e, contexto: 'imagen')),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 3),
           ),

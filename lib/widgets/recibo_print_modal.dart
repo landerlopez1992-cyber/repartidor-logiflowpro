@@ -304,8 +304,8 @@ class _ReciboPrintModalState extends State<ReciboPrintModal> {
           } else {
             // CRÍTICO: No usar URL de otra empresa como fallback
             // Si no hay sitio web configurado, usar URL genérica o vacía
-            _qrAppUrl = 'https://www.logiflowpro.com/app';
-            print('⚠️ No hay sitio web configurado para esta empresa, usando URL genérica');
+            _qrAppUrl = null;
+            print('⚠️ No hay sitio web configurado para esta empresa; QR de app omitido');
           }
           
           // Cargar QR después de tener el sitio web

@@ -23,6 +23,7 @@ import '../utils/orden_recogida_colaborador_ui.dart';
 import '../utils/remesa_pura_entrega_ui.dart';
 import '../utils/entrega_foto_util.dart';
 import '../config/app_colors.dart';
+import '../utils/mensaje_error_operacion.dart';
 import '../widgets/volonex_dialog.dart';
 import '../widgets/remesa_validacion_dialogs.dart';
 import '../widgets/foto_entrega_preview.dart';
@@ -303,11 +304,16 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     try {
       print('🔥 [INIT] Cargando orden #${widget.orden.numeroOrden} desde BD INMEDIATAMENTE...');
       
-      final response = await supabase
+      var qOrden = supabase
           .from('ordenes')
           .select('*')
-          .eq('id', widget.orden.id)
-          .maybeSingle();
+          .eq('id', widget.orden.id);
+      final tenantSesion =
+          (await RepartidorSeguridadService.cargarContexto()).tenantId;
+      if (tenantSesion != null && tenantSesion.isNotEmpty) {
+        qOrden = qOrden.eq('tenant_id', tenantSesion);
+      }
+      final response = await qOrden.maybeSingle();
       
       if (response != null) {
         final ordenActualizada = Orden.fromJson(response);
@@ -3875,7 +3881,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'Error: ${e.toString()}',
+                    mensajeErrorOperacion(e, contexto: 'orden'),
                     style: const TextStyle(
                       color: AppColors.textMutedOnLight,
                       fontSize: 12,

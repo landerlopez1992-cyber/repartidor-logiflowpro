@@ -39,11 +39,13 @@
             android:name="flutterEmbedding"
             android:value="2" />
         
-        <!-- Declaración requerida para aplicaciones de monitoreo de empleados -->
-        <!-- Google Play requiere esta declaración para apps que monitorean empleados -->
+        <!-- Google Play: metadatos app de monitoreo / repartidores -->
         <meta-data
-            android:name="com.google.android.gms.isMonitoringTool"
-            android:value="true" />
+            android:name="com.google.android.play.monitoringtool"
+            android:value="isMonitoringTool" />
+        <meta-data
+            android:name="isMonitoringTool"
+            android:value="enterprise_management" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

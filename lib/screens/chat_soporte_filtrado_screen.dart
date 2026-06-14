@@ -9,6 +9,7 @@ import '../services/sync_service.dart';
 import '../services/network_timeout.dart';
 import '../services/repartidor_chat_mensaje_sonido_service.dart';
 import '../utils/entrega_foto_util.dart';
+import '../utils/mensaje_error_operacion.dart';
 
 /// Pantalla de chat filtrado que muestra solo mensajes de un remitente específico
 class ChatSoporteFiltradoScreen extends StatefulWidget {
@@ -438,7 +439,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al seleccionar foto: ${e.toString()}'),
+            content: Text(mensajeErrorOperacion(e, contexto: 'imagen')),
             backgroundColor: Colors.red,
           ),
         );
@@ -734,7 +735,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('⚠️ Error: ${e.toString()}'),
+            content: Text(mensajeErrorOperacion(e, contexto: 'chat')),
             backgroundColor: Colors.orange,
           ),
         );

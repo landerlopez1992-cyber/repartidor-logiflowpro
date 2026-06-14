@@ -90,6 +90,15 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     _cargarDatosPerfil();
   }
 
+  /// Filtra consultas de órdenes por tenant cuando está disponible.
+  dynamic _queryOrdenesRepartidor(dynamic query) {
+    final tid = _tenantId?.trim();
+    if (tid != null && tid.isNotEmpty) {
+      return query.eq('tenant_id', tid);
+    }
+    return query;
+  }
+
   // Inicializar estado de conexión
   void _inicializarEstadoConexion() {
     final syncService = SyncService();
@@ -513,21 +522,21 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
       // Órdenes pendientes (todas las asignadas que no están entregadas)
       // IMPORTANTE: Las órdenes usan repartidor_nombre, no repartidor_id
       final nombreRepartidor = _nombreController.text;
-      final pendientesResponse = await supabase
+      final pendientesResponse = await _queryOrdenesRepartidor(supabase
           .from('ordenes')
           .select('id')
           .eq('repartidor_nombre', nombreRepartidor)
-          .inFilter('estado', ['POR ENVIAR', 'EN TRANSITO']);
+          .inFilter('estado', ['POR ENVIAR', 'EN TRANSITO']));
 
       // Órdenes entregadas en la semana (solo NO pagadas)
-      final entregadasResponse = await supabase
+      final entregadasResponse = await _queryOrdenesRepartidor(supabase
           .from('ordenes')
           .select('id, tiene_remesa, cantidad_remesa, requiere_pago, pagado, monto_cobrar')
           .eq('repartidor_nombre', nombreRepartidor)
           .eq('estado', 'ENTREGADO')
           .or('pagada.is.null,pagada.eq.false') // Solo órdenes NO pagadas
           .gte('fecha_entrega', inicioSemana.toIso8601String())
-          .lt('fecha_entrega', finSemana.toIso8601String());
+          .lt('fecha_entrega', finSemana.toIso8601String()));
 
       final ordenesPendientes = (pendientesResponse as List).length;
       final ordenesEntregadas = (entregadasResponse as List).length;
@@ -597,21 +606,21 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
 
       // Órdenes pendientes
       final nombreRepartidor = _nombreController.text;
-      final pendientesResponse = await supabase
+      final pendientesResponse = await _queryOrdenesRepartidor(supabase
           .from('ordenes')
           .select('id')
           .eq('repartidor_nombre', nombreRepartidor)
-          .inFilter('estado', ['POR ENVIAR', 'EN TRANSITO']);
+          .inFilter('estado', ['POR ENVIAR', 'EN TRANSITO']));
 
       // Órdenes entregadas en la semana (solo NO pagadas)
-      final entregadasResponse = await supabase
+      final entregadasResponse = await _queryOrdenesRepartidor(supabase
           .from('ordenes')
           .select('id, tiene_remesa, cantidad_remesa, requiere_pago, pagado, monto_cobrar')
           .eq('repartidor_nombre', nombreRepartidor)
           .eq('estado', 'ENTREGADO')
           .or('pagada.is.null,pagada.eq.false') // Solo órdenes NO pagadas
           .gte('fecha_entrega', inicioSemanaFormatted.toIso8601String())
-          .lt('fecha_entrega', finSemana.toIso8601String());
+          .lt('fecha_entrega', finSemana.toIso8601String()));
 
       final ordenesPendientes = (pendientesResponse as List).length;
       final ordenesEntregadas = (entregadasResponse as List).length;
@@ -1897,13 +1906,13 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     }
     final estadoObjetivo = _esRecolector ? 'RECOGIDO' : 'ENTREGADO';
 
-    final todas = await supabase
+    final todas = await _queryOrdenesRepartidor(supabase
         .from('ordenes')
         .select('id, pagada, estado, fecha_entrega, tipo_orden')
         .eq('repartidor_nombre', nombre)
         .eq('estado', estadoObjetivo)
         .not('fecha_entrega', 'is', null)
-        .or('pagada.is.null,pagada.eq.false');
+        .or('pagada.is.null,pagada.eq.false'));
 
     final solicitudesAceptadas = await supabase
         .from('solicitudes_pago_repartidores')

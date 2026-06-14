@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../main.dart';
+import '../utils/mensaje_error_operacion.dart';
 
 class GoodBarberService {
   // Base URL de la API de GoodBarber Commerce
@@ -510,7 +511,7 @@ class GoodBarberService {
       print('   Stack trace: $stackTrace');
       return {
         'valido': false,
-        'mensaje': 'Error al conectar con GoodBarber: ${e.toString()}',
+        'mensaje': mensajeErrorOperacion(e, contexto: 'integracion'),
         'error': e.toString(),
       };
     }

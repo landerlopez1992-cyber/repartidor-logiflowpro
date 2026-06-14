@@ -10,7 +10,8 @@ plugins {
 android {
     namespace = "com.logiflowpro.repartidor"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // NDK r28+ obligatorio para alineación ELF 16 kB (Google Play / Android 15)
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -31,6 +32,16 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
+    }
+
+    packaging {
+        jniLibs {
+            // Android 15 / Play: .so sin comprimir, alineación 16 kB (AGP 8.5.1+)
+            useLegacyPackaging = false
+        }
     }
 
     val keystorePropertiesFile = rootProject.file("key.properties")
