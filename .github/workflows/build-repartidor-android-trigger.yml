@@ -62,11 +62,27 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
+      # Runners ubuntu-latest ≈ 7 GB RAM; android/gradle.properties pide 8G y provoca OOM en mergeDex.
+      - name: Ajustar memoria Gradle (CI)
+        run: |
+          sed -i 's/-Xmx8G/-Xmx3G/g' android/gradle.properties
+          sed -i 's/MaxMetaspaceSize=4G/MaxMetaspaceSize=1g/g' android/gradle.properties
+          grep jvmargs android/gradle.properties || true
+
       - name: flutter build apk --release
         run: |
           set -o pipefail
-          flutter build apk --release 2>&1 | tee build.log
-          test -f build/app/outputs/flutter-apk/app-release.apk
+          flutter build apk --release --split-per-abi 2>&1 | tee build.log
+          APK=$(find build/app/outputs/flutter-apk -name '*arm64-v8a*release*.apk' | head -1)
+          if [ -z "$APK" ]; then
+            APK=$(find build/app/outputs/flutter-apk -name 'app-release.apk' | head -1)
+          fi
+          if [ -z "$APK" ]; then
+            echo "❌ No se encontró APK release"
+            ls -la build/app/outputs/flutter-apk/ || true
+            exit 1
+          fi
+          echo "APK_SELECTED=$APK" >> "$GITHUB_ENV"
 
       - name: 'Supabase: estado → subiendo'
         run: |
@@ -79,9 +95,15 @@ jobs:
 
       - name: Subir APK a Supabase Storage
         run: |
-          APK=$(find build/app/outputs/flutter-apk -name 'app-release.apk' | head -1)
+          APK="${APK_SELECTED:-}"
           if [ -z "$APK" ]; then
-            echo "❌ No se encontró app-release.apk"
+            APK=$(find build/app/outputs/flutter-apk -name '*arm64-v8a*release*.apk' | head -1)
+          fi
+          if [ -z "$APK" ]; then
+            APK=$(find build/app/outputs/flutter-apk -name 'app-release.apk' | head -1)
+          fi
+          if [ -z "$APK" ]; then
+            echo "❌ No se encontró APK release"
             exit 1
           fi
           echo "APK: $APK ($(du -sh "$APK" | cut -f1))"
