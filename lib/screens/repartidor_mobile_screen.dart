@@ -60,6 +60,8 @@ import '../widgets/repartidor_master_badge.dart';
 import '../services/repartidor_saldo_service.dart';
 import '../services/repartidor_perfil_cache_service.dart';
 import '../services/repartidor_perfil_foto_cache_service.dart';
+import '../services/repartidor_actualizacion_forzada_service.dart';
+import '../widgets/actualizacion_forzada_overlay.dart';
 
 class RepartidorMobileScreen extends StatefulWidget {
   const RepartidorMobileScreen({super.key});
@@ -98,6 +100,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   bool _hidratadoPushAlInicio = false;
   late DateTime _inicioSesionNotificacionesUtc;
   Map<String, dynamic>? _notificacionGeneralBanner; // Notificación general para mostrar en banner
+  ActualizacionForzadaEstado? _actualizacionForzada;
   
   // Variables para rastreo de ubicación
   StreamSubscription<Position>? _positionStreamSubscription;
@@ -279,7 +282,26 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       _iniciarVerificacionPeriodicaNotificaciones(); // Verificar notificaciones periódicamente como respaldo
       _verificarYActivarRastreo(); // CRÍTICO: Activar rastreo siempre que la app esté abierta (para indicador online/offline)
       _inicializarEstadoConexion(); // Inicializar estado de conexión
+      await _comprobarActualizacionForzada();
     });
+  }
+
+  Future<void> _comprobarActualizacionForzada() async {
+    final estado =
+        await RepartidorActualizacionForzadaService.instance.consultarDesdeConfig();
+    if (!mounted) return;
+    setState(() => _actualizacionForzada = estado);
+  }
+
+  Future<void> _procesarActualizacionForzada({
+    Map<String, dynamic>? notificacion,
+  }) async {
+    final estado = await RepartidorActualizacionForzadaService.instance
+        .resolverActualizacionForzada(notificacion: notificacion);
+    if (!mounted) return;
+    if (estado != null) {
+      setState(() => _actualizacionForzada = estado);
+    }
   }
   
   // Inicializar estado de conexión y listeners
@@ -436,6 +458,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       _cargarOrdenes();
       _cargarMensajesNoLeidos();
       _cargarNotificacionesNoLeidas(); // CRÍTICO: Actualizar badge de notificaciones
+      _comprobarActualizacionForzada();
       // CRÍTICO: Reactivar rastreo cuando la app vuelve a estar activa
       _verificarYActivarRastreo();
     } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
@@ -2215,6 +2238,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               leidaEnPayload: leida,
               createdAtIso: notificacion['created_at']?.toString(),
               desdeRealtime: true,
+              urlAdjunto: notificacion['url_adjunto']?.toString(),
             );
           },
         )
@@ -2262,8 +2286,27 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     bool? leidaEnPayload,
     String? createdAtIso,
     bool desdeRealtime = false,
+    String? urlAdjunto,
   }) async {
     try {
+      if (tipo == 'actualizacion_forzada_android' ||
+          tipo == 'actualizacion_forzada_ios') {
+        if (notificacionId != null && notificacionId.isNotEmpty) {
+          await RepartidorNotificacionesPushService.instance
+              .marcarPushMostrado(notificacionId);
+          _notificacionesProcesadas.add(notificacionId);
+        }
+        await _procesarActualizacionForzada(
+          notificacion: {
+            'tipo': tipo,
+            'titulo': titulo,
+            'mensaje': mensaje,
+            'url_adjunto': urlAdjunto,
+          },
+        );
+        return;
+      }
+
       print('🔍 Verificando configuración de notificaciones...');
       print('   - Tipo: $tipo');
       print('   - Título: $titulo');
@@ -3178,7 +3221,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return Stack(
+      children: [
+        Scaffold(
       backgroundColor: AppColors.darkBg,
       appBar: AppBar(
         backgroundColor: AppColors.header,
@@ -3785,6 +3830,15 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         ],
         ),
       ),
+        ),
+        if (_actualizacionForzada != null)
+          ActualizacionForzadaOverlay(
+            estado: _actualizacionForzada!,
+            onTiendaAbierta: () {
+              if (mounted) setState(() => _actualizacionForzada = null);
+            },
+          ),
+      ],
     );
   }
 

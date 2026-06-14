@@ -57,16 +57,16 @@ class _RepartidorSuspendedScreenState extends State<RepartidorSuspendedScreen> {
       final tenantId = userData['tenant_id'];
 
       if (tenantId != null) {
-        // Obtener nombre de la empresa
         final empresaData = await supabase
-            .from('empresas')
+            .from('tenants')
             .select('nombre')
-            .eq('tenant_id', tenantId)
-            .single();
+            .eq('id', tenantId)
+            .maybeSingle();
 
         if (mounted) {
           setState(() {
-            _empresaNombre = empresaData['nombre'] ?? widget.empresaNombre ?? 'la empresa';
+            _empresaNombre =
+                empresaData?['nombre'] ?? widget.empresaNombre ?? 'la empresa';
           });
         }
       } else {

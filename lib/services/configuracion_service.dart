@@ -33,12 +33,23 @@ class ConfiguracionService {
       }
     }
     
-    // Usar 'default' como clave si no hay tenant_id
-    final cacheKey = finalTenantId ?? 'default';
-    
+    // Sin tenant_id: fail-closed — no consultar otra empresa en BD
+    if (finalTenantId == null || finalTenantId.isEmpty) {
+      print('⚠️ Sin tenant_id — configuración por defecto (sin consultar BD)');
+      const defaultConfig = {
+        'notificaciones_emisores': true,
+        'notificaciones_repartidores': true,
+      };
+      _configCache['no-tenant'] = defaultConfig;
+      _lastFetchCache['no-tenant'] = DateTime.now();
+      return defaultConfig;
+    }
+
+    final cacheKey = finalTenantId;
+
     // Si hay cache válido y no se fuerza refresh, retornar cache
-    if (!forceRefresh && 
-        _configCache.containsKey(cacheKey) && 
+    if (!forceRefresh &&
+        _configCache.containsKey(cacheKey) &&
         _lastFetchCache.containsKey(cacheKey) &&
         DateTime.now().difference(_lastFetchCache[cacheKey]!) < _cacheDuration) {
       print('📦 Usando configuración en cache para tenant: $cacheKey');
@@ -48,18 +59,13 @@ class ConfiguracionService {
     try {
       print('🔄 Obteniendo configuración desde Supabase...');
       print('   - Tenant ID: $finalTenantId');
-      
-      // CRÍTICO: Filtrar por tenant_id si está disponible
-      var query = supabase.from('configuracion_envios').select();
-      
-      if (finalTenantId != null && finalTenantId.isNotEmpty) {
-        query = query.eq('tenant_id', finalTenantId);
-        print('🔒 Filtrando configuración por tenant_id: $finalTenantId');
-      } else {
-        print('⚠️ No se pudo obtener tenant_id, obteniendo primera configuración disponible');
-      }
-      
-      final response = await query.limit(1).maybeSingle();
+
+      final response = await supabase
+          .from('configuracion_envios')
+          .select()
+          .eq('tenant_id', finalTenantId)
+          .limit(1)
+          .maybeSingle();
 
       if (response == null) {
         print('⚠️ No se encontró configuración, usando valores por defecto');
