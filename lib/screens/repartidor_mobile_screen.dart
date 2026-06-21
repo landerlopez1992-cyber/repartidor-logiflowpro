@@ -61,7 +61,8 @@ import '../services/repartidor_saldo_service.dart';
 import '../services/repartidor_perfil_cache_service.dart';
 import '../services/repartidor_perfil_foto_cache_service.dart';
 import '../services/repartidor_actualizacion_forzada_service.dart';
-import '../widgets/actualizacion_forzada_overlay.dart';
+import '../utils/repartidor_provincia_filtro_util.dart';
+import '../utils/entrega_geo_validacion_util.dart';
 
 class RepartidorMobileScreen extends StatefulWidget {
   const RepartidorMobileScreen({super.key});
@@ -127,6 +128,16 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   
   // Configuración de recogida en sucursal
   bool _recogerEnSucursalSoloMaster = false; // Solo repartidores Master pueden ver órdenes de recogida en sucursal
+
+  // Entrega, geolocalización y cobertura
+  bool _geolocalizacionObligatoria = false;
+  int _radioEntrega = 100;
+  bool _confirmacionEntregaObligatoria = true;
+  bool _firmaDigitalObligatoria = false;
+  int _tiempoEsperaEntrega = 15;
+  Map<String, Map<String, dynamic>> _provinciasConfig = {};
+  List<String> _provinciasAsignadas = [];
+  bool _exigirProvinciaAsignada = true;
   
   // Saldo del repartidor (pagos aceptados)
   double _saldo = 0.0;
@@ -267,6 +278,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       await _cargarConfiguracionPrioridad(); // Cargar configuración de prioridad
       await _obtenerUbicacionActual(); // Obtener ubicación para ordenamiento por distancia
       await _cargarConfiguracionRastreo(); // Cargar configuración de rastreo
+      await _cargarConfiguracionEntregaGeo();
+      await _cargarProvinciasRepartidor();
       await _cargarConfiguracionRecogidaSucursal(); // Cargar configuración de recogida en sucursal
       await _cargarOrdenes();
       await _cargarMensajesNoLeidos();
@@ -1288,7 +1301,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             
             // 🔒 CRÍTICO: Guardar en caché local Y usar la lista fusionada retornada
             final ordenesFusionadas = await OrdenCacheService.cacheOrders(ordenesCargadas);
-            final listaFinal = !syncService.isOnline && ordenesRespaldoCache.isNotEmpty
+            final listaFinalRaw = !syncService.isOnline && ordenesRespaldoCache.isNotEmpty
                 ? ordenesRespaldoCache
                 : OrdenCacheService.resolveOrdersForDisplay(
                     fused: ordenesFusionadas,
@@ -1296,6 +1309,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                     onScreen: ordenesRespaldoPantalla,
                     serverCount: ordenesCargadas.length,
                   );
+            final listaFinal = _aplicarFiltroProvincias(listaFinalRaw);
             
             if (mounted) {
             setState(() {
@@ -1498,7 +1512,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           // 🔒 CRÍTICO: Guardar en caché local Y usar la lista fusionada retornada
           // que ya tiene los cambios locales preservados
           final ordenesFusionadas = await OrdenCacheService.cacheOrders(ordenesCargadas);
-          final listaFinal = !syncService.isOnline && ordenesRespaldoCache.isNotEmpty
+          final listaFinalRaw = !syncService.isOnline && ordenesRespaldoCache.isNotEmpty
               ? ordenesRespaldoCache
               : OrdenCacheService.resolveOrdersForDisplay(
                   fused: ordenesFusionadas,
@@ -1506,6 +1520,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   onScreen: ordenesRespaldoPantalla,
                   serverCount: ordenesCargadas.length,
                 );
+          final listaFinal = _aplicarFiltroProvincias(listaFinalRaw);
 
           if (mounted) {
             setState(() {
@@ -5845,8 +5860,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       errores.add('💰 Falta cobrar ${simbolo}${ordenTrabajo.montoCobrar.toStringAsFixed(2)} ${ordenTrabajo.moneda}');
     }
 
-    if (RemesaPuraEntregaUi.exigeFirmaEntrega(ordenTrabajo) &&
-        (ordenTrabajo.firmaUrl == null || ordenTrabajo.firmaUrl!.isEmpty)) {
+    if (RemesaPuraEntregaUi.exigeFirmaEntrega(ordenTrabajo) ||
+        (_firmaDigitalObligatoria &&
+            (ordenTrabajo.firmaUrl == null || ordenTrabajo.firmaUrl!.isEmpty))) {
       errores.add('✍️ Falta obtener la firma del cliente (obligatorio)');
     }
 
@@ -5863,14 +5879,20 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       return;
     }
 
-    final confirmadoFinal = await _mostrarConfirmacion(
-      'Confirmar Entrega',
-      '¿Estás seguro de que quieres marcar esta orden como entregada?',
-    );
-    
-    if (confirmadoFinal) {
-      print('✅ Usuario confirmó la entrega de la orden #${ordenTrabajo.numeroOrden}');
-      try {
+    final geoOk = await _validarGeoAntesEntrega(ordenTrabajo);
+    if (!geoOk) return;
+
+    if (_confirmacionEntregaObligatoria) {
+      final confirmadoFinal = await _mostrarConfirmacion(
+        'Confirmar Entrega',
+        '¿Estás seguro de que quieres marcar esta orden como entregada?\n\n'
+        'Tiempo máximo de espera configurado: $_tiempoEsperaEntrega min.',
+      );
+      if (!confirmadoFinal) return;
+    }
+
+    print('✅ Usuario confirmó la entrega de la orden #${ordenTrabajo.numeroOrden}');
+    try {
         final fechaEntregaDt = DateTime.now();
         final updateData = {
           'estado': 'ENTREGADO',
@@ -6044,7 +6066,6 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       } catch (e) {
         _mostrarMensaje('Error al marcar como entregada: $e');
       }
-    }
   }
 
   Future<void> _marcarComoEnCamino(Orden orden) async {
@@ -7641,14 +7662,113 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     }
   }
 
+  Future<void> _cargarConfiguracionEntregaGeo() async {
+    try {
+      if (_tenantId == null || _tenantId!.isEmpty) return;
+      final response = await supabase
+          .from('configuracion_envios')
+          .select(
+            'geolocalizacion_obligatoria, radio_entrega, confirmacion_entrega, '
+            'firma_digital, tiempo_espera_entrega, repartidores_empresa_config',
+          )
+          .eq('tenant_id', _tenantId!)
+          .maybeSingle();
+      if (response != null && mounted) {
+        final repCfg = response['repartidores_empresa_config'];
+        setState(() {
+          _geolocalizacionObligatoria = response['geolocalizacion_obligatoria'] == true;
+          _radioEntrega = (response['radio_entrega'] as num?)?.toInt() ?? 100;
+          _confirmacionEntregaObligatoria = response['confirmacion_entrega'] != false;
+          _firmaDigitalObligatoria = response['firma_digital'] == true;
+          _tiempoEsperaEntrega = (response['tiempo_espera_entrega'] as num?)?.toInt() ?? 15;
+          if (repCfg is Map) {
+            _exigirProvinciaAsignada = repCfg['exigir_provincia_asignada'] != false;
+          }
+        });
+        print(
+          '✅ Config entrega/geo: geo=$_geolocalizacionObligatoria, radio=${_radioEntrega}m, '
+          'confirm=$_confirmacionEntregaObligatoria, firma=$_firmaDigitalObligatoria',
+        );
+      }
+    } catch (e) {
+      print('⚠️ Error cargando config entrega/geo: $e');
+    }
+  }
+
+  Future<void> _cargarProvinciasRepartidor() async {
+    try {
+      final user = supabase.auth.currentUser;
+      if (user == null) return;
+      final row = await supabase
+          .from('usuarios')
+          .select('provincias_asignadas, provincias_config')
+          .eq('auth_id', user.id)
+          .maybeSingle();
+      if (row != null && mounted) {
+        setState(() {
+          _provinciasAsignadas = RepartidorProvinciaFiltroUtil.parseProvinciasAsignadasCsv(
+            row['provincias_asignadas']?.toString(),
+          );
+          _provinciasConfig = RepartidorProvinciaFiltroUtil.parseProvinciasConfig(
+            row['provincias_config'],
+          );
+        });
+        print('✅ Cobertura repartidor: provincias=${_provinciasAsignadas.length}, config=${_provinciasConfig.length}');
+      }
+    } catch (e) {
+      print('⚠️ Error cargando provincias repartidor: $e');
+    }
+  }
+
+  List<Orden> _aplicarFiltroProvincias(List<Orden> ordenes) {
+    if (!_exigirProvinciaAsignada) return ordenes;
+    return RepartidorProvinciaFiltroUtil.filtrarOrdenes(
+      ordenes: ordenes,
+      repartidorNombre: _repartidorNombre,
+      provinciasConfig: _provinciasConfig,
+      provinciasAsignadas: _provinciasAsignadas,
+    );
+  }
+
+  Future<bool> _validarGeoAntesEntrega(Orden orden) async {
+    if (!_geolocalizacionObligatoria && _radioEntrega <= 0) return true;
+    if (_ubicacionActual == null) {
+      await _obtenerUbicacionActual();
+    }
+    final resultado = EntregaGeoValidacionUtil.validarRadioEntrega(
+      posicionRepartidor: _ubicacionActual,
+      latDestino: orden.latitudEntrega,
+      lngDestino: orden.longitudEntrega,
+      radioMetros: _radioEntrega,
+      geolocalizacionObligatoria: _geolocalizacionObligatoria,
+    );
+    if (!resultado.ok && mounted) {
+      _mostrarMensaje(resultado.mensaje ?? 'No puedes confirmar la entrega en esta ubicación.');
+      return false;
+    }
+    return true;
+  }
+
   // Verificar y activar rastreo GPS
   // CRÍTICO: Ahora siempre activa el rastreo cuando la app está abierta para que el panel admin
   // pueda detectar que el repartidor está online, independientemente de si tiene órdenes en "EN REPARTO"
   Future<void> _verificarYActivarRastreo() async {
     // Verificar si hay órdenes en estado "EN REPARTO"
     final ordenesEnReparto = _ordenes.where((orden) => orden.estado == 'EN REPARTO').toList();
+
+    // Si rastreo en tiempo real está desactivado, solo GPS con órdenes en reparto
+    if (!_rastreoTiempoReal && ordenesEnReparto.isEmpty) {
+      if (_timerUbicacion != null) {
+        _timerUbicacion?.cancel();
+        _timerUbicacion = null;
+      }
+      await _positionStreamSubscription?.cancel();
+      _positionStreamSubscription = null;
+      print('📍 Rastreo GPS detenido (config: sin tiempo real y sin órdenes EN REPARTO)');
+      return;
+    }
     
-    // CRÍTICO: Siempre activar rastreo si la app está abierta (para mostrar LED verde en panel admin)
+    // Activar rastreo si la app está abierta (online LED) o hay órdenes en reparto
     // Esto permite que el panel admin detecte que el repartidor está activo, incluso sin órdenes en "EN REPARTO"
     if (_timerUbicacion == null || !_timerUbicacion!.isActive) {
       print('📍 App abierta - Activando rastreo GPS para indicador online/offline');
@@ -8028,10 +8148,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       // Obtener ubicación inmediatamente
       await obtenerYGuardarUbicacion();
       
-      // Configurar timer para actualizar cada X segundos según la configuración
-      // CRÍTICO: Usar intervalo corto (30 segundos) para detección INSTANTÁNEA de online/offline
-      // Esto asegura que el panel admin detecte INMEDIATAMENTE cuando el repartidor está activo o se cierra
-      final intervaloIndicador = 30; // 30 segundos para detección instantánea
+      // Usar intervalo configurado por la empresa (10–300 s); mínimo 10 s
+      final intervaloIndicador = _intervaloActualizacion.clamp(10, 300);
       _timerUbicacion = Timer.periodic(
         Duration(seconds: intervaloIndicador),
         (timer) {
@@ -8039,7 +8157,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         },
       );
       
-      print('📍 Timer configurado: actualización cada $intervaloIndicador segundos para detección INSTANTÁNEA online/offline');
+      print('📍 Timer configurado: actualización cada $intervaloIndicador s (config empresa)');
 
       print('✅ ✅ ✅ RASTREO DE UBICACIÓN INICIADO CORRECTAMENTE ✅ ✅ ✅');
       print('📍 El stream está activo y escuchando ubicaciones...');

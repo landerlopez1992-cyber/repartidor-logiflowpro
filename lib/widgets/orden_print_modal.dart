@@ -7,7 +7,11 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:http/http.dart' as http;
 import '../models/orden.dart';
+import '../data/codigos_cuba_cubatrans.dart';
 import '../main.dart';
+import '../utils/peso_cuba_utils.dart';
+import '../utils/hbl_cuba_utils.dart';
+import '../utils/descripcion_mercancia_cuba.dart';
 
 class OrdenPrintModal extends StatefulWidget {
   final Orden orden;
@@ -31,11 +35,55 @@ class _OrdenPrintModalState extends State<OrdenPrintModal> {
   bool _incluirNumeroBultos = false;
   bool _incluirNombreEmpresa = false;
   bool _incluirRepartidorAsignado = false;
+
+  bool _usarFormatoCubatrans = false;
+  String _codigoCorresponsal = '';
+  String? _paisOperacion;
+  String _tipoImpresion = 'etiqueta_completa';
   
   // Datos de la empresa
   String? _empresaLogoUrl;
   String? _empresaNombre;
   Uint8List? _logoBytes;
+
+  bool get _esPaisOperacionCuba {
+    final pais = (_paisOperacion ?? '').trim().toLowerCase();
+    return pais == 'cuba' || pais == 'república de cuba' || pais == 'republica de cuba';
+  }
+
+  String _resolverCodigoCorresponsal() {
+    final manual = _codigoCorresponsal.trim().toUpperCase();
+    if (manual.isNotEmpty) {
+      return manual.padRight(3, 'X').substring(0, 3);
+    }
+    final empresa = (_empresaNombre ?? '').toUpperCase().replaceAll(RegExp(r'[^A-Z]'), '');
+    if (empresa.isNotEmpty) {
+      return empresa.padRight(3, 'X').substring(0, 3);
+    }
+    return 'XXX';
+  }
+
+  void _aplicarTipoImpresion() {
+    if (_tipoImpresion == 'codigo_qr') {
+      _incluirQR = true;
+      _incluirDatosDestinatario = false;
+      _incluirSoloNombreDestinatario = false;
+      _incluirNumeroOrden = false;
+      _incluirLogoEmpresa = false;
+      _incluirNumeroBultos = false;
+      _incluirNombreEmpresa = false;
+      _incluirRepartidorAsignado = false;
+    } else if (_tipoImpresion == 'manual') {
+      _incluirQR = false;
+      _incluirDatosDestinatario = false;
+      _incluirSoloNombreDestinatario = false;
+      _incluirNumeroOrden = true;
+      _incluirLogoEmpresa = false;
+      _incluirNumeroBultos = false;
+      _incluirNombreEmpresa = false;
+      _incluirRepartidorAsignado = false;
+    }
+  }
 
   @override
   void initState() {
@@ -71,7 +119,7 @@ class _OrdenPrintModalState extends State<OrdenPrintModal> {
       // Cargar configuración filtrando por tenant_id
       var query = supabase
           .from('configuracion_envios')
-          .select('incluir_qr, incluir_datos_destinatario, incluir_solo_nombre_destinatario, incluir_numero_orden, incluir_logo_empresa, incluir_numero_bultos, incluir_nombre_empresa, incluir_repartidor_asignado');
+          .select('incluir_qr, incluir_datos_destinatario, incluir_solo_nombre_destinatario, incluir_numero_orden, incluir_logo_empresa, incluir_numero_bultos, incluir_nombre_empresa, incluir_repartidor_asignado, usar_formato_cubatrans, codigo_corresponsal, tipo_impresion');
       
       if (tenantId != null && tenantId.isNotEmpty) {
         query = query.eq('tenant_id', tenantId);
@@ -104,6 +152,10 @@ class _OrdenPrintModalState extends State<OrdenPrintModal> {
             _incluirNumeroBultos = response['incluir_numero_bultos'] == true;
             _incluirNombreEmpresa = response['incluir_nombre_empresa'] == true;
             _incluirRepartidorAsignado = response['incluir_repartidor_asignado'] == true;
+            _usarFormatoCubatrans = response['usar_formato_cubatrans'] == true;
+            _codigoCorresponsal = response['codigo_corresponsal']?.toString().trim() ?? '';
+            _tipoImpresion = (response['tipo_impresion'] ?? 'etiqueta_completa').toString();
+            _aplicarTipoImpresion();
             print('✅ Configuración cargada: QR=$_incluirQR, Destinatario=$_incluirDatosDestinatario, SoloNombreDestinatario=$_incluirSoloNombreDestinatario, NumOrden=$_incluirNumeroOrden, Logo=$_incluirLogoEmpresa, Bultos=$_incluirNumeroBultos, Nombre=$_incluirNombreEmpresa, Repartidor=$_incluirRepartidorAsignado');
           }
         });
@@ -153,7 +205,7 @@ class _OrdenPrintModalState extends State<OrdenPrintModal> {
       
       final tenantData = await supabase
           .from('tenants')
-          .select('nombre, logo_url')
+          .select('nombre, logo_url, pais_operacion')
           .eq('id', tenantId)
           .maybeSingle();
       
@@ -162,6 +214,10 @@ class _OrdenPrintModalState extends State<OrdenPrintModal> {
           setState(() {
             _empresaNombre = tenantData['nombre'];
             _empresaLogoUrl = tenantData['logo_url'];
+            _paisOperacion = tenantData['pais_operacion']?.toString();
+            if (!_esPaisOperacionCuba) {
+              _usarFormatoCubatrans = false;
+            }
           });
         }
         
@@ -731,6 +787,9 @@ class _OrdenPrintModalState extends State<OrdenPrintModal> {
   }
 
   Future<pw.Document> _generarPDF() async {
+    if (_usarFormatoCubatrans && _esPaisOperacionCuba) {
+      return _generarPDFCubatrans();
+    }
     final pdf = pw.Document();
     
     // Debug: Verificar qué está activado
@@ -1036,6 +1095,399 @@ class _OrdenPrintModalState extends State<OrdenPrintModal> {
     print('✅ [ORDEN_PRINT] PDF generado con $numeroBultos página(s) (una por cada bulto)');
     print('📦 [ORDEN_PRINT] Orden #${widget.orden.numeroOrden} - Bultos: $numeroBultos - Páginas generadas: $numeroBultos');
 
+    return pdf;
+  }
+
+  // ─── CUBATRANS Label Generator ──────────────────────────────────────────────
+
+  /// Construye el código HBL de 14 caracteres conforme al Anexo No.6:
+  /// [3 letras corresponsal] + [4 dígitos provincia/municipio] + [7 dígitos consecutivo]
+  String _buildHblCode(int bultoIndex) {
+    return buildHbl14Caracteres(
+      codigoCorresponsal: _resolverCodigoCorresponsal(),
+      provinciaDestino: widget.orden.provinciaDestino,
+      municipioDestino: widget.orden.municipioDestino,
+      numeroOrden: widget.orden.numeroOrden,
+    );
+  }
+
+  /// HBL marítimo vs HAWB aéreo (órdenes sin dato → HBL por compatibilidad).
+  bool _esModoCubatransAereo() {
+    final m = widget.orden.cubatransModoTransporte?.toUpperCase();
+    return m == 'AEREO';
+  }
+
+  String _rotuloCategoriaTransporteCubatrans() {
+    return _esModoCubatransAereo() ? 'AÉREO (HAWB)' : 'MARÍTIMO (HBL)';
+  }
+
+  String _prefijoGuiaLegibleCubatrans() => _esModoCubatransAereo() ? 'HAWB' : 'HBL';
+
+  /// Calcula el volumen del bulto en m³ (largo × ancho × alto, asumiendo dimensiones en metros).
+  double? _calcularVolumen() {
+    final l = widget.orden.largo;
+    final a = widget.orden.ancho;
+    final h = widget.orden.alto;
+    if (l != null && a != null && h != null && l > 0 && a > 0 && h > 0) {
+      return l * a * h;
+    }
+    return null;
+  }
+
+  /// Peso en formato "22.0 Lb / 10.0 Kg" según campo 13, Anexo 8 del contrato TRANSCARGO.
+  String _formatPesoLbKg(double? pesoLb) {
+    if (pesoLb == null) return 'SIN DATO';
+    final kg = lbAKg(pesoLb);
+    if (kg == null) return 'SIN DATO';
+    return '${pesoLb.toStringAsFixed(1)} Lb / ${kg.toStringAsFixed(1)} Kg';
+  }
+
+  /// Construye el contenido del QR obligatorio (campo 15, Anexo 8).
+  /// Campos separados por "; " en el orden exacto exigido por el contrato TRANSCARGO.
+  String _buildCubatransQrData(String hblCode, int bultoNum, int cantidadBultos) {
+    final pesoLb = widget.orden.peso;
+    final pesoKg = lbAKg(pesoLb);
+    final vol = _calcularVolumen();
+    final pesoStr = (pesoLb != null && pesoKg != null)
+        ? '${pesoLb.toStringAsFixed(1)}/${pesoKg.toStringAsFixed(1)}'
+        : 'SIN DATO';
+    final volStr = vol != null ? vol.toStringAsFixed(2) : 'SIN DATO';
+    return [
+      hblCode,
+      '$bultoNum/$cantidadBultos',
+      widget.orden.emisor,
+      'ENVIO',
+      widget.orden.receptor,
+      widget.orden.ciPasaporteDestinatario?.isNotEmpty == true
+          ? widget.orden.ciPasaporteDestinatario!
+          : 'SIN DATO',
+      widget.orden.telefonoDestinatario?.isNotEmpty == true
+          ? widget.orden.telefonoDestinatario!
+          : 'SIN DATO',
+      widget.orden.direccionDestino,
+      widget.orden.municipioDestino ?? 'SIN DATO',
+      widget.orden.provinciaDestino ?? 'SIN DATO',
+      descripcionMercanciaCubaDesdeOrden(widget.orden),
+      pesoStr,
+      volStr,
+    ].join('; ');
+  }
+
+  /// Genera bytes de imagen QR a partir de un string de datos arbitrario.
+  Future<Uint8List?> _generarQRBytesFromData(String data) async {
+    try {
+      final qrImageData = await QrPainter(
+        data: data,
+        version: QrVersions.auto,
+        errorCorrectionLevel: QrErrorCorrectLevel.M,
+        color: const Color(0xFF000000),
+        emptyColor: Colors.white,
+      ).toImageData(250);
+      if (qrImageData == null) return null;
+      return qrImageData.buffer.asUint8List();
+    } catch (e) {
+      print('❌ [CUBATRANS] Error generando QR: $e');
+      return null;
+    }
+  }
+
+  /// Genera el PDF en formato CUBATRANS (Anexo 8 del contrato TRANSCARGO):
+  ///  - Campo 2:  código de barras Code-93 con formato HBL-# (bulto)
+  ///  - Campo 13: PESO en formato "lb / kg"
+  ///  - Campo 14: VOLUMEN en m³
+  ///  - Campo 15: QR con todos los datos del envío (obligatorio por contrato)
+  Future<pw.Document> _generarPDFCubatrans() async {
+    final pdf = pw.Document();
+    final cantidadBultos = (widget.orden.cantidadBultos > 0) ? widget.orden.cantidadBultos : 1;
+
+    // Pre-computar datos compartidos
+    final volumen = _calcularVolumen();
+
+    // Pre-generar HBL codes y QR images para cada bulto (async antes del loop)
+    final hblCodes = List.generate(cantidadBultos, (i) => _buildHblCode(i));
+    final qrImagesList = await Future.wait(
+      List.generate(
+        cantidadBultos,
+        (i) => _generarQRBytesFromData(
+          _buildCubatransQrData(hblCodes[i], i + 1, cantidadBultos),
+        ),
+      ),
+    );
+
+    // Página de 4×6 pulgadas (compatible con impresoras térmicas)
+    final labelFormat = PdfPageFormat(
+      4 * PdfPageFormat.inch,
+      6 * PdfPageFormat.inch,
+      marginLeft: 0.2 * PdfPageFormat.inch,
+      marginRight: 0.2 * PdfPageFormat.inch,
+      marginTop: 0.15 * PdfPageFormat.inch,
+      marginBottom: 0.15 * PdfPageFormat.inch,
+    );
+
+    for (int i = 0; i < cantidadBultos; i++) {
+      final bultoNum = i + 1;
+      final hblCode = hblCodes[i];
+      final qrBytes = qrImagesList[i];
+
+      pdf.addPage(
+        pw.Page(
+          pageFormat: labelFormat,
+          build: (pw.Context ctx) {
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+              children: [
+                // ── Campo 1: Corresponsal / nombre empresa ────────────────
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: pw.CrossAxisAlignment.center,
+                  children: [
+                    if (_incluirLogoEmpresa && _logoBytes != null)
+                      pw.Image(pw.MemoryImage(_logoBytes!), width: 36, height: 36, fit: pw.BoxFit.contain)
+                    else
+                      pw.SizedBox(width: 1),
+                    pw.Expanded(
+                      child: pw.Center(
+                        child: pw.Text(
+                          _empresaNombre ?? _resolverCodigoCorresponsal(),
+                          style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
+                          maxLines: 1,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 6),
+
+                // ── Campo 2: Código de barras HBL-# (Code-93, Anexo 8) ────
+                pw.Center(
+                  child: pw.BarcodeWidget(
+                    barcode: pw.Barcode.code93(),
+                    data: '$hblCode-$bultoNum',
+                    width: 3.2 * PdfPageFormat.inch,
+                    height: 44,
+                    textStyle: const pw.TextStyle(fontSize: 8),
+                    drawText: false,
+                  ),
+                ),
+                pw.Center(
+                  child: pw.Text(
+                    '${_prefijoGuiaLegibleCubatrans()} $hblCode-$bultoNum',
+                    style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold),
+                  ),
+                ),
+                pw.SizedBox(height: 4),
+
+                // ── Campo 3: Número de bulto X / Y ───────────────────────
+                pw.Center(
+                  child: pw.Text(
+                    '$bultoNum / $cantidadBultos',
+                    style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold),
+                  ),
+                ),
+                pw.SizedBox(height: 5),
+                pw.Divider(thickness: 0.8),
+                pw.SizedBox(height: 3),
+
+                // ── Campos 4+5: REMITENTE | CATEGORIA ────────────────────
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Expanded(
+                      flex: 3,
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('REMITENTE:', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
+                          pw.Text(widget.orden.emisor, style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold), maxLines: 2),
+                        ],
+                      ),
+                    ),
+                    pw.SizedBox(width: 8),
+                    pw.Expanded(
+                      flex: 2,
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('CATEGORIA:', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
+                          pw.Text(
+                            '${_rotuloCategoriaTransporteCubatrans()} · ENVIO',
+                            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
+                            maxLines: 2,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 5),
+
+                // ── Campo 6: CONSIGNATARIO ────────────────────────────────
+                pw.Text('CONSIGNATARIO:', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
+                pw.Text(
+                  widget.orden.receptor.toUpperCase(),
+                  style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
+                  maxLines: 2,
+                ),
+                pw.SizedBox(height: 5),
+
+                // ── Campos 7+8: CI/PASAPORTE | TELEFONO(S) ───────────────
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Expanded(
+                      flex: 3,
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('CARNET DE IDENTIDAD / PASAPORTE', style: pw.TextStyle(fontSize: 6, fontWeight: pw.FontWeight.bold)),
+                          pw.Text(
+                            widget.orden.ciPasaporteDestinatario?.isNotEmpty == true
+                                ? widget.orden.ciPasaporteDestinatario!
+                                : 'SIN DATO',
+                            style: pw.TextStyle(fontSize: 9),
+                          ),
+                        ],
+                      ),
+                    ),
+                    pw.SizedBox(width: 8),
+                    pw.Expanded(
+                      flex: 2,
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('TELEFONO(S)', style: pw.TextStyle(fontSize: 6, fontWeight: pw.FontWeight.bold)),
+                          pw.Text(
+                            widget.orden.telefonoDestinatario?.isNotEmpty == true
+                                ? widget.orden.telefonoDestinatario!
+                                : 'SIN DATO',
+                            style: pw.TextStyle(fontSize: 9),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 4),
+
+                // ── Campo 9: DIRECCION ────────────────────────────────────
+                pw.Text('DIRECCION:', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
+                pw.Text(widget.orden.direccionDestino, style: const pw.TextStyle(fontSize: 9), maxLines: 2),
+                pw.SizedBox(height: 4),
+
+                // ── Campos 10+11: MUNICIPIO | PROVINCIA (Arial 18 bold) ───
+                pw.Row(
+                  children: [
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('MUNICIPIO:', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
+                          pw.Text(
+                            (widget.orden.municipioDestino ?? 'SIN DATO').toUpperCase(),
+                            style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                    pw.SizedBox(width: 8),
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('PROVINCIA:', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
+                          pw.Text(
+                            (widget.orden.provinciaDestino ?? 'SIN DATO').toUpperCase(),
+                            style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 3),
+                pw.Text(
+                  'PAIS: CUBA',
+                  style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+                ),
+                pw.SizedBox(height: 4),
+
+                // ── Campos 12+15: DESCRIPCION | QR (obligatorio Anexo 8) ──
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Expanded(
+                      flex: 3,
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('DESCRIPCION:', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
+                          pw.Text(
+                            descripcionMercanciaCubaDesdeOrden(widget.orden),
+                            style: const pw.TextStyle(fontSize: 9),
+                            maxLines: 3,
+                          ),
+                        ],
+                      ),
+                    ),
+                    pw.SizedBox(width: 4),
+                    if (qrBytes != null)
+                      pw.Image(pw.MemoryImage(qrBytes), width: 62, height: 62)
+                    else
+                      pw.SizedBox(width: 62, height: 62),
+                  ],
+                ),
+                pw.SizedBox(height: 4),
+
+                // ── Campos 13+14: PESO | VOLUMEN ─────────────────────────
+                pw.Row(
+                  children: [
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('PESO:', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
+                          pw.Text(
+                            _formatPesoLbKg(widget.orden.peso),
+                            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                    pw.SizedBox(width: 8),
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('VOLUMEN:', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
+                          pw.Text(
+                            volumen != null ? '${volumen.toStringAsFixed(2)} m3' : 'SIN DATO',
+                            style: pw.TextStyle(fontSize: 9),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+
+                pw.Spacer(),
+
+                // ── Pie: fecha de impresión ───────────────────────────────
+                pw.Divider(thickness: 0.5),
+                pw.Align(
+                  alignment: pw.Alignment.centerRight,
+                  child: pw.Text(
+                    'Impreso: ${_formatFechaCorta(DateTime.now())}',
+                    style: const pw.TextStyle(fontSize: 7),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    }
+
+    print('✅ [CUBATRANS] PDF generado con $cantidadBultos etiqueta(s). HBL base: ${hblCodes[0]}');
     return pdf;
   }
 

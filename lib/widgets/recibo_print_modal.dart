@@ -82,9 +82,20 @@ class _ReciboPrintModalState extends State<ReciboPrintModal> {
   Future<void> _cargarConfiguracionQRRecibo() async {
     try {
       print('🔄 [CARGAR_CONFIG_QR] Iniciando carga desde Supabase...');
+      final user = supabase.auth.currentUser;
+      if (user == null) return;
+      final userData = await supabase
+          .from('usuarios')
+          .select('tenant_id')
+          .eq('auth_id', user.id)
+          .maybeSingle();
+      final tenantId = userData?['tenant_id'];
+      if (tenantId == null) return;
+
       final responseList = await supabase
           .from('configuracion_envios')
           .select('mostrar_qr_recibo, activar_qr1_recibo, activar_qr2_recibo, url_qr1_recibo, url_qr2_recibo, texto_qr1_recibo, texto_qr2_recibo, mostrar_texto_promocional_recibo, texto_promocional_recibo')
+          .eq('tenant_id', tenantId)
           .limit(1);
       
       print('🔄 [CARGAR_CONFIG_QR] Respuesta de Supabase: $responseList');

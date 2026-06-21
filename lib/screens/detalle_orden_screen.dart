@@ -20,6 +20,8 @@ import '../services/direccion_navegacion_service.dart';
 import '../services/goodbarber_sync_service.dart';
 import '../main.dart';
 import '../utils/orden_recogida_colaborador_ui.dart';
+import 'package:geolocator/geolocator.dart';
+import '../utils/entrega_geo_validacion_util.dart';
 import '../utils/remesa_pura_entrega_ui.dart';
 import '../utils/entrega_foto_util.dart';
 import '../config/app_colors.dart';
@@ -50,6 +52,12 @@ class DetalleOrdenScreen extends StatefulWidget {
 class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
   bool _isLoading = false;
   bool _fotoEntregaObligatoria = true; // Por defecto activado
+  bool _geolocalizacionObligatoria = false;
+  int _radioEntrega = 100;
+  bool _confirmacionEntregaObligatoria = true;
+  bool _firmaDigitalObligatoria = false;
+  int _tiempoEsperaEntrega = 15;
+  Position? _ubicacionActual;
   String? _fotoEntregaUrl; // URL de la foto tomada localmente
   String? _firmaUrl; // URL de la firma almacenada
   late Orden _ordenActual; // Orden que se actualiza localmente
@@ -70,7 +78,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     _fotoEntregaUrl = widget.orden.fotoEntrega;
     WidgetsBinding.instance.addPostFrameCallback((_) => _inicializarFotoDesdeCache());
     _firmaUrl = widget.orden.firmaUrl; // Inicializar con la firma existente
-    _cargarConfiguracionFoto();
+    _cargarConfiguracionEntrega();
     
     // Debug: verificar estado inicial de la orden pasada como parámetro
     print('🔍 [DETALLE ORDEN] initState() - Orden inicial:');
@@ -850,9 +858,8 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     }
   }
 
-  Future<void> _cargarConfiguracionFoto() async {
+  Future<void> _cargarConfiguracionEntrega() async {
     try {
-      // Verificar conexión
       final syncService = SyncService();
       final isOnline = syncService.isOnline;
       
@@ -862,7 +869,10 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           if (tenantId == null || tenantId.isEmpty) return;
           final response = await supabase
               .from('configuracion_envios')
-              .select('foto_entrega_obligatoria')
+              .select(
+                'foto_entrega_obligatoria, geolocalizacion_obligatoria, radio_entrega, '
+                'confirmacion_entrega, firma_digital, tiempo_espera_entrega',
+              )
               .eq('tenant_id', tenantId)
               .maybeSingle();
           if (response == null) return;
@@ -870,35 +880,60 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           if (mounted) {
             setState(() {
               _fotoEntregaObligatoria = response['foto_entrega_obligatoria'] ?? true;
+              _geolocalizacionObligatoria = response['geolocalizacion_obligatoria'] == true;
+              _radioEntrega = (response['radio_entrega'] as num?)?.toInt() ?? 100;
+              _confirmacionEntregaObligatoria = response['confirmacion_entrega'] != false;
+              _firmaDigitalObligatoria = response['firma_digital'] == true;
+              _tiempoEsperaEntrega = (response['tiempo_espera_entrega'] as num?)?.toInt() ?? 15;
             });
           }
         } catch (e) {
-          print('⚠️ Error cargando configuración desde Supabase: $e');
-          // Usar valor por defecto si falla
-          if (mounted) {
-            setState(() {
-              _fotoEntregaObligatoria = true; // Valor por defecto
-            });
-          }
-        }
-      } else {
-        // Sin conexión, usar valor por defecto
-        print('📴 Sin conexión - Usando configuración por defecto');
-        if (mounted) {
-          setState(() {
-            _fotoEntregaObligatoria = true; // Valor por defecto
-          });
+          print('⚠️ Error cargando configuración entrega desde Supabase: $e');
         }
       }
     } catch (e) {
-      print('Error al cargar configuración de foto: $e');
-      // Mantener el valor por defecto
-      if (mounted) {
-        setState(() {
-          _fotoEntregaObligatoria = true;
-        });
-      }
+      print('Error al cargar configuración de entrega: $e');
     }
+  }
+
+  bool _exigeFirmaEntrega() {
+    if (RemesaPuraEntregaUi.exigeFirmaEntrega(_ordenActual)) return true;
+    if (_firmaDigitalObligatoria) return true;
+    return _ordenActual.requiereFirma;
+  }
+
+  Future<void> _obtenerUbicacionActual() async {
+    try {
+      final enabled = await Geolocator.isLocationServiceEnabled();
+      if (!enabled) return;
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) return;
+      _ubicacionActual = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      );
+    } catch (e) {
+      print('⚠️ Error obteniendo ubicación en detalle: $e');
+    }
+  }
+
+  Future<bool> _validarGeoAntesEntrega() async {
+    if (!_geolocalizacionObligatoria && _radioEntrega <= 0) return true;
+    if (_ubicacionActual == null) await _obtenerUbicacionActual();
+    final resultado = EntregaGeoValidacionUtil.validarRadioEntrega(
+      posicionRepartidor: _ubicacionActual,
+      latDestino: _ordenActual.latitudEntrega,
+      lngDestino: _ordenActual.longitudEntrega,
+      radioMetros: _radioEntrega,
+      geolocalizacionObligatoria: _geolocalizacionObligatoria,
+    );
+    if (!resultado.ok && mounted) {
+      _mostrarMensaje(resultado.mensaje ?? 'No puedes confirmar la entrega en esta ubicación.');
+      return false;
+    }
+    return true;
   }
 
   Future<void> _inicializarFotoDesdeCache() async {
@@ -4149,11 +4184,11 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       }
     }
     
-    if (_ordenActual.requiereFirma &&
+    if (_exigeFirmaEntrega() &&
         _entregaProgreso?.firmaConfirmada == true &&
         tieneFirma) {
       print('⏭️ Firma ya confirmada (progreso local) — continuando');
-    } else if (_ordenActual.requiereFirma && !tieneFirma) {
+    } else if (_exigeFirmaEntrega() && !tieneFirma) {
       print('✍️ PASO 4: Firma requerida pero no obtenida, mostrando modal...');
       print('✍️ DEBUG - _firmaUrl: $_firmaUrl');
       print('✍️ DEBUG - _ordenActual.firmaUrl: ${_ordenActual.firmaUrl}');
@@ -4230,11 +4265,18 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     // Verificar que el widget esté montado antes de mostrar el diálogo final
     if (!mounted) return;
 
+    final geoOk = await _validarGeoAntesEntrega();
+    if (!geoOk) return;
+
     // Todo validado - proceder con la entrega
-    final confirmadoFinal = await _mostrarConfirmacion(
-      'Confirmar Entrega',
-      '¿Estás seguro de que quieres marcar esta orden como entregada?',
-    );
+    bool confirmadoFinal = true;
+    if (_confirmacionEntregaObligatoria) {
+      confirmadoFinal = await _mostrarConfirmacion(
+        'Confirmar Entrega',
+        '¿Estás seguro de que quieres marcar esta orden como entregada?\n\n'
+        'Tiempo máximo de espera configurado: $_tiempoEsperaEntrega min.',
+      );
+    }
     
     // Verificar nuevamente después del diálogo
     if (!mounted) return;
