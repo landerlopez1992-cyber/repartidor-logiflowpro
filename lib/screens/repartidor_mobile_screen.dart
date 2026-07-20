@@ -34,6 +34,10 @@ import 'repartidor_perfil_screen.dart';
 import 'chat_repartidor_lista_screen.dart';
 import 'detalle_orden_screen.dart';
 import 'notificaciones_repartidor_screen.dart';
+import 'taxi_incoming_call_dialog.dart';
+import 'taxi_navegacion_chofer_screen.dart';
+import 'taxi_chofer_mapa_screen.dart';
+import '../services/taxi_chofer_service.dart';
 import 'qr_scanner_fullscreen.dart';
 import 'aviso_ubicacion_segundo_plano_screen.dart';
 import 'aviso_ubicacion_destacado_screen.dart';
@@ -2389,6 +2393,39 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         return;
       }
 
+      // Viaje de taxi entrante (modal estilo llamada).
+      if (RepartidorNotificacionTipos.tiposTaxiViaje.contains(tipo)) {
+        final solicitudId = (numeroOrden).trim();
+        if (solicitudId.isEmpty) return;
+        if (notificacionId != null && notificacionId.isNotEmpty) {
+          if (_notificacionesProcesadas.contains(notificacionId) ||
+              RepartidorNotificacionesPushService.instance
+                  .yaSeMostroPushLocal(notificacionId)) {
+            return;
+          }
+          _notificacionesProcesadas.add(notificacionId);
+        }
+        if (!mounted) return;
+        final acepto = await TaxiIncomingCallDialog.show(context, solicitudId);
+        if (notificacionId != null && notificacionId.isNotEmpty) {
+          await RepartidorNotificacionesPushService.instance
+              .marcarPushMostrado(notificacionId);
+        }
+        if (acepto == true && mounted) {
+          final oferta =
+              await TaxiChoferService.instance.detalleOferta(solicitudId);
+          if (oferta != null && mounted) {
+            await Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => TaxiNavegacionChoferScreen(oferta: oferta),
+              ),
+            );
+          }
+        }
+        await _cargarNotificacionesNoLeidas();
+        return;
+      }
+
       print('🔍 Verificando configuración de notificaciones...');
       print('   - Tipo: $tipo');
       print('   - Título: $titulo');
@@ -2790,6 +2827,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         // - PAGO_RECHAZADO: pagos rechazados (ya verificados al crearse)
         // - general: notificaciones push desde Super Admin
         if (RepartidorNotificacionTipos.tiposOrdenNueva.contains(tipo)) {
+          contadorValido++;
+          contadorOrdenes++;
+        } else if (RepartidorNotificacionTipos.tiposTaxiViaje.contains(tipo)) {
           contadorValido++;
           contadorOrdenes++;
         } else if (tipo == 'PAGO_ACEPTADO' || 
@@ -3645,18 +3685,21 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             tooltip: 'Mi Perfil',
           ),
           IconButton(
-            onPressed: () async {
-              print('🔄 Botón actualizar presionado...');
-              await _cargarOrdenes();
-              await _cargarMensajesNoLeidos();
-              _mostrarMensaje('Datos actualizados');
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => TaxiChoferMapaScreen(
+                    paisOperacion: _paisOperacion,
+                  ),
+                ),
+              );
             },
             icon: const Icon(
-              Icons.refresh,
+              Icons.local_taxi,
               color: Colors.white,
-              size: 24,
+              size: 26,
             ),
-            tooltip: 'Cerrar Sesión',
+            tooltip: 'Taxis',
           ),
         ],
       ),
