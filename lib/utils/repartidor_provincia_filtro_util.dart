@@ -49,7 +49,7 @@ class RepartidorProvinciaFiltroUtil {
     required Map<String, Map<String, dynamic>> provinciasConfig,
     required List<String> provinciasAsignadas,
   }) {
-    final asignado = orden.repartidorNombre?.trim();
+    final asignado = orden.repartidor?.trim();
     final yo = repartidorNombre?.trim();
     if (yo != null && yo.isNotEmpty && asignado == yo) return true;
 

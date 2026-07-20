@@ -1,0 +1,17 @@
+Coloca aquí el archivo google-services.json descargado de Firebase Console.
+
+Paquete Android (applicationId de producción / Play Console):
+  com.logiflowpro.repartidor
+
+Pasos:
+1. Firebase → proyecto volonex-repartidor → Añadir app Android
+2. Nombre del paquete: com.logiflowpro.repartidor
+3. Registrar → Descargar google-services.json
+4. Guardar este archivo exactamente en:
+   android/app/google-services.json
+
+Sin este archivo, FCM no inicializa (el build Gradle solo aplica el plugin si el JSON existe).
+
+Service Account (para Supabase, no va en esta carpeta):
+  Firebase → Project settings → Service accounts → Generate new private key
+  Secreto Supabase: FIREBASE_SERVICE_ACCOUNT_JSON_REPARTIDOR

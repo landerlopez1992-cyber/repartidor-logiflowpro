@@ -44,8 +44,10 @@ import '../services/repartidor_notificacion_service.dart';
 import '../services/repartidor_notificaciones_push_service.dart';
 import '../services/repartidor_chat_soporte_service.dart';
 import '../services/repartidor_chat_mensaje_sonido_service.dart';
+import '../services/firebase_messaging_service.dart';
 import '../utils/entrega_vendedor_filtro.dart';
 import '../utils/orden_tipo_tarjeta_repartidor.dart';
+import '../widgets/boton_ver_productos_orden_tienda.dart';
 import '../utils/orden_recogida_colaborador_ui.dart';
 import '../utils/remesa_pura_entrega_ui.dart';
 import '../widgets/volonex_dialog.dart';
@@ -61,6 +63,7 @@ import '../services/repartidor_saldo_service.dart';
 import '../services/repartidor_perfil_cache_service.dart';
 import '../services/repartidor_perfil_foto_cache_service.dart';
 import '../services/repartidor_actualizacion_forzada_service.dart';
+import '../widgets/actualizacion_forzada_overlay.dart';
 import '../utils/repartidor_provincia_filtro_util.dart';
 import '../utils/entrega_geo_validacion_util.dart';
 
@@ -2094,6 +2097,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         leidaEnPayload: fila?['leida'] == true,
         createdAtIso: fila?['created_at']?.toString(),
         desdeRealtime: false,
+        ordenId: ordenId,
       );
 
       if (mounted) await _cargarOrdenes();
@@ -2126,6 +2130,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         leidaEnPayload: fila?['leida'] == true,
         createdAtIso: fila?['created_at']?.toString(),
         desdeRealtime: false,
+        pagoId: pagoId,
       );
       await _cargarSaldo();
     } catch (e) {
@@ -2157,7 +2162,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       initSettings,
       onDidReceiveNotificationResponse: (details) {
         print('📱 Notificación tocada: ${details.payload}');
-        // Recargar órdenes cuando se toca la notificación
+        FirebaseMessagingService().handlePayload(details.payload);
         _cargarOrdenes();
       },
     );
@@ -2254,6 +2259,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               createdAtIso: notificacion['created_at']?.toString(),
               desdeRealtime: true,
               urlAdjunto: notificacion['url_adjunto']?.toString(),
+              ordenId: notificacion['orden_id']?.toString(),
+              pagoId: notificacion['pago_id']?.toString(),
             );
           },
         )
@@ -2302,6 +2309,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     String? createdAtIso,
     bool desdeRealtime = false,
     String? urlAdjunto,
+    String? ordenId,
+    String? pagoId,
+    String? conversacionId,
   }) async {
     try {
       if (tipo == 'actualizacion_forzada_android' ||
@@ -2415,6 +2425,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         tituloLimpio.isNotEmpty ? tituloLimpio : 'Nueva actividad',
         mensajeLimpio.isNotEmpty ? mensajeLimpio : tituloLimpio,
         numeroOrden,
+        tipo: tipo,
+        ordenId: ordenId,
+        pagoId: pagoId,
+        conversacionId: conversacionId,
       );
 
       if (notificacionId != null && notificacionId.isNotEmpty) {
@@ -2438,7 +2452,15 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   }
 
   // Mostrar notificación push con vibración, sonido y badge
-  Future<void> _mostrarNotificacionPush(String titulo, String mensaje, String numeroOrden) async {
+  Future<void> _mostrarNotificacionPush(
+    String titulo,
+    String mensaje,
+    String numeroOrden, {
+    String tipo = 'nueva_orden',
+    String? ordenId,
+    String? pagoId,
+    String? conversacionId,
+  }) async {
     try {
       print('📱 Iniciando notificación push...');
       print('   - Título: $titulo');
@@ -2491,12 +2513,20 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         iOS: iosDetails,
       );
 
+      final payload = FirebaseMessagingService.encodePayload(
+        tipo: tipo.isNotEmpty ? tipo : 'nueva_orden',
+        ordenId: ordenId ?? '',
+        numeroOrden: numeroOrden,
+        pagoId: pagoId ?? '',
+        conversacionId: conversacionId ?? '',
+      );
+
       await _localNotifications!.show(
         DateTime.now().millisecondsSinceEpoch % 100000,
         titulo,
         mensaje,
         notificationDetails,
-        payload: numeroOrden,
+        payload: payload,
       );
 
       print('✅ ✅ ✅ NOTIFICACIÓN LOCAL MOSTRADA EXITOSAMENTE ✅ ✅ ✅');
@@ -2590,6 +2620,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 leidaEnPayload: leida == true,
                 createdAtIso: createdAt,
                 desdeRealtime: false,
+                ordenId: notif['orden_id']?.toString(),
+                pagoId: notif['pago_id']?.toString(),
               );
             }
             
@@ -4653,6 +4685,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               ],
               const SizedBox(height: 4),
               _buildInfoRow(Icons.inventory_2, 'Bultos:', orden.cantidadBultos.toString()),
+
+              if (orden.esCompraTienda) ...[
+                const SizedBox(height: 10),
+                BotonVerProductosOrdenTienda(orden: orden, compact: true),
+              ],
               
               // Mostrar fecha de creación si es orden de GoodBarber
               if (orden.goodbarberOrderId != null) ...[

@@ -98,6 +98,9 @@ class Orden {
   /// Declaración OFAC del cliente final (web / checkout).
   final bool? ofacDeclaracionAceptada;
 
+  /// ID de `tienda_ordenes` cuando la logística viene de una compra online.
+  final String? tiendaOrdenId;
+
   Orden({
     required this.id,
     required this.numeroOrden,
@@ -160,7 +163,18 @@ class Orden {
     this.vendedorContactoEmail,
     this.avisosRecogidaVendedor,
     this.ofacDeclaracionAceptada,
+    this.tiendaOrdenId,
   });
+
+  /// Compra de tienda (Amazon/Shein/vendedor/catálogo), no envío ordinario por libras.
+  bool get esCompraTienda {
+    final tid = (tiendaOrdenId ?? '').trim();
+    if (tid.isNotEmpty) return true;
+    final d = descripcion.toLowerCase();
+    return d.contains('pedido de tienda') ||
+        d.contains('tienda online') ||
+        d.contains('compra tienda');
+  }
 
   /// Pedido de tienda web: `pagada` en BD a veces significa cobro del cliente, no pago al repartidor.
   bool get esOrdenTiendaOnline {
@@ -442,6 +456,7 @@ class Orden {
       vendedorContactoEmail: json['vendedor_contacto_email']?.toString(),
       avisosRecogidaVendedor: _parseAvisosRecogida(json['avisos_recogida_vendedor']),
       ofacDeclaracionAceptada: _parseBool(json['ofac_declaracion_aceptada']),
+      tiendaOrdenId: json['tienda_orden_id']?.toString(),
     );
   }
 
@@ -555,6 +570,7 @@ class Orden {
       'vendedor_contacto_telefono': vendedorContactoTelefono,
       'vendedor_contacto_email': vendedorContactoEmail,
       'avisos_recogida_vendedor': avisosRecogidaVendedor,
+      'tienda_orden_id': tiendaOrdenId,
       'ofac_declaracion_aceptada': ofacDeclaracionAceptada,
     };
   }

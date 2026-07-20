@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'services/repartidor_telemetry_service.dart';
+import 'services/firebase_messaging_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'config/supabase_config.dart';
 import 'theme/volonex_theme.dart';
+import 'navigation/repartidor_navigator.dart';
 import 'screens/login_repartidor_screen.dart';
 import 'screens/repartidor_mobile_screen.dart';
 import 'screens/loading_data_screen.dart';
@@ -18,11 +22,6 @@ void main() async {
   if (!kIsWeb) {
     print('🔄 ===== VERIFICANDO SHOREBIRD =====');
     // TODO: Agregar verificación de Shorebird cuando esté configurado
-    // ShorebirdService.checkAndDownloadUpdate().then((result) {
-    //   print('✅ Shorebird verificado: $result');
-    // }).catchError((error) {
-    //   print('⚠️ Error en verificación de actualizaciones: $error');
-    // });
   }
 
   // Inicializar Supabase con persistencia de sesión
@@ -43,7 +42,18 @@ void main() async {
     print('❌ ERROR CRÍTICO: No se pudo inicializar Supabase');
     print('📚 Error: $e');
     print('📚 Stack: $stackTrace');
-    // Continuar de todas formas para mostrar error en UI
+  }
+
+  if (!kIsWeb) {
+    try {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp();
+      }
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+      await FirebaseMessagingService().initialize();
+    } catch (e) {
+      print('⚠️ Firebase Messaging no disponible aún (¿falta google-services.json?): $e');
+    }
   }
 
   await RepartidorTelemetryService.instance.initialize();
@@ -63,6 +73,7 @@ class RepartidorApp extends StatelessWidget {
       title: 'VolonexPro+',
       debugShowCheckedModeBanner: false,
       theme: VolonexTheme.material,
+      navigatorKey: RepartidorNavigator.key,
       home: const AuthWrapper(),
     );
   }
@@ -168,6 +179,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
                 _isLoading = false;
               });
             }
+            // Reasociar token FCM con el usuario autenticado
+            FirebaseMessagingService().refreshRegistrationForCurrentUser();
             
             // Si hay conexión, verificar en segundo plano y actualizar caché
             _verifyAndUpdateCache(userId);
@@ -211,6 +224,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
               _isLoading = false;
             });
           }
+          FirebaseMessagingService().refreshRegistrationForCurrentUser();
         } else {
           // No es repartidor, cerrar sesión y limpiar TODOS los cachés
           await prefs.remove('cached_user_data_$userId');

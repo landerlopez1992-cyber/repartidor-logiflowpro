@@ -33,6 +33,7 @@ import '../widgets/foto_entrega_selector_sheet.dart';
 import '../models/entrega_progreso.dart';
 import '../services/entrega_progreso_service.dart';
 import '../widgets/entrega_progreso_panel.dart';
+import '../widgets/boton_ver_productos_orden_tienda.dart';
 import '../services/repartidor_seguridad_service.dart';
 
 class DetalleOrdenScreen extends StatefulWidget {
@@ -1179,6 +1180,10 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           children: [
             // Card principal con información básica
             _buildInfoCard(),
+            if (_ordenActual.esCompraTienda) ...[
+              const SizedBox(height: 12),
+              BotonVerProductosOrdenTienda(orden: _ordenActual),
+            ],
             if (_bannerExitoPasoEntrega != null &&
                 _bannerExitoPasoEntrega!.isNotEmpty) ...[
               const SizedBox(height: 12),

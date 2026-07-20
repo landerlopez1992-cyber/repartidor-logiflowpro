@@ -7,6 +7,11 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// FCM: solo si existe google-services.json (Firebase Console → com.logiflowpro.repartidor).
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 android {
     namespace = "com.logiflowpro.repartidor"
     compileSdk = flutter.compileSdkVersion

@@ -107,6 +107,7 @@ class RepartidorChatMensajeSonidoService {
     await _mostrarNotificacionLocal(
       titulo: tituloRemitente,
       cuerpo: preview,
+      conversacionId: conversacionId,
     );
   }
 
@@ -149,6 +150,7 @@ class RepartidorChatMensajeSonidoService {
   static Future<void> _mostrarNotificacionLocal({
     required String titulo,
     required String cuerpo,
+    required String conversacionId,
   }) async {
     final plugin = _notificaciones;
     if (plugin == null) return;
@@ -185,7 +187,7 @@ class RepartidorChatMensajeSonidoService {
         titulo,
         cuerpo,
         NotificationDetails(android: android, iOS: ios),
-        payload: 'chat_soporte',
+        payload: 'mensaje_soporte||||$conversacionId',
       );
     } catch (e) {
       print('⚠️ Notificación local de chat: $e');
