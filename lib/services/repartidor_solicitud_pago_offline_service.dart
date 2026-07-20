@@ -54,6 +54,21 @@ class RepartidorSolicitudPagoOfflineService {
     }
   }
 
+  /// Borra preview local (p. ej. tras configurar tarifa en el panel).
+  static Future<void> clearPreviewCache(String repartidorId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_previewKey(repartidorId));
+    } catch (e) {
+      print('⚠️ clearPreviewCache: $e');
+    }
+  }
+
+  static double _asDouble(dynamic v) {
+    if (v is num) return v.toDouble();
+    return double.tryParse('$v') ?? 0;
+  }
+
   static Future<RepartidorSolicitudPreview?> previewDesdeCache(
     String repartidorId, {
     double? saldoOverride,
@@ -62,13 +77,25 @@ class RepartidorSolicitudPagoOfflineService {
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_previewKey(repartidorId));
+      final perfil = await RepartidorPerfilCacheService.getCachedPerfilData();
+      final saldoCache = await RepartidorPerfilCacheService.getCachedSaldo();
+      final tarifaPerfil = _asDouble(perfil?['repartidor_tarifa']);
+
       Map<String, dynamic> map;
       if (raw != null && raw.isNotEmpty) {
         map = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+        // Si el preview quedó con tarifa 0 pero el perfil ya tiene tarifa > 0
+        // (empresa la configuró después), preferir la del perfil.
+        final tarifaCached = _asDouble(map['tarifa']);
+        if (tarifaCached <= 0 && tarifaPerfil > 0) {
+          map['tarifa'] = tarifaPerfil;
+          map['metodo_pago'] =
+              perfil?['repartidor_metodo_pago'] ?? map['metodo_pago'] ?? 'por_orden';
+          map['moneda'] =
+              perfil?['repartidor_saldo_moneda'] ?? map['moneda'] ?? 'USD';
+        }
       } else {
-        final perfil = await RepartidorPerfilCacheService.getCachedPerfilData();
         if (perfil == null) return null;
-        final saldoCache = await RepartidorPerfilCacheService.getCachedSaldo();
         map = {
           'metodo_pago': perfil['repartidor_metodo_pago'] ?? 'por_orden',
           'tarifa': perfil['repartidor_tarifa'] ?? 0,
@@ -95,20 +122,17 @@ class RepartidorSolicitudPagoOfflineService {
 
       return RepartidorSolicitudPreview(
         metodoPago: map['metodo_pago']?.toString() ?? 'por_orden',
-        tarifa: tarifaRaw is num ? tarifaRaw.toDouble() : double.tryParse('$tarifaRaw') ?? 0,
+        tarifa: _asDouble(tarifaRaw),
         unidad: map['unidad']?.toString() ?? 'orden',
         moneda: map['moneda']?.toString() ?? 'USD',
-        saldoAcumulado:
-            saldoRaw is num ? saldoRaw.toDouble() : double.tryParse('$saldoRaw') ?? 0,
+        saldoAcumulado: _asDouble(saldoRaw),
         solicitudPendiente: solicitudPendienteOverride ??
             (pendienteLocal || map['solicitud_pendiente'] == true),
         ultimaNominaFecha: fechaUltima,
         diasDesdeUltimaNomina: map['dias_desde_ultima_nomina'] is int
             ? map['dias_desde_ultima_nomina'] as int
             : int.tryParse('${map['dias_desde_ultima_nomina']}') ?? 0,
-        montoEstimadoPorDia: montoDiaRaw is num
-            ? montoDiaRaw.toDouble()
-            : double.tryParse('$montoDiaRaw') ?? 0,
+        montoEstimadoPorDia: _asDouble(montoDiaRaw),
         diasLaborablesEtiqueta: map['dias_laborables_etiqueta']?.toString() ?? '',
       );
     } catch (e) {

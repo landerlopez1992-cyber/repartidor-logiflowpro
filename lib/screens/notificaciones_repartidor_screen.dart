@@ -547,10 +547,13 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
             constraints: const BoxConstraints(maxWidth: 800),
             child: Card(
               margin: const EdgeInsets.only(bottom: 12),
-              color: Colors.white,
+              color: AppColors.darkElevated,
               elevation: 2,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
+                side: BorderSide(
+                  color: Colors.white.withOpacity(0.08),
+                ),
               ),
               child: InkWell(
                 onTap: () async {
@@ -1056,13 +1059,13 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                         height: 48,
                         decoration: BoxDecoration(
                           color: leida 
-                              ? const Color(0xFF37474F).withOpacity(0.1)
-                              : const Color(0xFFFF9800).withOpacity(0.1),
+                              ? AppColors.darkTextMuted.withOpacity(0.15)
+                              : const Color(0xFFFF9800).withOpacity(0.15),
                           shape: BoxShape.circle,
                         ),
                         child: Icon(
                           leida ? Icons.notifications_none : Icons.notifications_active,
-                          color: leida ? const Color(0xFF37474F) : const Color(0xFFFF9800),
+                          color: leida ? AppColors.darkTextMuted : const Color(0xFFFF9800),
                           size: 24,
                         ),
                       ),
@@ -1147,11 +1150,13 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
     await showDialog(
       context: context,
       builder: (context) => Dialog(
+        backgroundColor: AppColors.darkElevated,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
         ),
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 500),
+          constraints: const BoxConstraints(maxWidth: 420),
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1204,7 +1209,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                 ],
               ),
               const SizedBox(height: 24),
-              const Divider(height: 1),
+              Divider(height: 1, color: Colors.white.withOpacity(0.12)),
               const SizedBox(height: 24),
               // Contenido completo
               Flexible(
@@ -1385,11 +1390,13 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
     await showDialog(
       context: context,
       builder: (context) => Dialog(
+        backgroundColor: AppColors.darkElevated,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
         ),
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 500),
+          constraints: const BoxConstraints(maxWidth: 420),
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1442,7 +1449,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                 ],
               ),
               const SizedBox(height: 24),
-              const Divider(height: 1),
+              Divider(height: 1, color: Colors.white.withOpacity(0.12)),
               const SizedBox(height: 24),
               // Contenido completo
               Flexible(
