@@ -912,16 +912,35 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
         perm = await Geolocator.requestPermission();
       }
       if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) return;
+      // medium: respuesta más rápida al marcar entrega (high puede tardar varios segundos)
       _ubicacionActual = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+          timeLimit: Duration(seconds: 6),
+        ),
       );
     } catch (e) {
       print('⚠️ Error obteniendo ubicación en detalle: $e');
     }
   }
 
+  /// La empresa exige geo + radio, pero la orden no tiene lat/lng de destino.
+  bool get _ordenSinCoordenadasConGeoObligatoria {
+    if (!_geolocalizacionObligatoria || _radioEntrega <= 0) return false;
+    return _ordenActual.latitudEntrega == null || _ordenActual.longitudEntrega == null;
+  }
+
   Future<bool> _validarGeoAntesEntrega() async {
     if (!_geolocalizacionObligatoria && _radioEntrega <= 0) return true;
+    // Fallo inmediato sin GPS si faltan coordenadas de la orden
+    if (_ordenSinCoordenadasConGeoObligatoria) {
+      if (mounted) {
+        _mostrarMensaje(
+          'Esta orden no tiene coordenadas de entrega. Contacta a la empresa.',
+        );
+      }
+      return false;
+    }
     if (_ubicacionActual == null) await _obtenerUbicacionActual();
     final resultado = EntregaGeoValidacionUtil.validarRadioEntrega(
       posicionRepartidor: _ubicacionActual,
@@ -1180,6 +1199,36 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           children: [
             // Card principal con información básica
             _buildInfoCard(),
+            if (_ordenSinCoordenadasConGeoObligatoria) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1565C0),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.location_off, color: Colors.white, size: 22),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Esta orden no tiene coordenadas de entrega. '
+                        'Con geolocalización obligatoria no se puede marcar entregada. '
+                        'Contacta a la empresa para corregir la dirección en el mapa.',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             if (_ordenActual.esCompraTienda) ...[
               const SizedBox(height: 12),
               BotonVerProductosOrdenTienda(orden: _ordenActual),
@@ -3764,11 +3813,17 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     
     print('🔍 ====== INICIO MARCAR COMO ENTREGADO ======');
     
-    // Mostrar indicador de carga mientras se recarga la orden
+    // Feedback inmediato + validar geo ANTES de recargar/foto/firma
+    // (evita esperar muchos segundos para luego fallar por coordenadas)
     if (mounted) {
       setState(() {
         _isLoading = true;
       });
+    }
+    final geoOkEarly = await _validarGeoAntesEntrega();
+    if (!geoOkEarly) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
     }
 
     await _resolverFotoEntregaDesdeCache();

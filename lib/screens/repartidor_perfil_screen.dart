@@ -44,6 +44,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   bool _isEditing = false;
   String? _fotoPerfilUrl;
   String? _fotoPerfilLocalPath;
+  String? _fotoVehiculoUrl;
   String? _repartidorId;
   String? _tenantId;
   String? _paisOperacion;
@@ -205,11 +206,23 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             'telefono': response['telefono'] ?? '',
             'email': response['email'] ?? '',
             'foto_perfil': response['foto_perfil'],
+            'foto_vehiculo_url': response['foto_vehiculo_url'],
+            'foto_vehiculo_limpia_url': response['foto_vehiculo_limpia_url'],
             'repartidor_metodo_pago': response['repartidor_metodo_pago'],
             'repartidor_tarifa': response['repartidor_tarifa'],
             'repartidor_saldo_moneda': response['repartidor_saldo_moneda'],
             'repartidor_master': esMaster,
           });
+          // Si la empresa ya configuró tarifa, invalidar preview local viejo (tarifa 0).
+          final tarifaPerfil = response['repartidor_tarifa'];
+          final tarifaNum = tarifaPerfil is num
+              ? tarifaPerfil.toDouble()
+              : double.tryParse('$tarifaPerfil') ?? 0;
+          if (tarifaNum > 0 && response['id'] != null) {
+            await RepartidorSolicitudPagoOfflineService.clearPreviewCache(
+              response['id'].toString(),
+            );
+          }
 
           setState(() {
             _repartidorId = response['id'];
@@ -218,6 +231,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             _telefonoController.text = response['telefono'] ?? '';
             _emailController.text = response['email'] ?? '';
             _fotoPerfilUrl = response['foto_perfil'];
+            _fotoVehiculoUrl = _resolverFotoVehiculoUrl(response);
             _esRecolector = esRecolector;
             _esRepartidorMaster = esMaster;
             _isLoading = false;
@@ -255,11 +269,22 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                 'telefono': response['telefono'] ?? '',
                 'email': response['email'] ?? '',
                 'foto_perfil': response['foto_perfil'],
+                'foto_vehiculo_url': response['foto_vehiculo_url'],
+                'foto_vehiculo_limpia_url': response['foto_vehiculo_limpia_url'],
                 'repartidor_metodo_pago': response['repartidor_metodo_pago'],
                 'repartidor_tarifa': response['repartidor_tarifa'],
                 'repartidor_saldo_moneda': response['repartidor_saldo_moneda'],
                 'repartidor_master': esMaster,
               });
+              final tarifaPerfilEmail = response['repartidor_tarifa'];
+              final tarifaNumEmail = tarifaPerfilEmail is num
+                  ? tarifaPerfilEmail.toDouble()
+                  : double.tryParse('$tarifaPerfilEmail') ?? 0;
+              if (tarifaNumEmail > 0 && response['id'] != null) {
+                await RepartidorSolicitudPagoOfflineService.clearPreviewCache(
+                  response['id'].toString(),
+                );
+              }
 
               setState(() {
                 _repartidorId = response['id'];
@@ -268,6 +293,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                 _telefonoController.text = response['telefono'] ?? '';
                 _emailController.text = response['email'] ?? '';
                 _fotoPerfilUrl = response['foto_perfil'];
+                _fotoVehiculoUrl = _resolverFotoVehiculoUrl(response);
                 _esRecolector = esRecolector;
                 _esRepartidorMaster = esMaster;
                 _isLoading = false;
@@ -320,6 +346,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           _telefonoController.text = perfilCache['telefono'] ?? '';
           _emailController.text = perfilCache['email'] ?? '';
           _fotoPerfilUrl = perfilCache['foto_perfil'];
+          _fotoVehiculoUrl = _resolverFotoVehiculoUrl(perfilCache);
           _esRepartidorMaster = esMaster;
           _isLoading = false;
         });
@@ -903,73 +930,110 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     return Column(
       children: [
         Center(
-      child: Stack(
-        children: [
-          Container(
-            width: 120,
-            height: 120,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: _esRepartidorMaster
-                    ? AppColors.botonPrincipal
-                    : const Color(0xFF4CAF50),
-                width: 3,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Stack(
+                children: [
+                  Container(
+                    width: 120,
+                    height: 120,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: _esRepartidorMaster
+                            ? AppColors.botonPrincipal
+                            : const Color(0xFF4CAF50),
+                        width: 3,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: CircleAvatar(
+                      radius: 60,
+                      backgroundColor: const Color(0xFF4CAF50),
+                      backgroundImage: _imagenPerfilProvider(),
+                      child: _imagenPerfilProvider() == null
+                          ? const Icon(
+                              Icons.person,
+                              size: 60,
+                              color: Colors.white,
+                            )
+                          : null,
+                    ),
+                  ),
+                  if (_esRepartidorMaster)
+                    const Positioned(
+                      right: 4,
+                      top: 4,
+                      child: RepartidorMasterBadgeOverlay(
+                        size: 20,
+                        iconSize: 11,
+                        borderColor: AppColors.darkBg,
+                      ),
+                    ),
+                  if (_isEditing)
+                    Positioned(
+                      bottom: 0,
+                      right: 0,
+                      child: GestureDetector(
+                        onTap: _seleccionarFoto,
+                        child: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFFF9800),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.camera_alt,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
+              if (_fotoVehiculoUrl != null && _fotoVehiculoUrl!.isNotEmpty) ...[
+                const SizedBox(width: 16),
+                Column(
+                  children: [
+                    Container(
+                      width: 120,
+                      height: 80,
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: AppColors.darkSurface,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppColors.darkBorder),
+                      ),
+                      child: Image.network(
+                        _fotoVehiculoUrl!,
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) => const Icon(
+                          Icons.directions_car_outlined,
+                          color: Color(0xFF9CA3AF),
+                          size: 36,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Mi vehículo',
+                      style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 12),
+                    ),
+                  ],
                 ),
               ],
-            ),
-            child: CircleAvatar(
-              radius: 60,
-              backgroundColor: const Color(0xFF4CAF50),
-              backgroundImage: _imagenPerfilProvider(),
-              child: _imagenPerfilProvider() == null
-                  ? const Icon(
-                      Icons.person,
-                      size: 60,
-                      color: Colors.white,
-                    )
-                  : null,
-            ),
+            ],
           ),
-          if (_esRepartidorMaster)
-            const Positioned(
-              right: 4,
-              top: 4,
-              child: RepartidorMasterBadgeOverlay(
-                size: 20,
-                iconSize: 11,
-                borderColor: AppColors.darkBg,
-              ),
-            ),
-          if (_isEditing)
-            Positioned(
-              bottom: 0,
-              right: 0,
-              child: GestureDetector(
-                onTap: _seleccionarFoto,
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFFF9800),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.camera_alt,
-                    color: Colors.white,
-                    size: 20,
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
         ),
         if (_esRepartidorMaster) ...[
           const SizedBox(height: 10),
@@ -979,6 +1043,14 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         _buildResumenPagoChip(),
       ],
     );
+  }
+
+  String? _resolverFotoVehiculoUrl(Map<String, dynamic> row) {
+    final limpia = row['foto_vehiculo_limpia_url']?.toString().trim();
+    if (limpia != null && limpia.isNotEmpty) return limpia;
+    final orig = row['foto_vehiculo_url']?.toString().trim();
+    if (orig != null && orig.isNotEmpty) return orig;
+    return null;
   }
 
   Widget _buildInsigniaMasterChip() {
@@ -1826,7 +1898,22 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
 
     try {
       final p = await RepartidorSolicitudPagoService.cargarPreview(_repartidorId!);
-      if (!mounted || p == null) return;
+      if (!mounted) return;
+      if (p == null) {
+        // No dejar preview viejo con tarifa 0 si el servidor no respondió.
+        final pCache = await RepartidorSolicitudPagoOfflineService.previewDesdeCache(
+          _repartidorId!,
+        );
+        if (pCache != null && mounted) {
+          setState(() {
+            _previewPago = pCache;
+            _metodoPago = pCache.metodoPago;
+            _monedaSaldo = pCache.moneda;
+            _solicitudPendiente = pCache.solicitudPendiente;
+          });
+        }
+        return;
+      }
       await RepartidorSolicitudPagoOfflineService.cachePreview(_repartidorId!, p);
       final pendienteCola = p.esPorOrden
           ? await RepartidorSaldoOfflineService.totalPendienteEnCola()
@@ -2024,8 +2111,51 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   Future<void> _mostrarModalSolicitarPago() async {
     if (_repartidorId == null) return;
 
+    // Forzar lectura fresca del servidor (evita caché local con tarifa 0).
+    if (_isOnline) {
+      await RepartidorSolicitudPagoOfflineService.clearPreviewCache(_repartidorId!);
+    }
     await _cargarPreviewPago();
-    final preview = _previewPago;
+    var preview = _previewPago;
+
+    // Segunda oportunidad: si sigue en 0/null, leer columnas de usuarios.
+    if (_isOnline && (preview == null || preview.tarifa <= 0)) {
+      try {
+        final fromUser =
+            await RepartidorSolicitudPagoService.cargarPreviewDesdeUsuarios(
+          _repartidorId!,
+        );
+        if (fromUser != null && fromUser.tarifa > 0) {
+          final merged = RepartidorSolicitudPreview(
+            metodoPago: fromUser.metodoPago,
+            tarifa: fromUser.tarifa,
+            unidad: fromUser.unidad,
+            moneda: fromUser.moneda,
+            saldoAcumulado: preview?.saldoAcumulado ?? fromUser.saldoAcumulado,
+            solicitudPendiente: preview?.solicitudPendiente ?? false,
+            ultimaNominaFecha: preview?.ultimaNominaFecha,
+            diasDesdeUltimaNomina: preview?.diasDesdeUltimaNomina ?? 0,
+            montoEstimadoPorDia: preview?.montoEstimadoPorDia ?? 0,
+            diasLaborablesEtiqueta: preview?.diasLaborablesEtiqueta ?? '',
+          );
+          preview = merged;
+          await RepartidorSolicitudPagoOfflineService.cachePreview(
+            _repartidorId!,
+            merged,
+          );
+          if (mounted) {
+            setState(() {
+              _previewPago = merged;
+              _metodoPago = merged.metodoPago;
+              _monedaSaldo = merged.moneda;
+            });
+          }
+        }
+      } catch (e) {
+        print('⚠️ Fallback tarifa usuarios en solicitar pago: $e');
+      }
+    }
+
     if (preview == null) {
       _mostrarMensaje('No se pudo cargar la configuración de pago', Colors.red);
       return;

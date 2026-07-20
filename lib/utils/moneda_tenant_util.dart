@@ -1,5 +1,6 @@
-/// Monedas visibles según el país de operación del tenant.
-/// CUP solo aplica cuando la empresa opera en Cuba.
+/// Monedas según configuración del tenant (país de operación / saldo del repartidor).
+/// No hardcodear selectores CUP/USD en flujos de cobro: usar la moneda ya
+/// definida en `repartidor_saldo_moneda` del personal.
 class MonedaTenantUtil {
   MonedaTenantUtil._();
 
@@ -9,6 +10,7 @@ class MonedaTenantUtil {
     return n == 'cuba' || n == 'cu' || n.contains('cuba');
   }
 
+  /// CUP solo como opción de configuración cuando el tenant opera en Cuba.
   static bool permiteCup(String? pais) => paisOperacionEsCuba(pais);
 
   static List<String> monedasDisponibles(String? pais) {
@@ -24,9 +26,21 @@ class MonedaTenantUtil {
     if (m == 'CUP' && !permiteCup(pais)) return 'USD';
     if (m == 'USD') return 'USD';
     if (m == 'CUP' && permiteCup(pais)) return 'CUP';
+    // Otras monedas del tenant (si en el futuro se amplían): respetar código ISO.
+    if (RegExp(r'^[A-Z]{3}$').hasMatch(m)) return m;
     return 'USD';
   }
 
-  static String simboloDisplay(String moneda) =>
-      moneda.toUpperCase() == 'USD' ? '\$' : 'CUP';
+  static String simboloDisplay(String moneda) {
+    switch (moneda.trim().toUpperCase()) {
+      case 'USD':
+        return '\$';
+      case 'CUP':
+        return 'CUP';
+      case 'EUR':
+        return '€';
+      default:
+        return moneda.trim().toUpperCase();
+    }
+  }
 }

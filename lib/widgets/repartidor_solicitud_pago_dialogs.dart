@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../services/repartidor_solicitud_pago_service.dart';
 import '../config/app_colors.dart';
 import 'volonex_dialog.dart';
-import 'volonex_ui.dart';
 import '../utils/moneda_tenant_util.dart';
 
 /// Diálogos para solicitar nómina — tema oscuro Volonex.
@@ -198,76 +197,77 @@ class RepartidorSolicitudPagoDialogs {
     required int totalOrdenes,
     String? paisOperacion,
   }) async {
-    final montoCtrl = TextEditingController(text: saldo > 0 ? saldo.toStringAsFixed(2) : '');
-    String monedaSel = MonedaTenantUtil.normalizarMoneda(moneda, paisOperacion);
+    // Moneda fija del tenant/repartidor (repartidor_saldo_moneda). Sin selector
+    // hardcodeado USD/CUP: una empresa en Francia no debe ver opciones de Cuba.
+    final monedaFija = MonedaTenantUtil.normalizarMoneda(moneda, paisOperacion);
+    final montoCtrl = TextEditingController(
+      text: saldo > 0 ? saldo.toStringAsFixed(2) : '',
+    );
 
     final ok = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       barrierColor: Colors.black54,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSt) => VolonexDialog(
-          title: 'Solicitar pago',
-          leading: const Icon(Icons.payment, color: AppColors.botonPrincipal, size: 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _cajaDestacada(
-                'Saldo disponible: ${saldo.toStringAsFixed(2)} $moneda',
+      builder: (ctx) => VolonexDialog(
+        title: 'Solicitar pago',
+        leading: const Icon(Icons.payment, color: AppColors.botonPrincipal, size: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _cajaDestacada(
+              'Saldo disponible: ${saldo.toStringAsFixed(2)} $monedaFija',
+            ),
+            const SizedBox(height: 12),
+            Text(
+              totalOrdenes > 0
+                  ? 'Órdenes pendientes de cobro: $totalOrdenes'
+                  : 'Sin órdenes nuevas; puedes cobrar el saldo acumulado.',
+              style: const TextStyle(
+                fontSize: 13,
+                color: AppColors.darkTextMuted,
+                height: 1.4,
               ),
-              const SizedBox(height: 12),
-              Text(
-                totalOrdenes > 0
-                    ? 'Órdenes pendientes de cobro: $totalOrdenes'
-                    : 'Sin órdenes nuevas; puedes cobrar el saldo acumulado.',
-                style: const TextStyle(fontSize: 13, color: AppColors.darkTextMuted, height: 1.4),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: montoCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(color: AppColors.darkText, fontSize: 16),
+              decoration: _campoOscuro(
+                label: 'Monto a solicitar',
+                suffix: monedaFija,
               ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: montoCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                style: const TextStyle(color: AppColors.darkText, fontSize: 16),
-                decoration: _campoOscuro(label: 'Monto a solicitar'),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Moneda de tu saldo: $monedaFija '
+              '(definida por tu empresa)',
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppColors.darkTextMuted,
+                height: 1.35,
               ),
-              const SizedBox(height: 14),
-              const Text(
-                'Moneda',
-                style: TextStyle(fontSize: 12, color: AppColors.darkTextMuted),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                children: [
-                  VolonexUi.filterChip(
-                    label: 'USD',
-                    selected: monedaSel == 'USD',
-                    onTap: () => setSt(() => monedaSel = 'USD'),
-                  ),
-                  if (MonedaTenantUtil.permiteCup(paisOperacion))
-                    VolonexUi.filterChip(
-                      label: 'CUP',
-                      selected: monedaSel == 'CUP',
-                      onTap: () => setSt(() => monedaSel = 'CUP'),
-                    ),
-                ],
-              ),
-            ],
-          ),
-          actions: _accionesEnviar(
-            ctx,
-            onEnviar: () {
-              final m = double.tryParse(montoCtrl.text.trim());
-              if (m == null || m <= 0) {
-                _snack(ctx, 'Monto inválido');
-                return;
-              }
-              if (m > saldo + 0.001) {
-                _snack(ctx, 'No puede superar el saldo (${saldo.toStringAsFixed(2)})');
-                return;
-              }
-              Navigator.pop(ctx, true);
-            },
-          ),
+            ),
+          ],
+        ),
+        actions: _accionesEnviar(
+          ctx,
+          onEnviar: () {
+            final m = double.tryParse(montoCtrl.text.trim());
+            if (m == null || m <= 0) {
+              _snack(ctx, 'Monto inválido');
+              return;
+            }
+            if (m > saldo + 0.001) {
+              _snack(
+                ctx,
+                'No puede superar el saldo (${saldo.toStringAsFixed(2)} $monedaFija)',
+              );
+              return;
+            }
+            Navigator.pop(ctx, true);
+          },
         ),
       ),
     );
@@ -275,7 +275,7 @@ class RepartidorSolicitudPagoDialogs {
     final monto = double.tryParse(montoCtrl.text.trim());
     montoCtrl.dispose();
     if (ok == true && monto != null && monto > 0) {
-      return (monto: monto, moneda: monedaSel);
+      return (monto: monto, moneda: monedaFija);
     }
     return null;
   }

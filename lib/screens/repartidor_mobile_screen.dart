@@ -62,8 +62,10 @@ import '../widgets/repartidor_master_badge.dart';
 import '../services/repartidor_saldo_service.dart';
 import '../services/repartidor_perfil_cache_service.dart';
 import '../services/repartidor_perfil_foto_cache_service.dart';
+import '../services/repartidor_foto_perfil_prompt_service.dart';
 import '../services/repartidor_actualizacion_forzada_service.dart';
 import '../widgets/actualizacion_forzada_overlay.dart';
+import '../widgets/repartidor_foto_perfil_prompt_dialog.dart';
 import '../utils/repartidor_provincia_filtro_util.dart';
 import '../utils/entrega_geo_validacion_util.dart';
 
@@ -307,6 +309,60 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         await RepartidorActualizacionForzadaService.instance.consultarDesdeConfig();
     if (!mounted) return;
     setState(() => _actualizacionForzada = estado);
+  }
+
+  /// Sin foto de perfil: aviso cada 2 días (más confianza / más órdenes).
+  Future<void> _talVezMostrarPromptFotoPerfil() async {
+    try {
+      final user = supabase.auth.currentUser;
+      if (user == null || !mounted) return;
+      if (_repartidorId == null || _repartidorId!.isEmpty) return;
+
+      final tieneFoto = (_fotoPerfilUrl != null && _fotoPerfilUrl!.trim().isNotEmpty) ||
+          (_fotoPerfilLocalPath != null &&
+              _fotoPerfilLocalPath!.trim().isNotEmpty &&
+              await File(_fotoPerfilLocalPath!).exists());
+
+      final mostrar = await RepartidorFotoPerfilPromptService.debeMostrar(
+        authUserId: user.id,
+        tieneFoto: tieneFoto,
+      );
+      if (!mostrar || !mounted) return;
+
+      // Esperar a que la pantalla principal esté estable
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+      if (!mounted) return;
+
+      await RepartidorFotoPerfilPromptService.marcarMostrada(user.id);
+
+      final ok = await RepartidorFotoPerfilPromptDialog.show(
+        context,
+        repartidorId: _repartidorId!,
+        onFotoGuardada: (localPath, publicUrl) {
+          if (!mounted) return;
+          setState(() {
+            if (localPath != null && localPath.isNotEmpty) {
+              _fotoPerfilLocalPath = localPath;
+            }
+            if (publicUrl != null && publicUrl.isNotEmpty) {
+              _fotoPerfilUrl = publicUrl;
+            }
+          });
+        },
+      );
+
+      if (ok == true && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Foto de perfil guardada'),
+            backgroundColor: Color(0xFF4CAF50),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      print('⚠️ Prompt foto perfil: $e');
+    }
   }
 
   Future<void> _procesarActualizacionForzada({
@@ -687,6 +743,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           await _resolverFotoPerfilLocalHeader();
           print('🔍 Repartidor Master: $_esRepartidorMaster');
           print('🔍 Tipo Repartidor: $_tipoRepartidor (Es Recolector: $_esRecolector)');
+          unawaited(_talVezMostrarPromptFotoPerfil());
         } catch (e) {
           print('⚠️ Error obteniendo datos de Supabase: $e');
           // ✅ FIX CRÍTICO OFFLINE: Si falla y hay datos en caché, usarlos
@@ -5864,6 +5921,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       return;
     }
 
+    // Aviso rápido si faltan coordenadas (antes de foto/firma/validaciones lentas)
+    final geoOkEarly = await _validarGeoAntesEntrega(orden);
+    if (!geoOkEarly) return;
+
     var ordenTrabajo = await EntregaFotoUtil.ordenConFotoResuelta(orden);
     _actualizarOrdenEnLista(ordenTrabajo);
 
@@ -7769,6 +7830,16 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   Future<bool> _validarGeoAntesEntrega(Orden orden) async {
     if (!_geolocalizacionObligatoria && _radioEntrega <= 0) return true;
+    if (_geolocalizacionObligatoria &&
+        _radioEntrega > 0 &&
+        (orden.latitudEntrega == null || orden.longitudEntrega == null)) {
+      if (mounted) {
+        _mostrarMensaje(
+          'Esta orden no tiene coordenadas de entrega. Contacta a la empresa.',
+        );
+      }
+      return false;
+    }
     if (_ubicacionActual == null) {
       await _obtenerUbicacionActual();
     }
