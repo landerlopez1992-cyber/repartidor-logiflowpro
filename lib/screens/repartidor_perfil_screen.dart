@@ -932,7 +932,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         Center(
           child: Row(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Stack(
                 children: [
@@ -1001,37 +1001,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                     ),
                 ],
               ),
-              if (_fotoVehiculoUrl != null && _fotoVehiculoUrl!.isNotEmpty) ...[
-                const SizedBox(width: 16),
-                Column(
-                  children: [
-                    Container(
-                      width: 120,
-                      height: 80,
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color: AppColors.darkSurface,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: AppColors.darkBorder),
-                      ),
-                      child: Image.network(
-                        _fotoVehiculoUrl!,
-                        fit: BoxFit.contain,
-                        errorBuilder: (_, __, ___) => const Icon(
-                          Icons.directions_car_outlined,
-                          color: Color(0xFF9CA3AF),
-                          size: 36,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Mi vehículo',
-                      style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 12),
-                    ),
-                  ],
-                ),
-              ],
+              const SizedBox(width: 14),
+              _buildBloqueFotoVehiculo(),
             ],
           ),
         ),
@@ -1043,6 +1014,242 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         _buildResumenPagoChip(),
       ],
     );
+  }
+
+  /// Foto del auto: misma guía del formulario de solicitud + botón cambiar.
+  Widget _buildBloqueFotoVehiculo() {
+    final tieneFoto = _fotoVehiculoUrl != null && _fotoVehiculoUrl!.isNotEmpty;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 132,
+          height: 96,
+          decoration: BoxDecoration(
+            color: AppColors.darkSurface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.darkBorder),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: tieneFoto
+              ? Image.network(
+                  _fotoVehiculoUrl!,
+                  width: 132,
+                  height: 96,
+                  fit: BoxFit.cover,
+                  alignment: Alignment.center,
+                  errorBuilder: (_, __, ___) => const Icon(
+                    Icons.directions_car_outlined,
+                    color: Color(0xFF9CA3AF),
+                    size: 40,
+                  ),
+                )
+              : const Icon(
+                  Icons.directions_car_outlined,
+                  color: Color(0xFF9CA3AF),
+                  size: 40,
+                ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          _esRecolector ? 'Vehículo de recolección' : 'Mi vehículo',
+          style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 12),
+        ),
+        if (_isEditing) ...[
+          const SizedBox(height: 6),
+          TextButton.icon(
+            onPressed: _mostrarDialogoCambiarFotoVehiculo,
+            icon: const Icon(Icons.photo_camera, size: 16, color: Color(0xFFFF9800)),
+            label: Text(
+              tieneFoto ? 'Cambiar foto' : 'Subir foto',
+              style: const TextStyle(
+                color: Color(0xFFFF9800),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _mostrarDialogoCambiarFotoVehiculo() async {
+    if (_repartidorId == null) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: AppColors.darkSurface,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          constraints: const BoxConstraints(maxWidth: 420),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          title: Text(
+            _esRecolector ? 'Foto del vehículo de recolección' : 'Foto del vehículo',
+            style: const TextStyle(color: AppColors.darkText, fontWeight: FontWeight.w600, fontSize: 18),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF252A35),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFFF9800).withValues(alpha: 0.4)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Cómo tomar la foto',
+                        style: TextStyle(
+                          color: AppColors.darkText,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _esRecolector
+                            ? 'Ángulo 3/4 frontal (frente y un costado), vehículo completo y centrado. '
+                                'Es el auto con el que recolectas los pedidos; si cambias de vehículo, sube una foto nueva.'
+                            : 'Ángulo 3/4 frontal (se ve el frente y un costado), vehículo completo y centrado. '
+                                'Si cambiaste de automóvil, sube una foto nueva con este mismo formato.',
+                        style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 12, height: 1.35),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Center(
+                  child: Container(
+                    constraints: const BoxConstraints(maxWidth: 280),
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.darkBorder),
+                    ),
+                    child: Image.asset(
+                      'assets/images/foto_vehiculo_ejemplo.png',
+                      height: 120,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            OverflowBar(
+              alignment: MainAxisAlignment.end,
+              spacing: 8,
+              overflowSpacing: 8,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('Cancelar', style: TextStyle(color: Color(0xFF9CA3AF))),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.of(ctx).pop();
+                    await _seleccionarYSubirFotoVehiculo(ImageSource.camera);
+                  },
+                  icon: const Icon(Icons.photo_camera, size: 18),
+                  label: const Text('Tomar foto'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF37474F),
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.of(ctx).pop();
+                    await _seleccionarYSubirFotoVehiculo(ImageSource.gallery);
+                  },
+                  icon: const Icon(Icons.photo_library, size: 18),
+                  label: const Text('Galería'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFF9800),
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _seleccionarYSubirFotoVehiculo(ImageSource source) async {
+    if (_repartidorId == null) return;
+    try {
+      final XFile? image = await _picker.pickImage(
+        source: source,
+        maxWidth: 1800,
+        imageQuality: 85,
+      );
+      if (image == null) return;
+
+      if (!_isOnline) {
+        _mostrarMensaje('Necesitas conexión para actualizar la foto del vehículo', Colors.orange);
+        return;
+      }
+
+      setState(() => _isLoading = true);
+      final file = File(image.path);
+      final fileName =
+          '${_repartidorId}_vehiculo_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      await supabase.storage.from('fotos-perfil').upload(fileName, file);
+      final publicUrl = supabase.storage.from('fotos-perfil').getPublicUrl(fileName);
+
+      final res = await supabase.functions.invoke(
+        'tenant-vendedores',
+        body: {
+          'action': 'actualizar_foto_vehiculo_propia',
+          'foto_vehiculo_url': publicUrl,
+        },
+      );
+      final data = res.data is Map ? Map<String, dynamic>.from(res.data as Map) : null;
+      if (data?['ok'] != true) {
+        // Fallback: guardar URLs directas si la función falla
+        await supabase.from('usuarios').update({
+          'foto_vehiculo_url': publicUrl,
+          'foto_vehiculo_limpia_url': publicUrl,
+        }).eq('id', _repartidorId!);
+      }
+
+      final limpia = data?['foto_vehiculo_limpia_url']?.toString() ?? publicUrl;
+      setState(() {
+        _fotoVehiculoUrl = limpia;
+        _isLoading = false;
+      });
+
+      final perfilCache = await RepartidorPerfilCacheService.getCachedPerfilData();
+      if (perfilCache != null) {
+        await RepartidorPerfilCacheService.cachePerfilData({
+          ...perfilCache,
+          'foto_vehiculo_url': publicUrl,
+          'foto_vehiculo_limpia_url': limpia,
+        });
+      }
+      _mostrarMensaje('Foto del vehículo actualizada', Colors.green);
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+      _mostrarMensaje('Error al actualizar foto del vehículo', Colors.red);
+      print('❌ Foto vehículo: $e');
+    }
   }
 
   String? _resolverFotoVehiculoUrl(Map<String, dynamic> row) {

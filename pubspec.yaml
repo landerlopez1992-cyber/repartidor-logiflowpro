@@ -129,6 +129,7 @@ flutter:
     - assets/logiflow_pro_logo.png
     - assets/www.logiflowpro.com.png
     - assets/sounds/chat_mensaje.mp3
+    - assets/images/foto_vehiculo_ejemplo.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
