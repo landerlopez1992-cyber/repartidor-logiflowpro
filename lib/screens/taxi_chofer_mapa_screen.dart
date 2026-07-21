@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -9,6 +8,7 @@ import 'package:latlong2/latlong.dart';
 import '../config/app_colors.dart';
 import '../services/paises_service.dart';
 import '../services/taxi_buscando_prefs.dart';
+import '../services/taxi_tarifas_chofer_service.dart';
 import '../utils/pais_mapa_centro.dart';
 
 /// Pantalla Taxis del socio: mapa del país de operación + modo «Buscando viajes».
@@ -46,7 +46,25 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
     final pais = (widget.paisOperacion?.trim().isNotEmpty == true)
         ? widget.paisOperacion!.trim()
         : (await PaisesService.obtenerPaisOperacionActual()) ?? 'Cuba';
-    final buscando = await TaxiBuscandoPrefs.esActivo();
+
+    // Persistencia: local + servidor. Solo se apaga si el usuario lo desactiva.
+    final buscandoLocal = await TaxiBuscandoPrefs.esActivo();
+    TaxiTarifaChofer? tarifa;
+    try {
+      tarifa = await TaxiTarifasChoferService.instance.get();
+    } catch (_) {}
+
+    final buscandoServidor = tarifa?.disponible == true;
+    final buscando = buscandoLocal || buscandoServidor;
+
+    if (buscando) {
+      // Reafirmar en dispositivo y servidor tras reinicio.
+      await TaxiBuscandoPrefs.setActivo(true);
+      if (tarifa?.configurado == true && !buscandoServidor) {
+        await TaxiTarifasChoferService.instance.setDisponible(true);
+      }
+    }
+
     final vista = PaisMapaCentro.forPais(pais);
     if (!mounted) return;
     setState(() {
@@ -55,7 +73,7 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
       _buscando = buscando;
       _cargando = false;
     });
-    if (buscando) {
+    if (_buscando) {
       _radar.repeat();
       unawaited(_iniciarGps());
     }
@@ -95,7 +113,26 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
 
   Future<void> _toggleBuscando() async {
     final next = !_buscando;
-    await TaxiBuscandoPrefs.setActivo(next);
+    if (next) {
+      // Guardar ya en local para que sobreviva reinicio aunque falle la red.
+      await TaxiBuscandoPrefs.setActivo(true);
+      final res = await TaxiTarifasChoferService.instance.setDisponible(true);
+      if (!res.ok) {
+        await TaxiBuscandoPrefs.setActivo(false);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(res.err ?? 'Configura tu tarifa en Ajustes de taxis'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+        return;
+      }
+    } else {
+      // Solo se desactiva cuando el socio lo apaga explícitamente.
+      await TaxiBuscandoPrefs.setActivo(false);
+      await TaxiTarifasChoferService.instance.setDisponible(false);
+    }
     if (!mounted) return;
     setState(() => _buscando = next);
     if (next) {
@@ -287,7 +324,7 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
                             const SizedBox(height: 16),
                             Text(
                               _buscando
-                                  ? 'Buscando viajes'
+                                  ? 'Buscando viajes · activo'
                                   : 'Toca para buscar viajes',
                               style: TextStyle(
                                 color: _buscando
@@ -300,7 +337,8 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
                             const SizedBox(height: 6),
                             Text(
                               _buscando
-                                  ? 'En espera de un viaje en $_pais'
+                                  ? 'Seguirás activo aunque cierres la app. '
+                                      'Toca de nuevo para desactivar.'
                                   : 'Activa el modo para recibir ofertas de taxi',
                               textAlign: TextAlign.center,
                               style: const TextStyle(
@@ -395,30 +433,36 @@ class _RadarPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final maxR = size.width / 2;
 
-    for (var i = 0; i < 3; i++) {
-      final phase = (progress + i / 3) % 1.0;
-      final r = 28 + phase * (maxR - 28);
-      final opacity = (1.0 - phase) * 0.45;
+    // Ondas suaves
+    for (var i = 0; i < 2; i++) {
+      final phase = (progress + i / 2) % 1.0;
+      final r = 34 + phase * (maxR - 34);
+      final opacity = (1.0 - phase) * 0.35;
       final paint = Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
+        ..strokeWidth = 1.5
         ..color = const Color(0xFF4CAF50).withValues(alpha: opacity);
       canvas.drawCircle(center, r, paint);
     }
 
-    // Arco de barrido suave
-    final sweep = Paint()
+    // Raya que va y viene (ida y vuelta)
+    final ping = progress <= 0.5 ? (progress * 2) : (2 - progress * 2);
+    final y = size.height * (0.22 + ping * 0.56);
+    final linePaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5
-      ..color = const Color(0xFF4CAF50).withValues(alpha: 0.55);
-    final rect = Rect.fromCircle(center: center, radius: maxR * 0.92);
-    canvas.drawArc(
-      rect,
-      -math.pi / 2 + progress * math.pi * 2,
-      math.pi / 5,
-      false,
-      sweep,
-    );
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round
+      ..color = const Color(0xFF4CAF50).withValues(alpha: 0.85);
+    final glowPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 7
+      ..strokeCap = StrokeCap.round
+      ..color = const Color(0xFF4CAF50).withValues(alpha: 0.22);
+
+    final left = size.width * 0.18;
+    final right = size.width * 0.82;
+    canvas.drawLine(Offset(left, y), Offset(right, y), glowPaint);
+    canvas.drawLine(Offset(left, y), Offset(right, y), linePaint);
   }
 
   @override

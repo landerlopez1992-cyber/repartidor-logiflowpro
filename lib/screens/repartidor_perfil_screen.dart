@@ -26,6 +26,7 @@ import '../utils/repartidor_master_util.dart';
 import '../widgets/repartidor_master_badge.dart';
 import '../services/paises_service.dart';
 import '../utils/moneda_tenant_util.dart';
+import 'taxi_ajustes_screen.dart';
 
 class RepartidorPerfilScreen extends StatefulWidget {
   const RepartidorPerfilScreen({super.key});
@@ -854,6 +855,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                           const SizedBox(height: 24),
                         ],
                         _buildBotonSolicitarPago(),
+                        const SizedBox(height: 24),
+                        _buildAjustesTaxis(),
                         const SizedBox(height: 24),
                         _buildHistorialPagos(),
                         const SizedBox(height: 24),
@@ -2431,6 +2434,60 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         builder: (context) => HistorialPagosCompletoScreen(
           repartidorId: _repartidorId!,
           repartidorNombre: _nombreController.text.trim(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAjustesTaxis() {
+    return Material(
+      color: AppColors.darkSurface,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const TaxiAjustesScreen(),
+            ),
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.darkBorder),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.local_taxi, color: Color(0xFF9CA3AF), size: 22),
+              SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Ajustes de taxis',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.darkText,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Define tu tarifa por km o milla',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.darkTextMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.arrow_forward_ios, size: 16, color: AppColors.darkTextMuted),
+            ],
+          ),
         ),
       ),
     );

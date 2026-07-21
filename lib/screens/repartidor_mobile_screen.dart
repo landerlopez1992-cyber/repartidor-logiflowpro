@@ -38,6 +38,7 @@ import 'taxi_incoming_call_dialog.dart';
 import 'taxi_navegacion_chofer_screen.dart';
 import 'taxi_chofer_mapa_screen.dart';
 import '../services/taxi_chofer_service.dart';
+import '../services/taxi_tarifas_chofer_service.dart';
 import 'qr_scanner_fullscreen.dart';
 import 'aviso_ubicacion_segundo_plano_screen.dart';
 import 'aviso_ubicacion_destacado_screen.dart';
@@ -296,6 +297,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       await _obtenerRepartidorId();
       await _cargarNotificacionesNoLeidas();
       await _cargarSaldo(); // Cargar saldo del repartidor
+      // Modo taxi activo: persistente tras reinicio (solo se apaga manualmente).
+      unawaited(
+        TaxiTarifasChoferService.instance.reafirmarDisponibleSiActivoLocal(),
+      );
       _suscribirseANotificaciones();
       _suscribirseANotificacionesOrdenes();
       _suscribirseACambiosPagos(); // Suscribirse a cambios en solicitudes de pago
