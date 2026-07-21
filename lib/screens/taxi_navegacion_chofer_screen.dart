@@ -186,6 +186,22 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     );
   }
 
+  Future<void> _abrirChatPasajero() async {
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
+        child: _TaxiChoferChatSheet(
+          solicitudId: _oferta.id,
+          pasajeroNombre: _oferta.pasajeroNombre,
+        ),
+      ),
+    );
+  }
+
   Future<void> _confirmarCancelarChofer() async {
     if (_busy) return;
     final go = await showDialog<bool>(
@@ -439,6 +455,31 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                       ),
                     ),
                     const SizedBox(height: 12),
+                    if (_faseEspera) ...[
+                      OutlinedButton.icon(
+                        onPressed: _busy ? null : _abrirChatPasajero,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF37474F),
+                          side: const BorderSide(
+                            color: Color(0xFF37474F),
+                            width: 1.2,
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        icon: const Icon(Icons.chat_bubble_outline, size: 18),
+                        label: const Text(
+                          'Enviar mensaje al pasajero',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
                     ElevatedButton(
                       onPressed: _busy ? null : _accionPrincipal,
                       style: ElevatedButton.styleFrom(
@@ -506,6 +547,205 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _TaxiChoferChatSheet extends StatefulWidget {
+  const _TaxiChoferChatSheet({
+    required this.solicitudId,
+    required this.pasajeroNombre,
+  });
+
+  final String solicitudId;
+  final String pasajeroNombre;
+
+  @override
+  State<_TaxiChoferChatSheet> createState() => _TaxiChoferChatSheetState();
+}
+
+class _TaxiChoferChatSheetState extends State<_TaxiChoferChatSheet> {
+  final _ctrl = TextEditingController();
+  final _scroll = ScrollController();
+  final List<TaxiViajeChatMsg> _mensajes = [];
+  Timer? _poll;
+  bool _cargando = true;
+  bool _enviando = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_cargar());
+    _poll = Timer.periodic(const Duration(seconds: 3), (_) {
+      unawaited(_cargar(silencioso: true));
+    });
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    _ctrl.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  Future<void> _cargar({bool silencioso = false}) async {
+    if (!silencioso && mounted) setState(() => _cargando = true);
+    final list =
+        await TaxiChoferService.instance.listarMensajes(widget.solicitudId);
+    if (!mounted) return;
+    setState(() {
+      _mensajes
+        ..clear()
+        ..addAll(list);
+      _cargando = false;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scroll.hasClients) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
+  }
+
+  Future<void> _enviar() async {
+    final texto = _ctrl.text.trim();
+    if (texto.isEmpty || _enviando) return;
+    setState(() => _enviando = true);
+    final m = await TaxiChoferService.instance.enviarMensaje(
+      solicitudId: widget.solicitudId,
+      cuerpo: texto,
+    );
+    if (!mounted) return;
+    setState(() => _enviando = false);
+    if (m == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo enviar'),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      return;
+    }
+    _ctrl.clear();
+    setState(() => _mensajes.add(m));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final h = MediaQuery.sizeOf(context).height;
+    final nombre = widget.pasajeroNombre.trim().isEmpty
+        ? 'Pasajero'
+        : widget.pasajeroNombre.trim();
+
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Container(
+        constraints: BoxConstraints(maxWidth: 480, maxHeight: h * 0.7),
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+              color: const Color(0xFF37474F),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Chat con $nombre',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: _cargando && _mensajes.isEmpty
+                  ? const Center(child: CircularProgressIndicator())
+                  : ListView.builder(
+                      controller: _scroll,
+                      padding: const EdgeInsets.all(12),
+                      itemCount: _mensajes.length,
+                      itemBuilder: (_, i) {
+                        final m = _mensajes[i];
+                        final mio = m.autorRol == 'chofer';
+                        return Align(
+                          alignment: mio
+                              ? Alignment.centerRight
+                              : Alignment.centerLeft,
+                          child: Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 9,
+                            ),
+                            constraints: const BoxConstraints(maxWidth: 280),
+                            decoration: BoxDecoration(
+                              color: mio
+                                  ? const Color(0xFFFFF3E0)
+                                  : const Color(0xFFF5F5F5),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              m.cuerpo,
+                              style: const TextStyle(
+                                color: Color(0xFF2C2C2C),
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _ctrl,
+                        decoration: InputDecoration(
+                          hintText: 'Escribe un mensaje…',
+                          filled: true,
+                          fillColor: const Color(0xFFF5F5F5),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(22),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                        onSubmitted: (_) => unawaited(_enviar()),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filled(
+                      style: IconButton.styleFrom(
+                        backgroundColor: const Color(0xFFFF9800),
+                      ),
+                      onPressed: _enviando ? null : () => unawaited(_enviar()),
+                      icon: const Icon(Icons.send, color: Colors.white),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

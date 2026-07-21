@@ -354,4 +354,63 @@ class TaxiChoferService {
       );
     } catch (_) {}
   }
+
+  Future<List<TaxiViajeChatMsg>> listarMensajes(String solicitudId) async {
+    try {
+      final res = await _db.rpc(
+        'taxi_viaje_mensajes_listar',
+        params: {'p_solicitud_id': solicitudId},
+      );
+      if (res is! Map || res['ok'] != true) return const [];
+      final raw = res['mensajes'];
+      if (raw is! List) return const [];
+      return raw
+          .whereType<Map>()
+          .map((e) => TaxiViajeChatMsg.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<TaxiViajeChatMsg?> enviarMensaje({
+    required String solicitudId,
+    required String cuerpo,
+  }) async {
+    try {
+      final res = await _db.rpc(
+        'taxi_viaje_mensaje_enviar',
+        params: {
+          'p_solicitud_id': solicitudId,
+          'p_cuerpo': cuerpo.trim(),
+        },
+      );
+      if (res is! Map || res['ok'] != true) return null;
+      final m = res['mensaje'];
+      if (m is! Map) return null;
+      return TaxiViajeChatMsg.fromJson(Map<String, dynamic>.from(m));
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+class TaxiViajeChatMsg {
+  const TaxiViajeChatMsg({
+    required this.id,
+    required this.autorRol,
+    required this.cuerpo,
+  });
+
+  final String id;
+  final String autorRol;
+  final String cuerpo;
+
+  factory TaxiViajeChatMsg.fromJson(Map<String, dynamic> m) {
+    return TaxiViajeChatMsg(
+      id: m['id']?.toString() ?? '',
+      autorRol: m['autor_rol']?.toString() ?? '',
+      cuerpo: m['cuerpo']?.toString() ?? '',
+    );
+  }
 }
