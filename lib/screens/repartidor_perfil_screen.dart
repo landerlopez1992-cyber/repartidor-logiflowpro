@@ -27,6 +27,7 @@ import '../widgets/repartidor_master_badge.dart';
 import '../services/paises_service.dart';
 import '../utils/moneda_tenant_util.dart';
 import 'taxi_ajustes_screen.dart';
+import 'repartidor_metodo_cobro_screen.dart';
 
 class RepartidorPerfilScreen extends StatefulWidget {
   const RepartidorPerfilScreen({super.key});
@@ -888,6 +889,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                         ],
                         _buildBotonSolicitarPago(),
                         const SizedBox(height: 24),
+                        _buildAjustesMetodoCobro(),
+                        const SizedBox(height: 16),
                         _buildAjustesTaxis(),
                         const SizedBox(height: 24),
                         _buildHistorialPagos(),
@@ -2503,6 +2506,62 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         builder: (context) => HistorialPagosCompletoScreen(
           repartidorId: _repartidorId!,
           repartidorNombre: _nombreController.text.trim(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAjustesMetodoCobro() {
+    return Material(
+      color: AppColors.darkSurface,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const RepartidorMetodoCobroScreen(),
+            ),
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.darkBorder),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.account_balance_wallet_outlined,
+                  color: Color(0xFF9CA3AF), size: 22),
+              SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Método de cobro',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.darkText,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Zelle, transferencia, Western Union…',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.darkTextMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.arrow_forward_ios,
+                  size: 16, color: AppColors.darkTextMuted),
+            ],
+          ),
         ),
       ),
     );
