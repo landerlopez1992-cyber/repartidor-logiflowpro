@@ -328,7 +328,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       final oferta = await TaxiChoferService.instance.viajeActivo();
       if (oferta == null || !mounted) return;
       final est = oferta.estado.toLowerCase();
-      if (est != 'aceptado' && est != 'en_viaje') return;
+      if (est != 'aceptado' && est != 'en_camino' && est != 'en_viaje') {
+        return;
+      }
 
       final ir = await showDialog<bool>(
         context: context,
@@ -350,7 +352,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           ),
           content: Text(
             'Viaje con ${oferta.pasajeroNombre}. '
-            'Abre el mapa para continuar (llegada / destino).',
+            'Abre el mapa para continuar (llegada / iniciar viaje / destino).',
             style: const TextStyle(
               color: Color(0xFF9CA3AF),
               height: 1.4,

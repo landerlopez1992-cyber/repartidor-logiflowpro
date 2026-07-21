@@ -8,7 +8,10 @@ import 'package:latlong2/latlong.dart';
 import '../config/app_colors.dart';
 import '../services/taxi_chofer_service.dart';
 
-/// Navegación GPS del socio: primero al pasajero, luego al destino final.
+/// Navegación GPS del socio:
+/// 1) Ubicación actual → punto A (recogida)
+/// 2) Llegada → espera abordaje («Iniciar viaje»)
+/// 3) Punto A → punto B (destino)
 class TaxiNavegacionChoferScreen extends StatefulWidget {
   const TaxiNavegacionChoferScreen({super.key, required this.oferta});
 
@@ -27,24 +30,37 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
   Timer? _pingTimer;
   bool _busy = false;
 
-  LatLng get _destinoActual {
-    if (_oferta.haciaDestino) {
-      return LatLng(_oferta.destinoLat, _oferta.destinoLng);
-    }
-    return LatLng(_oferta.origenLat, _oferta.origenLng);
+  LatLng get _puntoA => LatLng(_oferta.origenLat, _oferta.origenLng);
+  LatLng get _puntoB => LatLng(_oferta.destinoLat, _oferta.destinoLng);
+
+  bool get _faseEspera => _oferta.esperandoPasajero && !_oferta.haciaDestino;
+  bool get _faseDestino => _oferta.haciaDestino;
+
+  String get _tituloFase {
+    if (_faseDestino) return 'Hacia el destino';
+    if (_faseEspera) return 'Esperando al pasajero';
+    return 'Hacia el pasajero';
   }
 
-  String get _tituloFase =>
-      _oferta.haciaDestino ? 'Hacia el destino final' : 'Hacia el pasajero';
+  String get _subtituloFase {
+    if (_faseDestino) {
+      return _oferta.destinoTexto.isEmpty
+          ? 'Destino del viaje (punto B)'
+          : _oferta.destinoTexto;
+    }
+    if (_faseEspera) {
+      return 'Ya estás en el punto de recogida. Cuando el pasajero aborde, inicia el viaje.';
+    }
+    return _oferta.origenTexto.isEmpty
+        ? 'Punto de recogida (punto A)'
+        : _oferta.origenTexto;
+  }
 
-  String get _subtituloFase => _oferta.haciaDestino
-      ? (_oferta.destinoTexto.isEmpty ? 'Destino del viaje' : _oferta.destinoTexto)
-      : (_oferta.origenTexto.isEmpty
-          ? 'Punto de recogida'
-          : _oferta.origenTexto);
-
-  String get _botonLabel =>
-      _oferta.haciaDestino ? 'Completar viaje' : 'Ya llegué al pasajero';
+  String get _botonLabel {
+    if (_faseDestino) return 'Completar viaje';
+    if (_faseEspera) return 'Iniciar viaje';
+    return 'Llegada';
+  }
 
   @override
   void initState() {
@@ -97,7 +113,8 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
   Future<void> _accionPrincipal() async {
     if (_busy) return;
     setState(() => _busy = true);
-    if (_oferta.haciaDestino) {
+
+    if (_faseDestino) {
       final res = await TaxiChoferService.instance.completar(_oferta.id);
       if (!mounted) return;
       setState(() => _busy = false);
@@ -120,26 +137,122 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       return;
     }
 
+    if (_faseEspera) {
+      final res = await TaxiChoferService.instance.iniciarViaje(_oferta.id);
+      if (!mounted) return;
+      setState(() => _busy = false);
+      if (!res.ok || res.oferta == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(res.err ?? 'No se pudo iniciar el viaje'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+        return;
+      }
+      setState(() => _oferta = res.oferta!);
+      _map.move(_puntoB, 14);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ruta al destino cargada. ¡Buen viaje!'),
+          backgroundColor: Color(0xFF37474F),
+        ),
+      );
+      return;
+    }
+
+    // Fase 1 → llegada al punto A
     final res = await TaxiChoferService.instance.lleguePasajero(_oferta.id);
     if (!mounted) return;
     setState(() => _busy = false);
     if (!res.ok || res.oferta == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(res.err ?? 'No se pudo actualizar'),
+          content: Text(res.err ?? 'No se pudo marcar la llegada'),
           backgroundColor: AppColors.error,
         ),
       );
       return;
     }
     setState(() => _oferta = res.oferta!);
-    _map.move(_destinoActual, 15);
+    _map.move(_puntoA, 16);
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Ahora navega al destino final del pasajero'),
+        content: Text(
+          'Aviso enviado al pasajero. Cuando aborde, pulsa «Iniciar viaje».',
+        ),
         backgroundColor: Color(0xFF37474F),
       ),
     );
+  }
+
+  Future<void> _confirmarCancelarChofer() async {
+    if (_busy) return;
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        constraints: const BoxConstraints(maxWidth: 400),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        title: const Text(
+          '¿Cancelar este viaje?',
+          style: TextStyle(
+            color: Color(0xFF2C2C2C),
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        content: const Text(
+          'Si cancelas (por seguridad o algo sospechoso), pierdes esta carrera '
+          'y el importe se devuelve completo al pasajero.\n\n'
+          'No recibirás ganancia por este viaje.',
+          style: TextStyle(color: Color(0xFF666666), height: 1.4, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text(
+              'Seguir el viaje',
+              style: TextStyle(color: Color(0xFF666666)),
+            ),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Cancelar viaje',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (go != true || !mounted) return;
+
+    setState(() => _busy = true);
+    final res = await TaxiChoferService.instance.cancelarViajeChofer(_oferta.id);
+    if (!mounted) return;
+    setState(() => _busy = false);
+
+    if (!res.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(res.err ?? 'No se pudo cancelar'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Viaje cancelado. El saldo se devolvió al pasajero.',
+        ),
+        backgroundColor: Color(0xFF37474F),
+      ),
+    );
+    Navigator.of(context).pop();
   }
 
   @override
@@ -149,41 +262,92 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final dest = _destinoActual;
+  List<Polyline> _polylines() {
+    final out = <Polyline>[];
+    if (_faseDestino) {
+      // Trayectoria A → B
+      out.add(
+        Polyline(
+          points: [_puntoA, _puntoB],
+          color: const Color(0xFF1A73E8),
+          strokeWidth: 5,
+        ),
+      );
+      if (_yo != null) {
+        out.add(
+          Polyline(
+            points: [_yo!, _puntoB],
+            color: const Color(0xFF90CAF9),
+            strokeWidth: 3,
+          ),
+        );
+      }
+      return out;
+    }
+    if (_faseEspera) {
+      // En punto A: sin ruta de navegación
+      return out;
+    }
+    // Fase 1: ubicación actual → punto A
+    if (_yo != null) {
+      out.add(
+        Polyline(
+          points: [_yo!, _puntoA],
+          color: const Color(0xFF1A73E8),
+          strokeWidth: 4,
+        ),
+      );
+    }
+    return out;
+  }
+
+  List<Marker> _markers() {
     final markers = <Marker>[
       Marker(
-        point: dest,
+        point: _puntoA,
         width: 40,
         height: 40,
-        child: Icon(
-          _oferta.haciaDestino ? Icons.flag : Icons.person_pin_circle,
-          color: _oferta.haciaDestino
-              ? const Color(0xFFDC2626)
-              : const Color(0xFF4CAF50),
+        child: const Icon(
+          Icons.person_pin_circle,
+          color: Color(0xFF4CAF50),
           size: 36,
         ),
       ),
-      if (_yo != null)
+    ];
+    if (_faseDestino || _faseEspera) {
+      markers.add(
+        Marker(
+          point: _puntoB,
+          width: 40,
+          height: 40,
+          child: Icon(
+            Icons.flag,
+            color: _faseDestino
+                ? const Color(0xFFDC2626)
+                : const Color(0xFF9E9E9E),
+            size: 34,
+          ),
+        ),
+      );
+    }
+    if (_yo != null) {
+      markers.add(
         Marker(
           point: _yo!,
           width: 36,
           height: 36,
           child: const Icon(Icons.local_taxi, color: Color(0xFF1565C0), size: 32),
         ),
-    ];
-
-    final polylines = <Polyline>[];
-    if (_yo != null) {
-      polylines.add(
-        Polyline(
-          points: [_yo!, dest],
-          color: const Color(0xFF1A73E8),
-          strokeWidth: 4,
-        ),
       );
     }
+    return markers;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final polylines = _polylines();
+    final markers = _markers();
+    final center = _yo ?? (_faseDestino ? _puntoB : _puntoA);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
@@ -197,7 +361,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
             child: FlutterMap(
               mapController: _map,
               options: MapOptions(
-                initialCenter: _yo ?? dest,
+                initialCenter: center,
                 initialZoom: 14,
               ),
               children: [
@@ -233,7 +397,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                     const SizedBox(height: 4),
                     Text(
                       _subtituloFase,
-                      maxLines: 2,
+                      maxLines: 3,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Color(0xFF666666),
@@ -241,6 +405,29 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                         height: 1.3,
                       ),
                     ),
+                    if (_faseEspera) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF8E1),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: const Color(0xFFFFE082)),
+                        ),
+                        child: const Text(
+                          'El pasajero ya recibió el aviso de que estás afuera.',
+                          style: TextStyle(
+                            color: Color(0xFF6D4C41),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            height: 1.3,
+                          ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 6),
                     Text(
                       'Ganancia: \$${_oferta.gananciaUsd.toStringAsFixed(2)} · '
@@ -255,7 +442,9 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                     ElevatedButton(
                       onPressed: _busy ? null : _accionPrincipal,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF37474F),
+                        backgroundColor: _faseEspera
+                            ? const Color(0xFFFF9800)
+                            : const Color(0xFF37474F),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
@@ -278,6 +467,38 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                                 fontSize: 15,
                               ),
                             ),
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton(
+                      onPressed: _busy ? null : _confirmarCancelarChofer,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFFDC2626),
+                        side: const BorderSide(
+                          color: Color(0xFFDC2626),
+                          width: 1.2,
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      child: const Text(
+                        'Cancelar viaje',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Si cancelas, pierdes la carrera y el pasajero recupera su saldo.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Color(0xFF9E9E9E),
+                        fontSize: 11,
+                        height: 1.3,
+                      ),
                     ),
                   ],
                 ),

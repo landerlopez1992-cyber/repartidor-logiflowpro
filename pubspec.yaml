@@ -116,6 +116,9 @@ dependency_overrides:
 
 # The following section is specific to Flutter packages.
 flutter:
+  # CocoaPods en macOS (ruta con espacios + plugins sin SPM).
+  config:
+    enable-swift-package-manager: false
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in

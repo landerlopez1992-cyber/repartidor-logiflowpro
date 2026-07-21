@@ -89,7 +89,7 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
         return;
       }
       final est = o.estado.toLowerCase();
-      if (est == 'aceptado' || est == 'en_viaje') {
+      if (est == 'aceptado' || est == 'en_camino' || est == 'en_viaje') {
         // Ya aceptado (este u otro flujo): no cerrar como “perdido”.
         return;
       }

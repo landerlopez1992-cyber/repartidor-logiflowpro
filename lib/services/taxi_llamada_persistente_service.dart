@@ -254,7 +254,7 @@ class TaxiLlamadaPersistenteService {
         }
         final est = o.estado.toLowerCase();
         // Yo (u otro flujo) ya aceptó: silenciar alerta SIN tratarlo como perdido.
-        if (est == 'aceptado' || est == 'en_viaje') {
+        if (est == 'aceptado' || est == 'en_camino' || est == 'en_viaje') {
           await detener(motivo: 'viaje_en_curso', resultado: true);
           return;
         }

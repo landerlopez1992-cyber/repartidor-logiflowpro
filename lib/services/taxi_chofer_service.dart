@@ -58,11 +58,18 @@ class TaxiOfertaChofer {
   final int pasajeros;
   final int capacidadChofer;
 
+  /// Fase 1: yendo al punto A (recogida).
   bool get haciaPasajero =>
-      rutaFase == 'hacia_pasajero' || estado == 'aceptado';
+      estado == 'aceptado' ||
+      (rutaFase == 'hacia_pasajero' && estado != 'en_camino' && estado != 'en_viaje');
 
+  /// Fase 2: ya llegó a A, esperando que el pasajero aborde.
+  bool get esperandoPasajero =>
+      estado == 'en_camino' || rutaFase == 'esperando_pasajero';
+
+  /// Fase 3: trayecto A → B.
   bool get haciaDestino =>
-      rutaFase == 'hacia_destino' || estado == 'en_viaje';
+      estado == 'en_viaje' || rutaFase == 'hacia_destino';
 
   String get ofertaTipoEtiqueta {
     switch (ofertaTipo.toLowerCase().trim()) {
@@ -243,7 +250,37 @@ class TaxiChoferService {
       if (res is! Map || res['ok'] != true) {
         return (
           ok: false,
-          err: res is Map ? res['error']?.toString() : 'Error',
+          err: res is Map
+              ? (res['mensaje']?.toString() ?? res['error']?.toString())
+              : 'Error',
+          oferta: null,
+        );
+      }
+      return (
+        ok: true,
+        err: null,
+        oferta: TaxiOfertaChofer.fromJson(Map<String, dynamic>.from(res)),
+      );
+    } catch (e) {
+      return (ok: false, err: e.toString(), oferta: null);
+    }
+  }
+
+  /// Tras llegada al punto A: inicia navegación A → B.
+  Future<({bool ok, String? err, TaxiOfertaChofer? oferta})> iniciarViaje(
+    String solicitudId,
+  ) async {
+    try {
+      final res = await _db.rpc(
+        'taxi_chofer_iniciar_viaje',
+        params: {'p_solicitud_id': solicitudId},
+      );
+      if (res is! Map || res['ok'] != true) {
+        return (
+          ok: false,
+          err: res is Map
+              ? (res['mensaje']?.toString() ?? res['error']?.toString())
+              : 'Error',
           oferta: null,
         );
       }
@@ -267,6 +304,37 @@ class TaxiChoferService {
       return (ok: false, err: 'No se pudo completar');
     } catch (e) {
       return (ok: false, err: e.toString());
+    }
+  }
+
+  /// Cancela viaje aceptado/en curso: reembolsa 100% al pasajero; el socio pierde la carrera.
+  Future<({bool ok, String? err, double? amountUsd})> cancelarViajeChofer(
+    String solicitudId,
+  ) async {
+    try {
+      final res = await _db.rpc(
+        'taxi_chofer_cancelar_viaje',
+        params: {'p_solicitud_id': solicitudId},
+      );
+      if (res is! Map) {
+        return (ok: false, err: 'No se pudo cancelar el viaje.', amountUsd: null);
+      }
+      if (res['ok'] == true) {
+        return (
+          ok: true,
+          err: null,
+          amountUsd: (res['amount_usd'] as num?)?.toDouble(),
+        );
+      }
+      return (
+        ok: false,
+        err: res['mensaje']?.toString() ??
+            res['error']?.toString() ??
+            'No se pudo cancelar el viaje.',
+        amountUsd: null,
+      );
+    } catch (e) {
+      return (ok: false, err: e.toString(), amountUsd: null);
     }
   }
 

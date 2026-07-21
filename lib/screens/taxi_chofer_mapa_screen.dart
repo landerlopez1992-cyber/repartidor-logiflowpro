@@ -10,6 +10,7 @@ import '../services/paises_service.dart';
 import '../services/taxi_buscando_prefs.dart';
 import '../services/taxi_tarifas_chofer_service.dart';
 import '../utils/pais_mapa_centro.dart';
+import '../utils/taxi_nearby_fleet_util.dart';
 
 /// Pantalla Taxis del socio: mapa del país de operación + modo «Buscando viajes».
 class TaxiChoferMapaScreen extends StatefulWidget {
@@ -31,6 +32,9 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
   bool _buscando = false;
   bool _cargando = true;
   StreamSubscription<Position>? _posSub;
+  Timer? _fleetTimer;
+  List<LatLng> _nearbyCars = const [];
+  int _fleetSeed = 0;
 
   @override
   void initState() {
@@ -72,7 +76,13 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
       _vista = vista;
       _buscando = buscando;
       _cargando = false;
+      _nearbyCars = TaxiNearbyFleetUtil.around(
+        center: vista.center,
+        count: 6,
+        seed: pais.hashCode,
+      );
     });
+    _startFleetAnim();
     if (_buscando) {
       _radar.repeat();
       unawaited(_iniciarGps());
@@ -82,6 +92,20 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
       try {
         _map.move(vista.center, vista.zoom);
       } catch (_) {}
+    });
+  }
+
+  void _startFleetAnim() {
+    _fleetTimer?.cancel();
+    _fleetTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!mounted || _nearbyCars.isEmpty) return;
+      _fleetSeed++;
+      setState(() {
+        _nearbyCars = TaxiNearbyFleetUtil.nudge(
+          _nearbyCars,
+          seed: _fleetSeed,
+        );
+      });
     });
   }
 
@@ -97,7 +121,18 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
       }
       final pos = await Geolocator.getCurrentPosition();
       if (!mounted) return;
-      setState(() => _yo = LatLng(pos.latitude, pos.longitude));
+      final yo = LatLng(pos.latitude, pos.longitude);
+      setState(() {
+        _yo = yo;
+        _nearbyCars = TaxiNearbyFleetUtil.around(
+          center: yo,
+          count: 6,
+          seed: (pos.latitude * 1000).round(),
+        );
+      });
+      try {
+        _map.move(yo, 14);
+      } catch (_) {}
       _posSub?.cancel();
       _posSub = Geolocator.getPositionStream(
         locationSettings: const LocationSettings(
@@ -149,6 +184,7 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
   @override
   void dispose() {
     _posSub?.cancel();
+    _fleetTimer?.cancel();
     _radar.dispose();
     super.dispose();
   }
@@ -176,30 +212,68 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
                   children: [
                     TileLayer(
                       urlTemplate:
-                          'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                          'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
                       subdomains: const ['a', 'b', 'c', 'd'],
                       userAgentPackageName: 'com.logiflow.repartidor',
                     ),
+                    if (_nearbyCars.isNotEmpty)
+                      MarkerLayer(
+                        markers: [
+                          for (final c in _nearbyCars)
+                            Marker(
+                              point: c,
+                              width: 30,
+                              height: 30,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: const Color(0xFF37474F),
+                                    width: 1.5,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(alpha: 0.18),
+                                      blurRadius: 4,
+                                      offset: const Offset(0, 1),
+                                    ),
+                                  ],
+                                ),
+                                alignment: Alignment.center,
+                                child: const Text('🚗', style: TextStyle(fontSize: 14)),
+                              ),
+                            ),
+                        ],
+                      ),
                     if (_yo != null)
                       MarkerLayer(
                         markers: [
                           Marker(
                             point: _yo!,
-                            width: 44,
-                            height: 44,
+                            width: 48,
+                            height: 48,
                             child: Container(
                               decoration: BoxDecoration(
-                                color: const Color(0xFF1565C0),
+                                color: const Color(0xFF1A73E8),
                                 shape: BoxShape.circle,
                                 border: Border.all(
                                   color: Colors.white,
-                                  width: 2.5,
+                                  width: 3,
                                 ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: const Color(0xFF1A73E8)
+                                        .withValues(alpha: 0.35),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
                               ),
                               child: const Icon(
-                                Icons.local_taxi,
+                                Icons.local_taxi_rounded,
                                 color: Colors.white,
-                                size: 22,
+                                size: 24,
                               ),
                             ),
                           ),
@@ -207,21 +281,21 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
                       ),
                   ],
                 ),
-                // Gradiente superior
+                // Gradiente superior suave (mapa claro)
                 Positioned(
                   top: 0,
                   left: 0,
                   right: 0,
                   child: IgnorePointer(
                     child: Container(
-                      height: 140,
+                      height: 120,
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
                           begin: Alignment.topCenter,
                           end: Alignment.bottomCenter,
                           colors: [
-                            AppColors.darkBg.withValues(alpha: 0.92),
-                            AppColors.darkBg.withValues(alpha: 0.0),
+                            Colors.white.withValues(alpha: 0.72),
+                            Colors.white.withValues(alpha: 0.0),
                           ],
                         ),
                       ),
@@ -241,8 +315,8 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
                           begin: Alignment.bottomCenter,
                           end: Alignment.topCenter,
                           colors: [
-                            AppColors.darkBg.withValues(alpha: 0.96),
-                            AppColors.darkBg.withValues(alpha: 0.55),
+                            AppColors.darkBg.withValues(alpha: 0.92),
+                            AppColors.darkBg.withValues(alpha: 0.45),
                             AppColors.darkBg.withValues(alpha: 0.0),
                           ],
                         ),
