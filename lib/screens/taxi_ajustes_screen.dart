@@ -3,8 +3,9 @@ import 'package:flutter/services.dart';
 
 import '../config/app_colors.dart';
 import '../services/taxi_tarifas_chofer_service.dart';
+import '../services/taxi_vehiculo_catalog.dart';
 
-/// Ajustes de tarifa taxi del socio (distancia + plazas + recargo por personas).
+/// Ajustes de tarifa taxi del socio (distancia + plazas + vehículo).
 class TaxiAjustesScreen extends StatefulWidget {
   const TaxiAjustesScreen({super.key});
 
@@ -15,14 +16,33 @@ class TaxiAjustesScreen extends StatefulWidget {
 class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
   final _precioCtrl = TextEditingController();
   final _recargoCtrl = TextEditingController();
+  final _modeloCtrl = TextEditingController();
   String _unidad = 'km';
   int _capacidad = 4;
   int _incluidos = 2;
+  /// Radio de trabajo en metros (default 150 km).
+  int _radioTrabajoM = 150000;
+  /// Tope A→B en metros; null = sin límite.
+  int? _distanciaMaxViajeM;
+  String? _marca;
+  int? _anio;
+  String? _color;
   bool _loading = true;
   bool _saving = false;
 
   static const double _ejemploDistancia = 20;
   static const int _maxPlazas = 20;
+  static const List<int> _radiosKm = [30, 50, 80, 150, 250];
+  static const List<int?> _maxViajeKm = [null, 50, 100, 200, 500];
+
+  String get _avatarKey => TaxiVehiculoCatalog.resolveAvatarKey(
+        marca: _marca ?? '',
+        anio: _anio,
+        capacidad: _capacidad,
+      );
+
+  String get _avatarAsset =>
+      TaxiVehiculoCatalog.assetForKey(_avatarKey);
 
   @override
   void initState() {
@@ -84,8 +104,22 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
       } else {
         _recargoCtrl.text = '0';
       }
+      _radioTrabajoM = t.radioTrabajoM.clamp(5000, 500000);
+      _distanciaMaxViajeM = t.distanciaMaxViajeM;
+      _marca = t.vehiculoMarca.isNotEmpty ? t.vehiculoMarca : null;
+      _modeloCtrl.text = t.vehiculoModelo;
+      _anio = t.vehiculoAnio;
+      _color = t.vehiculoColor.isNotEmpty ? t.vehiculoColor : null;
       _loading = false;
     });
+  }
+
+  int get _radioKm => (_radioTrabajoM / 1000).round();
+
+  String get _maxViajeLabel {
+    final m = _distanciaMaxViajeM;
+    if (m == null || m <= 0) return 'Sin límite';
+    return '${(m / 1000).round()} km';
   }
 
   Future<void> _guardar() async {
@@ -132,6 +166,8 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
             '(precio base del trayecto).\n\n'
             'Plazas: $_capacidad. Incluidos en la base: $_incluidos. '
             'Recargo por persona extra: \$${recargo.toStringAsFixed(2)}.\n\n'
+            'Radio de trabajo: $_radioKm km. '
+            'Viaje máximo: $_maxViajeLabel.\n\n'
             'Si tu precio queda muy alto frente a otros socios, '
             'recibirás menos viajes.',
             style: const TextStyle(
@@ -172,6 +208,12 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
       capacidadPasajeros: _capacidad,
       pasajerosIncluidos: _incluidos,
       recargoPorPasajeroUsd: recargo,
+      radioTrabajoM: _radioTrabajoM,
+      distanciaMaxViajeM: _distanciaMaxViajeM,
+      vehiculoMarca: _marca,
+      vehiculoModelo: _modeloCtrl.text.trim(),
+      vehiculoAnio: _anio,
+      vehiculoColor: _color,
     );
     if (!mounted) return;
     setState(() => _saving = false);
@@ -193,6 +235,7 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
   void dispose() {
     _precioCtrl.dispose();
     _recargoCtrl.dispose();
+    _modeloCtrl.dispose();
     super.dispose();
   }
 
@@ -225,6 +268,33 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
     );
   }
 
+  Widget _labelChip({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.header : AppColors.darkElevated,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.white : AppColors.darkText,
+            fontWeight: FontWeight.w700,
+            fontSize: 13,
+          ),
+        ),
+      ),
+    );
+  }
+
   InputDecoration _fieldDeco(String label, {String? hint}) {
     return InputDecoration(
       labelText: label,
@@ -235,6 +305,32 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
       ),
       prefixText: '\$ ',
       prefixStyle: const TextStyle(color: AppColors.darkText),
+      filled: true,
+      fillColor: AppColors.darkElevated,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Color(0xFF9CA3AF)),
+      ),
+    );
+  }
+
+  /// Campos de texto/listas (marca, modelo, etc.) — sin símbolo \$.
+  InputDecoration _textoFieldDeco(String label, {String? hint}) {
+    return InputDecoration(
+      labelText: label,
+      labelStyle: const TextStyle(color: AppColors.darkTextMuted),
+      hintText: hint,
+      hintStyle: TextStyle(
+        color: AppColors.darkTextMuted.withValues(alpha: 0.6),
+      ),
       filled: true,
       fillColor: AppColors.darkElevated,
       border: OutlineInputBorder(
@@ -469,6 +565,198 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
                             fontWeight: FontWeight.w600,
                           ),
                         ),
+                      ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'Zona de trabajo',
+                        style: TextStyle(
+                          color: AppColors.darkTextMuted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Hasta qué lejos del pasajero aceptas ir a recogerlo. '
+                        'Si el origen está más lejos, no te mostrarán el viaje.',
+                        style: TextStyle(
+                          color: AppColors.darkTextMuted,
+                          fontSize: 12,
+                          height: 1.35,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _radiosKm.map((km) {
+                          final selected = _radioKm == km;
+                          return _labelChip(
+                            label: '$km km',
+                            selected: selected,
+                            onTap: () => setState(
+                              () => _radioTrabajoM = km * 1000,
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 20),
+                      const Text(
+                        'Distancia máxima del viaje (A → B)',
+                        style: TextStyle(
+                          color: AppColors.darkTextMuted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Tope del trayecto completo. Útil si no quieres '
+                        'viajes muy largos (ej. entre ciudades).',
+                        style: TextStyle(
+                          color: AppColors.darkTextMuted,
+                          fontSize: 12,
+                          height: 1.35,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _maxViajeKm.map((km) {
+                          final selected = km == null
+                              ? (_distanciaMaxViajeM == null ||
+                                  _distanciaMaxViajeM! <= 0)
+                              : (_distanciaMaxViajeM != null &&
+                                  (_distanciaMaxViajeM! / 1000).round() == km);
+                          return _labelChip(
+                            label: km == null ? 'Sin límite' : '$km km',
+                            selected: selected,
+                            onTap: () => setState(() {
+                              _distanciaMaxViajeM =
+                                  km == null ? null : km * 1000;
+                            }),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'Tu vehículo',
+                        style: TextStyle(
+                          color: AppColors.darkTextMuted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Marca, modelo, año y color. En las ofertas el cliente '
+                        've una silueta similar; cuando aceptes un viaje verá '
+                        'tu foto real y estos datos.',
+                        style: TextStyle(
+                          color: AppColors.darkTextMuted,
+                          fontSize: 12,
+                          height: 1.35,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Center(
+                        child: Container(
+                          width: 180,
+                          height: 100,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: AppColors.darkBg,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Image.asset(
+                            _avatarAsset,
+                            fit: BoxFit.contain,
+                            filterQuality: FilterQuality.high,
+                            errorBuilder: (_, __, ___) => const Icon(
+                              Icons.directions_car,
+                              color: Color(0xFF9CA3AF),
+                              size: 48,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _avatarKey == 'clasico'
+                            ? 'Silueta clásica'
+                            : _avatarKey == 'van'
+                                ? 'Silueta van / muchas plazas'
+                                : 'Silueta moderna',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFF9CA3AF),
+                          fontSize: 11,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        value: _marca != null &&
+                                TaxiVehiculoCatalog.marcas.contains(_marca)
+                            ? _marca
+                            : null,
+                        dropdownColor: AppColors.darkElevated,
+                        style: const TextStyle(color: AppColors.darkText),
+                        decoration: _textoFieldDeco('Marca'),
+                        items: TaxiVehiculoCatalog.marcas
+                            .map(
+                              (m) => DropdownMenuItem(
+                                value: m,
+                                child: Text(m),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (v) => setState(() => _marca = v),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _modeloCtrl,
+                        style: const TextStyle(color: AppColors.darkText),
+                        decoration: _textoFieldDeco('Modelo'),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<int>(
+                        value: _anio != null &&
+                                TaxiVehiculoCatalog.aniosDisponibles()
+                                    .contains(_anio)
+                            ? _anio
+                            : null,
+                        dropdownColor: AppColors.darkElevated,
+                        style: const TextStyle(color: AppColors.darkText),
+                        decoration: _textoFieldDeco('Año'),
+                        items: TaxiVehiculoCatalog.aniosDisponibles()
+                            .map(
+                              (y) => DropdownMenuItem(
+                                value: y,
+                                child: Text('$y'),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (v) => setState(() => _anio = v),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        value: _color != null &&
+                                TaxiVehiculoCatalog.colores.contains(_color)
+                            ? _color
+                            : null,
+                        dropdownColor: AppColors.darkElevated,
+                        style: const TextStyle(color: AppColors.darkText),
+                        decoration: _textoFieldDeco('Color'),
+                        items: TaxiVehiculoCatalog.colores
+                            .map(
+                              (c) => DropdownMenuItem(
+                                value: c,
+                                child: Text(c),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (v) => setState(() => _color = v),
                       ),
                       const SizedBox(height: 24),
                       ElevatedButton(

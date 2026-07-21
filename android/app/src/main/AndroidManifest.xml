@@ -6,6 +6,10 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Permite que notificaciones tipo alarma suenen con el teléfono en silencio (según ajustes del dispositivo). -->
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     
     <application
         android:label="VolonexPro+ Repartidor"

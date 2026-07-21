@@ -1,14 +1,14 @@
 import 'dart:async';
 
-import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:vibration/vibration.dart';
 
 import '../config/app_colors.dart';
 import '../services/taxi_chofer_service.dart';
+import '../services/taxi_llamada_persistente_service.dart';
 
-/// Modal estilo “llamada entrante” con el detalle completo del viaje.
+/// Modal estilo “llamada entrante” persistente (Uber).
+/// Ringtone / notificación ongoing: [TaxiLlamadaPersistenteService].
 class TaxiIncomingCallDialog extends StatefulWidget {
   const TaxiIncomingCallDialog({
     super.key,
@@ -17,16 +17,34 @@ class TaxiIncomingCallDialog extends StatefulWidget {
 
   final String solicitudId;
 
-  /// Muestra el modal. Devuelve true si aceptó.
+  static String? _solicitudMostrada;
+
+  /// Pantalla de llamada. No se cierra al tocar fuera ni con atrás.
   static Future<bool?> show(BuildContext context, String solicitudId) {
+    final id = solicitudId.trim();
+    if (id.isEmpty) return Future.value(null);
+    if (_solicitudMostrada == id) return Future.value(null);
+    _solicitudMostrada = id;
+
+    unawaited(
+      TaxiLlamadaPersistenteService.instance.iniciar(
+        solicitudId: id,
+        titulo: 'Viaje de taxi entrante',
+        mensaje:
+            'Acepta o rechaza. La alerta sigue hasta que respondas o otro socio tome el viaje.',
+      ),
+    );
+
     return showGeneralDialog<bool>(
       context: context,
       barrierDismissible: false,
-      barrierColor: Colors.black.withValues(alpha: 0.72),
+      barrierColor: Colors.black.withValues(alpha: 0.85),
       transitionDuration: const Duration(milliseconds: 280),
       pageBuilder: (_, __, ___) =>
-          TaxiIncomingCallDialog(solicitudId: solicitudId),
-    );
+          TaxiIncomingCallDialog(solicitudId: id),
+    ).whenComplete(() {
+      if (_solicitudMostrada == id) _solicitudMostrada = null;
+    });
   }
 
   @override
@@ -40,8 +58,7 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
   bool _loading = true;
   bool _busy = false;
   late final AnimationController _pulse;
-  final AudioPlayer _player = AudioPlayer();
-  Timer? _vibTimer;
+  Timer? _pollUi;
 
   @override
   void initState() {
@@ -51,27 +68,25 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
       duration: const Duration(milliseconds: 900),
     )..repeat(reverse: true);
     _cargar();
-    _iniciarSonido();
+    _pollUi =
+        Timer.periodic(const Duration(seconds: 4), (_) => _cargarSilencioso());
   }
 
-  Future<void> _iniciarSonido() async {
+  Future<void> _cargarSilencioso() async {
+    if (_busy || !mounted) return;
     try {
-      await _player.setReleaseMode(ReleaseMode.loop);
-      await _player.play(AssetSource('sounds/taxi_incoming.mp3'));
-    } catch (_) {}
-    _vibTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
-      try {
-        if (await Vibration.hasVibrator() == true) {
-          Vibration.vibrate(duration: 450);
-        }
-      } catch (_) {}
-    });
-  }
-
-  Future<void> _detenerAlertas() async {
-    _vibTimer?.cancel();
-    try {
-      await _player.stop();
+      final o =
+          await TaxiChoferService.instance.detalleOferta(widget.solicitudId);
+      if (!mounted) return;
+      if (o == null || o.estado != 'buscando_chofer') {
+        await TaxiLlamadaPersistenteService.instance.detener(
+          motivo: 'tomado_por_otro',
+          resultado: false,
+        );
+        if (mounted) Navigator.of(context).pop(false);
+        return;
+      }
+      setState(() => _oferta = o);
     } catch (_) {}
   }
 
@@ -89,6 +104,10 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
           _loading = false;
           _error = 'Este viaje ya no está disponible.';
         });
+        await TaxiLlamadaPersistenteService.instance.detener(
+          motivo: 'ya_no_disponible',
+          resultado: false,
+        );
         return;
       }
       setState(() {
@@ -107,7 +126,6 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
   Future<void> _aceptar() async {
     if (_busy) return;
     setState(() => _busy = true);
-    await _detenerAlertas();
     final res = await TaxiChoferService.instance.aceptar(widget.solicitudId);
     if (!mounted) return;
     if (!res.ok || res.oferta == null) {
@@ -120,11 +138,13 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
       );
       if ((res.err ?? '').contains('ya_tomado') ||
           (res.err ?? '').contains('Otro socio')) {
-        Navigator.of(context).pop(false);
+        await TaxiLlamadaPersistenteService.instance.onRechazadoDesdeUi();
+        if (mounted) Navigator.of(context).pop(false);
       }
       return;
     }
-    Navigator.of(context).pop(true);
+    await TaxiLlamadaPersistenteService.instance.onAceptadoDesdeUi();
+    if (mounted) Navigator.of(context).pop(true);
   }
 
   Future<void> _rechazar() async {
@@ -184,8 +204,8 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
     if (confirmar != true || !mounted) return;
 
     setState(() => _busy = true);
-    await _detenerAlertas();
     await TaxiChoferService.instance.rechazar(widget.solicitudId);
+    await TaxiLlamadaPersistenteService.instance.onRechazadoDesdeUi();
     if (!mounted) return;
     Navigator.of(context).pop(false);
   }
@@ -208,58 +228,74 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
 
   @override
   void dispose() {
-    _vibTimer?.cancel();
+    _pollUi?.cancel();
     _pulse.dispose();
-    _player.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final maxH = MediaQuery.sizeOf(context).height * 0.92;
-    return Material(
-      color: Colors.transparent,
-      child: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: 400, maxHeight: maxH),
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E232E),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+    final size = MediaQuery.sizeOf(context);
+    return PopScope(
+      canPop: false,
+      child: Material(
+        color: const Color(0xFF12151C),
+        child: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: 420,
+                maxHeight: size.height * 0.96,
               ),
-              child: _loading
-                  ? const Padding(
-                      padding: EdgeInsets.all(32),
-                      child: Center(
-                        child: CircularProgressIndicator(
-                          color: Color(0xFFFF9800),
+              child: Container(
+                width: double.infinity,
+                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E232E),
+                  borderRadius: BorderRadius.circular(20),
+                  border:
+                      Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                ),
+                child: _loading
+                    ? const Padding(
+                        padding: EdgeInsets.all(32),
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            color: Color(0xFFFF9800),
+                          ),
                         ),
-                      ),
-                    )
-                  : _error != null
-                      ? Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              _error!,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(color: Color(0xFFECEFF1)),
-                            ),
-                            const SizedBox(height: 16),
-                            TextButton(
-                              onPressed: () => Navigator.pop(context, false),
-                              child: const Text(
-                                'Cerrar',
-                                style: TextStyle(color: Color(0xFF9CA3AF)),
+                      )
+                    : _error != null
+                        ? Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _error!,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(color: Color(0xFFECEFF1)),
                               ),
-                            ),
-                          ],
-                        )
-                      : _buildBody(_oferta!),
+                              const SizedBox(height: 16),
+                              TextButton(
+                                onPressed: () async {
+                                  await TaxiLlamadaPersistenteService.instance
+                                      .detener(
+                                    motivo: 'ya_no_disponible',
+                                    resultado: false,
+                                  );
+                                  if (context.mounted) {
+                                    Navigator.pop(context, false);
+                                  }
+                                },
+                                child: const Text(
+                                  'Cerrar',
+                                  style: TextStyle(color: Color(0xFF9CA3AF)),
+                                ),
+                              ),
+                            ],
+                          )
+                        : _buildBody(_oferta!),
+              ),
             ),
           ),
         ),
@@ -313,6 +349,15 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                   },
                 ),
                 const SizedBox(height: 12),
+                const Text(
+                  'Llamada de viaje · suena hasta que respondas',
+                  style: TextStyle(
+                    color: Color(0xFFFF9800),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
                 const Text(
                   'Viaje de taxi entrante',
                   style: TextStyle(

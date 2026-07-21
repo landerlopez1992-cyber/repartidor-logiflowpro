@@ -39,6 +39,7 @@ import 'taxi_navegacion_chofer_screen.dart';
 import 'taxi_chofer_mapa_screen.dart';
 import '../services/taxi_chofer_service.dart';
 import '../services/taxi_tarifas_chofer_service.dart';
+import '../services/taxi_llamada_persistente_service.dart';
 import 'qr_scanner_fullscreen.dart';
 import 'aviso_ubicacion_segundo_plano_screen.dart';
 import 'aviso_ubicacion_destacado_screen.dart';
@@ -2255,7 +2256,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     }
 
     await RepartidorChatMensajeSonidoService.init(_localNotifications!);
+    await TaxiLlamadaPersistenteService.instance.init(_localNotifications!);
     print('✅ Canal y sonido de chat empresa inicializados');
+    // También canal de llamadas taxi persistentes
+    print('✅ Canal taxi llamada persistente inicializado');
 
     print('✅ Notificaciones locales inicializadas');
   }
@@ -2785,7 +2789,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       // Intentar primero con los IDs válidos
       var response = await supabase
           .from(tablaNotificaciones)
-          .select('id, tipo, $campoId, leida')
+          .select('id, tipo, $campoId, leida, numero_orden, created_at')
           .inFilter(campoId, idsValidos)
           .eq('leida', false); // CRÍTICO: Solo no leídas
       
@@ -2801,7 +2805,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         try {
           final responseAlternativa = await supabase
               .from(tablaNotificaciones)
-              .select('id, tipo, $campoId, leida')
+              .select('id, tipo, $campoId, leida, numero_orden, created_at')
               .eq(campoId, _repartidorId!)
               .eq('leida', false); // CRÍTICO: Solo no leídas
           
@@ -2865,12 +2869,68 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
       if (!_hidratadoPushAlInicio && _repartidorId != null) {
         _hidratadoPushAlInicio = true;
+        final idsSinLlamada = <String>{};
+        final taxiPendientes = <Map<String, dynamic>>[];
+        for (final n in response) {
+          final id = n['id']?.toString() ?? '';
+          if (id.isEmpty) continue;
+          final tipo = n['tipo']?.toString() ?? '';
+          if (RepartidorNotificacionTipos.tiposTaxiViaje.contains(tipo)) {
+            taxiPendientes.add(Map<String, dynamic>.from(n));
+          } else {
+            idsSinLlamada.add(id);
+          }
+        }
+        // Otras notificaciones: no repetir push al reiniciar.
         await RepartidorNotificacionesPushService.instance
-            .marcarExistentesSinPush(idsNoLeidas);
-        _notificacionesProcesadas.addAll(idsNoLeidas);
+            .marcarExistentesSinPush(idsSinLlamada);
+        _notificacionesProcesadas.addAll(idsSinLlamada);
         print(
-          '📲 Hidratadas ${idsNoLeidas.length} notificaciones pendientes (sin repetir push al reiniciar)',
+          '📲 Hidratadas ${idsSinLlamada.length} notificaciones (sin push); '
+          'taxi pendientes: ${taxiPendientes.length}',
         );
+
+        // Si había viajes taxi sin aceptar (app cerrada / sin Realtime),
+        // abrir modal estilo llamada con el más reciente.
+        if (mounted && taxiPendientes.isNotEmpty) {
+          taxiPendientes.sort((a, b) {
+            final ca = a['created_at']?.toString() ?? '';
+            final cb = b['created_at']?.toString() ?? '';
+            return cb.compareTo(ca);
+          });
+          final n = taxiPendientes.first;
+          final solicitudId = (n['numero_orden']?.toString() ?? '').trim();
+          final notificacionId = (n['id']?.toString() ?? '').trim();
+          if (solicitudId.isNotEmpty) {
+            final acepto =
+                await TaxiIncomingCallDialog.show(context, solicitudId);
+            if (notificacionId.isNotEmpty) {
+              await RepartidorNotificacionesPushService.instance
+                  .marcarPushMostrado(notificacionId);
+              _notificacionesProcesadas.add(notificacionId);
+            }
+            // Marcar el resto de taxi como ya vistas para no spamear.
+            for (final extra in taxiPendientes.skip(1)) {
+              final eid = extra['id']?.toString() ?? '';
+              if (eid.isEmpty) continue;
+              await RepartidorNotificacionesPushService.instance
+                  .marcarPushMostrado(eid);
+              _notificacionesProcesadas.add(eid);
+            }
+            if (acepto == true && mounted) {
+              final oferta = await TaxiChoferService.instance
+                  .detalleOferta(solicitudId);
+              if (oferta != null && mounted) {
+                await Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) =>
+                        TaxiNavegacionChoferScreen(oferta: oferta),
+                  ),
+                );
+              }
+            }
+          }
+        }
       }
       
       if (mounted) {

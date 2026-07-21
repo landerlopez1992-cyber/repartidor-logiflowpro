@@ -16,6 +16,9 @@ import '../screens/chat_repartidor_lista_screen.dart';
 import '../screens/chat_soporte_filtrado_screen.dart';
 import '../screens/detalle_orden_screen.dart';
 import '../screens/historial_pagos_completo_screen.dart';
+import '../screens/taxi_incoming_call_dialog.dart';
+import '../constants/repartidor_notificacion_tipos.dart';
+import 'taxi_llamada_persistente_service.dart';
 
 /// Push FCM para la app Repartidor (app cerrada / background).
 class FirebaseMessagingService {
@@ -207,6 +210,14 @@ class FirebaseMessagingService {
 
   void _setupMessageHandlers() {
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      final tipo = (message.data['tipo'] ?? message.data['type'] ?? '')
+          .toString()
+          .trim();
+      // Taxi: abrir modal tipo llamada de inmediato (foreground).
+      if (RepartidorNotificacionTipos.tiposTaxiViaje.contains(tipo)) {
+        unawaited(handleRemoteMessage(message));
+        return;
+      }
       unawaited(_showLocalFromRemote(message));
     });
 
@@ -316,6 +327,25 @@ class FirebaseMessagingService {
     }
 
     final t = tipo.toUpperCase();
+    if (RepartidorNotificacionTipos.tiposTaxiViaje.contains(tipo) ||
+        t == 'TAXI_VIAJE') {
+      final solicitudId =
+          numeroOrden.isNotEmpty ? numeroOrden : ordenId;
+      if (solicitudId.isEmpty) return;
+      // Alerta persistente (ringtone + notif ongoing) + modal.
+      unawaited(
+        TaxiLlamadaPersistenteService.instance.iniciar(
+          solicitudId: solicitudId,
+          titulo: 'Viaje de taxi entrante',
+          mensaje:
+              'Acepta o rechaza. La alerta sigue hasta que respondas o otro socio tome el viaje.',
+        ),
+      );
+      final nav = RepartidorNavigator.state;
+      if (nav == null) return;
+      await TaxiIncomingCallDialog.show(nav.context, solicitudId);
+      return;
+    }
     if (t == 'NUEVA_ORDEN' ||
         t == 'ORDEN_NUEVA' ||
         tipo == 'nueva_orden' ||
@@ -454,5 +484,43 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       await Firebase.initializeApp();
     }
   } catch (_) {}
+
+  final tipo = (message.data['tipo'] ?? message.data['type'] ?? '')
+      .toString()
+      .trim();
+  final solicitudId = (message.data['numero_orden'] ??
+          message.data['orden_id'] ??
+          '')
+      .toString()
+      .trim();
+
+  if (RepartidorNotificacionTipos.tiposTaxiViaje.contains(tipo) &&
+      solicitudId.isNotEmpty) {
+    try {
+      final plugin = FlutterLocalNotificationsPlugin();
+      const androidInit =
+          AndroidInitializationSettings('@mipmap/ic_launcher');
+      const iosInit = DarwinInitializationSettings();
+      await plugin.initialize(
+        const InitializationSettings(android: androidInit, iOS: iosInit),
+      );
+      await TaxiLlamadaPersistenteService.instance.init(plugin);
+      final titulo = message.notification?.title ??
+          message.data['titulo']?.toString() ??
+          'Viaje de taxi entrante';
+      final cuerpo = message.notification?.body ??
+          message.data['mensaje']?.toString() ??
+          'Toca para aceptar o rechazar. La alerta no se quita sola.';
+      await TaxiLlamadaPersistenteService.instance
+          .mostrarSoloNotificacionPersistente(
+        solicitudId: solicitudId,
+        titulo: titulo,
+        mensaje: cuerpo,
+      );
+    } catch (e) {
+      print('⚠️ Background taxi persistente: $e');
+    }
+  }
+
   print('📱 Push repartidor background: ${message.messageId}');
 }
