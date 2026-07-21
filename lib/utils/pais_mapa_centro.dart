@@ -11,9 +11,16 @@ class PaisMapaCentro {
     final n = (paisNombre ?? 'Cuba').toLowerCase().trim();
 
     if (n.contains('cuba')) {
+      // Interior (cerca de Santa Clara): el centro anterior 21.5,-79.5 caía en el mar.
       return const PaisMapaCentro(
-        center: LatLng(21.5, -79.5),
-        zoom: 6.2,
+        center: LatLng(22.25, -79.55),
+        zoom: 6.4,
+      );
+    }
+    if (n.contains('jamaica')) {
+      return const PaisMapaCentro(
+        center: LatLng(18.15, -77.30),
+        zoom: 8.0,
       );
     }
     if (n.contains('méxico') || n.contains('mexico')) {
@@ -107,9 +114,9 @@ class PaisMapaCentro {
       );
     }
 
-    // Fallback: vista regional Caribe / LatAm
+    // Fallback: interior de Cuba (tierra), no el golfo.
     return const PaisMapaCentro(
-      center: LatLng(21.5, -79.5),
+      center: LatLng(22.25, -79.55),
       zoom: 5.5,
     );
   }

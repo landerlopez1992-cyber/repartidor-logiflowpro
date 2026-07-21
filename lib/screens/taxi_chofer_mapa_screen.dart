@@ -10,6 +10,7 @@ import '../services/paises_service.dart';
 import '../services/taxi_buscando_prefs.dart';
 import '../services/taxi_buscando_sonido_service.dart';
 import '../services/taxi_tarifas_chofer_service.dart';
+import '../services/taxi_ubicacion_matching_service.dart';
 import '../utils/pais_mapa_centro.dart';
 import '../utils/taxi_nearby_fleet_util.dart';
 import '../widgets/taxi_uber_map_car.dart';
@@ -45,6 +46,7 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
   bool _cargando = true;
   StreamSubscription<Position>? _posSub;
   Timer? _fleetTimer;
+  Timer? _pubGpsTimer;
   List<LatLng> _nearbyCars = const [];
   int _fleetSeed = 0;
 
@@ -86,19 +88,22 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
     setState(() {
       _pais = pais;
       _vista = vista;
+      // Por ahora el auto principal siempre en el centro del mapa (tierra).
+      _yo = vista.center;
       _buscando = buscando;
       _cargando = false;
       _nearbyCars = TaxiNearbyFleetUtil.around(
         center: vista.center,
-        count: 6,
+        count: 5,
         seed: pais.hashCode,
+        maxDistM: 220,
       );
     });
     widget.onBuscandoChanged?.call(buscando);
     _startFleetAnim();
     if (_buscando) {
       _radar.repeat();
-      unawaited(_iniciarGps());
+      unawaited(_iniciarGpsMatching());
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -122,18 +127,36 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
     });
   }
 
-  Future<void> _iniciarGps() async {
+  void _pararPublicacionGps() {
+    _pubGpsTimer?.cancel();
+    _pubGpsTimer = null;
+  }
+
+  void _iniciarPublicacionGpsPeriodica() {
+    _pararPublicacionGps();
+    // Matching usa GPS ≤20 min; refresco cada 45s.
+    _pubGpsTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+      unawaited(_publicarGpsMatchingSilencioso());
+    });
+  }
+
+  Future<void> _publicarGpsMatchingSilencioso() async {
     try {
-      var perm = await Geolocator.checkPermission();
-      if (perm == LocationPermission.denied) {
-        perm = await Geolocator.requestPermission();
-      }
-      if (perm == LocationPermission.denied ||
-          perm == LocationPermission.deniedForever) {
-        return;
-      }
-      final pos = await Geolocator.getCurrentPosition();
-      if (!mounted) return;
+      final pos = await TaxiUbicacionMatchingService.instance.leerPosicion();
+      if (pos == null) return;
+      await TaxiUbicacionMatchingService.instance.publicarPosicion(pos);
+      if (!mounted || !_buscando) return;
+      setState(() => _yo = LatLng(pos.latitude, pos.longitude));
+    } catch (_) {}
+  }
+
+  /// GPS real → BD (matching). El pin del mapa sigue tu ubicación al buscar.
+  Future<({bool ok, String? err})> _iniciarGpsMatching() async {
+    try {
+      final pub = await TaxiUbicacionMatchingService.instance.publicarAhora();
+      if (!pub.ok) return (ok: false, err: pub.err);
+      final pos = pub.pos!;
+      if (!mounted) return (ok: true, err: null);
       final yo = LatLng(pos.latitude, pos.longitude);
       setState(() {
         _yo = yo;
@@ -146,6 +169,7 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
       try {
         _map.move(yo, 14);
       } catch (_) {}
+      _iniciarPublicacionGpsPeriodica();
       _posSub?.cancel();
       _posSub = Geolocator.getPositionStream(
         locationSettings: const LocationSettings(
@@ -155,13 +179,20 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
       ).listen((p) {
         if (!mounted) return;
         setState(() => _yo = LatLng(p.latitude, p.longitude));
+        if (_buscando) {
+          unawaited(
+            TaxiUbicacionMatchingService.instance.publicarPosicion(p),
+          );
+        }
       });
-    } catch (_) {}
+      return (ok: true, err: null);
+    } catch (_) {
+      return (ok: false, err: 'No se pudo activar la ubicación.');
+    }
   }
 
   Future<void> _toggleBuscando() async {
     final next = !_buscando;
-    // Sonido primero y await (no unawaited): garantiza init del player + asset.
     try {
       if (next) {
         await TaxiBuscandoSonidoService.alActivar();
@@ -172,11 +203,26 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
       debugPrint('⚠️ Sonido buscando viajes: $e');
     }
     if (next) {
-      // Guardar ya en local para que sobreviva reinicio aunque falle la red.
+      final gps = await _iniciarGpsMatching();
+      if (!gps.ok) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              gps.err ?? 'Activa la ubicación para buscar viajes.',
+            ),
+            backgroundColor: AppColors.error,
+          ),
+        );
+        return;
+      }
       await TaxiBuscandoPrefs.setActivo(true);
       final res = await TaxiTarifasChoferService.instance.setDisponible(true);
       if (!res.ok) {
         await TaxiBuscandoPrefs.setActivo(false);
+        _pararPublicacionGps();
+        await _posSub?.cancel();
+        _posSub = null;
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -187,16 +233,15 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
         return;
       }
     } else {
-      // Solo se desactiva cuando el socio lo apaga explícitamente.
       await TaxiBuscandoPrefs.setActivo(false);
       await TaxiTarifasChoferService.instance.setDisponible(false);
+      _pararPublicacionGps();
     }
     if (!mounted) return;
     setState(() => _buscando = next);
     widget.onBuscandoChanged?.call(next);
     if (next) {
       _radar.repeat();
-      await _iniciarGps();
     } else {
       _radar.stop();
       _radar.reset();
@@ -209,6 +254,7 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
   void dispose() {
     _posSub?.cancel();
     _fleetTimer?.cancel();
+    _pararPublicacionGps();
     _radar.dispose();
     super.dispose();
   }

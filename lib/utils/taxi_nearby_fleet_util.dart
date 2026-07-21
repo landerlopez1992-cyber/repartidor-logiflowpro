@@ -10,12 +10,14 @@ class TaxiNearbyFleetUtil {
     required LatLng center,
     int count = 6,
     int seed = 7,
+    double maxDistM = 280,
   }) {
     final rng = math.Random(seed);
     final out = <LatLng>[];
+    final maxD = maxDistM.clamp(40.0, 800.0);
     for (var i = 0; i < count; i++) {
       final bearing = rng.nextDouble() * 2 * math.pi;
-      final distM = 90 + rng.nextDouble() * 380;
+      final distM = 40 + rng.nextDouble() * (maxD - 40);
       out.add(_offset(center, distM, bearing));
     }
     return out;

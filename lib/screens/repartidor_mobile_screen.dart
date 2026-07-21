@@ -158,6 +158,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   /// Modo «Buscando viajes» taxi activo (persistente).
   bool _taxiBuscandoActivo = false;
 
+  /// Socio taxi operativo: tarifa configurada en Ajustes de taxis (Perfil).
+  bool _taxiSocioConfigurado = false;
+
   /// Pestaña home: false = Repartidor (órdenes), true = Viajes (taxi).
   bool _pestanaHomeViajes = false;
   
@@ -310,6 +313,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         TaxiTarifasChoferService.instance.reafirmarDisponibleSiActivoLocal(),
       );
       unawaited(_refrescarTaxiBuscandoActivo());
+      unawaited(_refrescarTaxiSocioConfigurado());
       unawaited(_abrirViajeTaxiActivoSiHay());
       _suscribirseANotificaciones();
       _suscribirseANotificacionesOrdenes();
@@ -336,6 +340,20 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       if (!mounted) return;
       if (local != _taxiBuscandoActivo) {
         setState(() => _taxiBuscandoActivo = local);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _refrescarTaxiSocioConfigurado() async {
+    try {
+      final t = await TaxiTarifasChoferService.instance.get();
+      if (!mounted) return;
+      if (t.configurado != _taxiSocioConfigurado) {
+        setState(() => _taxiSocioConfigurado = t.configurado);
+      }
+      // Sin tarifa: no permanecer en pestaña Viajes.
+      if (!t.configurado && _pestanaHomeViajes) {
+        setState(() => _pestanaHomeViajes = false);
       }
     } catch (_) {}
   }
@@ -4138,7 +4156,14 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       required bool selected,
       required VoidCallback onTap,
       bool showDot = false,
+      bool enabled = true,
     }) {
+      final colorIcon = !enabled
+          ? const Color(0xFF6B7280).withValues(alpha: 0.55)
+          : selected
+              ? const Color(0xFFECEFF1)
+              : const Color(0xFF9CA3AF);
+      final colorText = colorIcon;
       return Expanded(
         child: Material(
           color: Colors.transparent,
@@ -4165,11 +4190,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                       Icon(
                         icon,
                         size: 15,
-                        color: selected
-                            ? const Color(0xFFECEFF1)
-                            : const Color(0xFF9CA3AF),
+                        color: colorIcon,
                       ),
-                      if (showDot)
+                      if (showDot && enabled)
                         Positioned(
                           right: -3,
                           top: -3,
@@ -4192,9 +4215,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   Text(
                     label,
                     style: TextStyle(
-                      color: selected
-                          ? const Color(0xFFECEFF1)
-                          : const Color(0xFF9CA3AF),
+                      color: colorText,
                       fontSize: 12.5,
                       fontWeight:
                           selected ? FontWeight.w700 : FontWeight.w500,
@@ -4243,7 +4264,21 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   label: 'Viajes',
                   icon: Icons.local_taxi_outlined,
                   selected: _pestanaHomeViajes,
-                  onTap: () {
+                  enabled: _taxiSocioConfigurado,
+                  onTap: () async {
+                    await _refrescarTaxiSocioConfigurado();
+                    if (!mounted) return;
+                    if (!_taxiSocioConfigurado) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Configura «Ajustes de taxis» en tu Perfil para activar Viajes.',
+                          ),
+                          backgroundColor: Color(0xFF37474F),
+                        ),
+                      );
+                      return;
+                    }
                     if (!_pestanaHomeViajes) {
                       setState(() => _pestanaHomeViajes = true);
                     }
