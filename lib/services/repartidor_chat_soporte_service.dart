@@ -100,4 +100,87 @@ class RepartidorChatSoporteService {
     if (conversacionId == null || conversacionId.isEmpty) return false;
     return misConversaciones.contains(conversacionId);
   }
+
+  /// Crea o reabre la conversación del repartidor con su empresa (tenant)
+  /// y la pone en cola de atención humana.
+  static Future<String> obtenerOCrearConversacionEmpresa() async {
+    final user = supabase.auth.currentUser;
+    if (user == null) {
+      throw Exception('Sesión no válida');
+    }
+
+    String? tenantId;
+    try {
+      final userData = await supabase
+          .from('usuarios')
+          .select('tenant_id')
+          .eq('auth_id', user.id)
+          .maybeSingle();
+      tenantId = userData?['tenant_id']?.toString();
+    } catch (_) {}
+
+    if (tenantId == null || tenantId.isEmpty) {
+      throw Exception('No se encontró la empresa de tu cuenta');
+    }
+
+    var queryAbierta = supabase
+        .from('conversaciones_soporte')
+        .select('id')
+        .eq('repartidor_auth_id', user.id)
+        .eq('tenant_id', tenantId)
+        .eq('estado', 'ABIERTA')
+        .limit(1);
+
+    final abiertas = await queryAbierta;
+    if (abiertas.isNotEmpty) {
+      final id = abiertas[0]['id']?.toString();
+      if (id != null && id.isNotEmpty) {
+        try {
+          await supabase.from('conversaciones_soporte').update({
+            'esperando_aceptacion_agente': true,
+          }).eq('id', id);
+        } catch (_) {}
+        return id;
+      }
+    }
+
+    // Reabrir la más reciente cerrada del mismo tenant, si existe.
+    final cerradas = await supabase
+        .from('conversaciones_soporte')
+        .select('id')
+        .eq('repartidor_auth_id', user.id)
+        .eq('tenant_id', tenantId)
+        .order('updated_at', ascending: false)
+        .limit(1);
+
+    if (cerradas.isNotEmpty) {
+      final id = cerradas[0]['id']?.toString();
+      if (id != null && id.isNotEmpty) {
+        await supabase.from('conversaciones_soporte').update({
+          'estado': 'ABIERTA',
+          'esperando_aceptacion_agente': true,
+          'agente_atiende_auth_id': null,
+          'atencion_finalizada_at': null,
+        }).eq('id', id);
+        return id;
+      }
+    }
+
+    final nueva = await supabase
+        .from('conversaciones_soporte')
+        .insert({
+          'repartidor_auth_id': user.id,
+          'tenant_id': tenantId,
+          'estado': 'ABIERTA',
+          'esperando_aceptacion_agente': true,
+        })
+        .select('id')
+        .single();
+
+    final id = nueva['id']?.toString();
+    if (id == null || id.isEmpty) {
+      throw Exception('No se pudo crear la conversación');
+    }
+    return id;
+  }
 }

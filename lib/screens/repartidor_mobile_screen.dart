@@ -39,6 +39,7 @@ import 'taxi_navegacion_chofer_screen.dart';
 import 'taxi_chofer_mapa_screen.dart';
 import '../services/taxi_chofer_service.dart';
 import '../services/taxi_tarifas_chofer_service.dart';
+import '../services/taxi_buscando_prefs.dart';
 import '../services/taxi_llamada_persistente_service.dart';
 import 'qr_scanner_fullscreen.dart';
 import 'aviso_ubicacion_segundo_plano_screen.dart';
@@ -153,6 +154,12 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   // Saldo del repartidor (pagos aceptados)
   double _saldo = 0.0;
   String _monedaSaldo = 'USD';
+
+  /// Modo «Buscando viajes» taxi activo (persistente).
+  bool _taxiBuscandoActivo = false;
+
+  /// Pestaña home: false = Repartidor (órdenes), true = Viajes (taxi).
+  bool _pestanaHomeViajes = false;
   
   // Cache para órdenes filtradas (evitar recalcular en cada rebuild)
   List<Orden>? _ordenesFiltradasCache;
@@ -302,6 +309,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       unawaited(
         TaxiTarifasChoferService.instance.reafirmarDisponibleSiActivoLocal(),
       );
+      unawaited(_refrescarTaxiBuscandoActivo());
       unawaited(_abrirViajeTaxiActivoSiHay());
       _suscribirseANotificaciones();
       _suscribirseANotificacionesOrdenes();
@@ -320,6 +328,16 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         await RepartidorActualizacionForzadaService.instance.consultarDesdeConfig();
     if (!mounted) return;
     setState(() => _actualizacionForzada = estado);
+  }
+
+  Future<void> _refrescarTaxiBuscandoActivo() async {
+    try {
+      final local = await TaxiBuscandoPrefs.esActivo();
+      if (!mounted) return;
+      if (local != _taxiBuscandoActivo) {
+        setState(() => _taxiBuscandoActivo = local);
+      }
+    } catch (_) {}
   }
 
   /// Si hay carrera taxi aceptada/en curso, reabrir el mapa (p. ej. tras salir al home).
@@ -612,6 +630,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       _cargarMensajesNoLeidos();
       _cargarNotificacionesNoLeidas(); // CRÍTICO: Actualizar badge de notificaciones
       _comprobarActualizacionForzada();
+      unawaited(_refrescarTaxiBuscandoActivo());
       // CRÍTICO: Reactivar rastreo cuando la app vuelve a estar activa
       _verificarYActivarRastreo();
     } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
@@ -2294,6 +2313,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     const initSettings = InitializationSettings(
       android: androidSettings,
       iOS: iosSettings,
+      macOS: iosSettings,
     );
 
     await _localNotifications!.initialize(
@@ -3803,26 +3823,16 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             ),
             tooltip: 'Mi Perfil',
           ),
-          IconButton(
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => TaxiChoferMapaScreen(
-                    paisOperacion: _paisOperacion,
-                  ),
-                ),
-              );
-            },
-            icon: const Icon(
-              Icons.local_taxi,
-              color: Colors.white,
-              size: 26,
-            ),
-            tooltip: 'Taxis',
-          ),
         ],
       ),
-      body: RefreshIndicator(
+      body: Column(
+        children: [
+          _buildPestanasHomeRepartidorViajes(),
+          Expanded(
+            child: IndexedStack(
+              index: _pestanaHomeViajes ? 1 : 0,
+              children: [
+                RefreshIndicator(
         onRefresh: () async {
           print('🔄 Pull-to-refresh activado...');
           
@@ -4096,6 +4106,19 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         ],
         ),
       ),
+                TaxiChoferMapaScreen(
+                  embedded: true,
+                  paisOperacion: _paisOperacion,
+                  onBuscandoChanged: (activo) {
+                    if (!mounted) return;
+                    setState(() => _taxiBuscandoActivo = activo);
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
         ),
         if (_actualizacionForzada != null)
           ActualizacionForzadaOverlay(
@@ -4105,6 +4128,132 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             },
           ),
       ],
+    );
+  }
+
+  Widget _buildPestanasHomeRepartidorViajes() {
+    Widget chip({
+      required String label,
+      required IconData icon,
+      required bool selected,
+      required VoidCallback onTap,
+      bool showDot = false,
+    }) {
+      return Expanded(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(16),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              decoration: BoxDecoration(
+                color: selected
+                    ? const Color(0xFF37474F)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Icon(
+                        icon,
+                        size: 15,
+                        color: selected
+                            ? const Color(0xFFECEFF1)
+                            : const Color(0xFF9CA3AF),
+                      ),
+                      if (showDot)
+                        Positioned(
+                          right: -3,
+                          top: -3,
+                          child: Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF4CAF50),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: const Color(0xFF1E232E),
+                                width: 1.5,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: selected
+                          ? const Color(0xFFECEFF1)
+                          : const Color(0xFF9CA3AF),
+                      fontSize: 12.5,
+                      fontWeight:
+                          selected ? FontWeight.w700 : FontWeight.w500,
+                      height: 1.1,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      color: AppColors.darkBg,
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Container(
+            padding: const EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E232E),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.08),
+              ),
+            ),
+            child: Row(
+              children: [
+                chip(
+                  label: 'Repartidor',
+                  icon: Icons.local_shipping_outlined,
+                  selected: !_pestanaHomeViajes,
+                  // Indicador online taxi (fuera de pantalla Viajes).
+                  showDot: _taxiBuscandoActivo,
+                  onTap: () {
+                    if (_pestanaHomeViajes) {
+                      setState(() => _pestanaHomeViajes = false);
+                    }
+                  },
+                ),
+                chip(
+                  label: 'Viajes',
+                  icon: Icons.local_taxi_outlined,
+                  selected: _pestanaHomeViajes,
+                  onTap: () {
+                    if (!_pestanaHomeViajes) {
+                      setState(() => _pestanaHomeViajes = true);
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 

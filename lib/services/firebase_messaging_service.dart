@@ -80,7 +80,11 @@ class FirebaseMessagingService {
       requestSoundPermission: true,
     );
     await _local.initialize(
-      const InitializationSettings(android: androidInit, iOS: iosInit),
+      const InitializationSettings(
+        android: androidInit,
+        iOS: iosInit,
+        macOS: iosInit,
+      ),
       onDidReceiveNotificationResponse: (response) {
         unawaited(handlePayload(response.payload));
       },
@@ -494,7 +498,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
           AndroidInitializationSettings('@mipmap/ic_launcher');
       const iosInit = DarwinInitializationSettings();
       await plugin.initialize(
-        const InitializationSettings(android: androidInit, iOS: iosInit),
+        const InitializationSettings(
+          android: androidInit,
+          iOS: iosInit,
+          macOS: iosInit,
+        ),
       );
       await TaxiLlamadaPersistenteService.instance.init(plugin);
       final titulo = message.notification?.title ??

@@ -137,6 +137,25 @@ class RepartidorHistorialPagoService {
     int meses = 6,
     int limite = 100,
   }) async {
+    final todos = await cargarMovimientosSaldo(
+      repartidorId,
+      meses: meses,
+      limite: limite,
+    );
+    return todos.where((m) {
+      final monto = m['monto'];
+      final v = monto is num ? monto.toDouble() : double.tryParse('$monto') ?? 0;
+      final tipo = m['tipo']?.toString() ?? '';
+      return v > 0 || tipo.startsWith('acreditacion') || tipo.startsWith('reintegro');
+    }).toList();
+  }
+
+  /// Todos los movimientos (créditos y débitos de nómina) para el desglose.
+  static Future<List<Map<String, dynamic>>> cargarMovimientosSaldo(
+    String repartidorId, {
+    int meses = 6,
+    int limite = 150,
+  }) async {
     final desde = DateTime.now().subtract(Duration(days: meses * 31));
     try {
       final rows = await supabase
@@ -144,13 +163,39 @@ class RepartidorHistorialPagoService {
           .select('id, tipo, monto, moneda, detalle, created_at, orden_id')
           .eq('repartidor_id', repartidorId)
           .gte('created_at', desde.toIso8601String())
-          .gt('monto', 0)
           .order('created_at', ascending: false)
           .limit(limite);
       return List<Map<String, dynamic>>.from(rows);
     } catch (e) {
       print('⚠️ Movimientos saldo no disponibles: $e');
       return [];
+    }
+  }
+
+  static bool esDebito(String tipo, double monto) {
+    if (monto < 0) return true;
+    return tipo.startsWith('debito');
+  }
+
+  static String etiquetaMovimiento(String tipo, String detalle) {
+    switch (tipo) {
+      case 'acreditacion_orden':
+        return detalle.trim().isNotEmpty ? detalle.trim() : 'Pedido entregado';
+      case 'acreditacion_distancia':
+        return detalle.trim().isNotEmpty ? detalle.trim() : 'Pago por recorrido';
+      case 'acreditacion_dia':
+        return detalle.trim().isNotEmpty ? detalle.trim() : 'Pago por día';
+      case 'debito_solicitud':
+        return 'Retiro a nómina (solicitud)';
+      case 'debito_nomina_aceptada':
+        return 'Descuento por nómina aceptada';
+      case 'reintegro_rechazo':
+        return 'Reintegro (nómina rechazada)';
+      case 'reintegro_pendiente_migracion':
+        return 'Reintegro de saldo';
+      default:
+        if (detalle.trim().isNotEmpty) return detalle.trim();
+        return tipo.isEmpty ? 'Movimiento' : tipo.replaceAll('_', ' ');
     }
   }
 }

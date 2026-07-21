@@ -22,6 +22,7 @@ import '../services/repartidor_solicitud_pago_service.dart';
 import '../widgets/repartidor_solicitud_pago_dialogs.dart';
 import '../services/repartidor_historial_pago_service.dart';
 import '../widgets/historial_pago_detalle_card.dart';
+import '../widgets/repartidor_saldo_desglose_modal.dart';
 import '../utils/repartidor_master_util.dart';
 import '../widgets/repartidor_master_badge.dart';
 import '../services/paises_service.dart';
@@ -2114,36 +2115,129 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
 
   Widget _buildResumenPagoChip() {
     final p = _previewPago;
-    String texto;
-    Color color = const Color(0xFF4CAF50);
-    if (p?.esPorDistancia == true) {
-      final u = p!.unidadEsMilla ? 'milla' : 'km';
-      texto = 'Pago por recorrido · ${p.tarifa.toStringAsFixed(2)} ${p.moneda}/$u';
-      color = const Color(0xFFFF9800);
-    } else if (p?.esPorDia == true) {
-      final lab = p!.diasLaborablesEtiqueta;
-      texto = lab.isNotEmpty
-          ? '${p.diasDesdeUltimaNomina} días laborables ($lab)'
-          : '${p.diasDesdeUltimaNomina} días laborables';
-      color = const Color(0xFFFF9800);
-    } else {
-      texto = 'Saldo ${_saldo.toStringAsFixed(2)} $_monedaSaldo';
-      if (_saldoPendienteSync > 0) {
-        texto +=
-            ' (+${_saldoPendienteSync.toStringAsFixed(2)} por sincronizar)';
+    // Por recorrido / por día: chip informativo (sin saldo acumulado clásico).
+    if (p?.esPorDistancia == true || p?.esPorDia == true) {
+      String texto;
+      if (p!.esPorDistancia) {
+        final u = p.unidadEsMilla ? 'milla' : 'km';
+        texto =
+            'Pago por recorrido · ${p.tarifa.toStringAsFixed(2)} ${p.moneda}/$u';
+      } else {
+        final lab = p.diasLaborablesEtiqueta;
+        texto = lab.isNotEmpty
+            ? '${p.diasDesdeUltimaNomina} días laborables ($lab)'
+            : '${p.diasDesdeUltimaNomina} días laborables';
       }
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFF9800).withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFFF9800), width: 1.3),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.route_rounded, color: Color(0xFFFF9800), size: 20),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                texto,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFFFF9800),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
     }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color, width: 1.5),
-      ),
-      child: Text(
-        texto,
-        textAlign: TextAlign.center,
-        style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: color),
+
+    final saldoTxt = _saldo.toStringAsFixed(2);
+    final pendiente = _saldoPendienteSync > 0
+        ? ' · +${_saldoPendienteSync.toStringAsFixed(2)} sync'
+        : '';
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          if (_repartidorId == null || _repartidorId!.isEmpty) return;
+          showRepartidorSaldoDesgloseModal(
+            context,
+            repartidorId: _repartidorId!,
+            saldoActual: _saldo,
+            moneda: _monedaSaldo,
+          );
+        },
+        borderRadius: BorderRadius.circular(16),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          decoration: BoxDecoration(
+            color: const Color(0xFF4CAF50).withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFF4CAF50), width: 1.4),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF4CAF50).withValues(alpha: 0.12),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF4CAF50).withValues(alpha: 0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.account_balance_wallet_rounded,
+                  color: Color(0xFF4CAF50),
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Saldo disponible',
+                      style: TextStyle(
+                        color: Color(0xFF9CA3AF),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      '$saldoTxt $_monedaSaldo$pendiente',
+                      style: const TextStyle(
+                        color: Color(0xFF4CAF50),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Color(0xFF4CAF50),
+                size: 22,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

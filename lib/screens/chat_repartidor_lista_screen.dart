@@ -6,6 +6,7 @@ import '../services/repartidor_chat_soporte_service.dart';
 import '../services/repartidor_pantallas_offline_service.dart';
 import '../services/sync_service.dart';
 import '../services/network_timeout.dart';
+import '../utils/mensaje_error_operacion.dart';
 import 'chat_soporte_filtrado_screen.dart';
 
 class ChatRepartidorListaScreen extends StatefulWidget {
@@ -302,10 +303,43 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
       } else if (conversacionesAnteriores.isNotEmpty) {
         if (mounted) setState(() => _cargando = false);
       } else {
+        // Hilo iniciado por el repartidor (aún sin respuesta de la empresa).
+        final List<Map<String, dynamic>> sintetico = [];
+        if (_conversacionId != null && user != null) {
+          String preview = 'Toca para escribir a tu empresa';
+          String fecha = DateTime.now().toIso8601String();
+          for (final raw in mensajes) {
+            if (raw is! Map) continue;
+            final m = Map<String, dynamic>.from(raw);
+            if (m['remitente_auth_id'] != user.id) continue;
+            final p = RepartidorChatSoporteService.textoPreview(m);
+            if (p.isEmpty) continue;
+            preview = p;
+            fecha = m['created_at']?.toString() ?? fecha;
+            break; // mensajes vienen desc: el primero del user es el más reciente
+          }
+          sintetico.add({
+            'remitente_auth_id': '',
+            'remitente_nombre': 'Mi empresa',
+            'remitente_rol': 'ADMINISTRADOR',
+            'remitente_foto': null,
+            'ultimo_mensaje': preview,
+            'ultimo_mensaje_fecha': fecha,
+            'mensajes_no_leidos': 0,
+            'conversacion_id': _conversacionId,
+            'modo_completo': true,
+          });
+        }
         setState(() {
-          _conversaciones = [];
+          _conversaciones = sintetico;
           _cargando = false;
         });
+        if (sintetico.isNotEmpty && user != null) {
+          await RepartidorPantallasOfflineService.guardarConversacionesChat(
+            user.id,
+            sintetico,
+          );
+        }
       }
     } catch (e) {
       print('❌ Error cargando conversaciones: $e');
@@ -529,6 +563,81 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
     );
   }
 
+  Future<void> _iniciarChatConEmpresa() async {
+    if (!SyncService().isOnline) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Necesitas conexión a internet para iniciar una conversación con tu empresa.',
+          ),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      return;
+    }
+
+    final user = supabase.auth.currentUser;
+    if (user == null) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: Color(0xFFFF9800)),
+      ),
+    );
+
+    try {
+      final convId =
+          await RepartidorChatSoporteService.obtenerOCrearConversacionEmpresa();
+      _conversacionId = convId;
+      _tenantId ??=
+          await RepartidorPantallasOfflineService.cargarTenantIdRepartidor(
+        user.id,
+      );
+      await RepartidorPantallasOfflineService.guardarMetaChat(
+        user.id,
+        conversacionId: convId,
+        tenantId: _tenantId,
+      );
+      if (_channelMensajes == null) {
+        _suscribirseAMensajes();
+      }
+
+      if (!mounted) return;
+      Navigator.of(context).pop(); // loading
+
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ChatSoporteFiltradoScreen(
+            conversacionId: convId,
+            remitenteAuthId: '',
+            nombreRemitente: 'Mi empresa',
+            rolRemitente: 'ADMINISTRADOR',
+            modoConversacionCompleta: true,
+          ),
+        ),
+      );
+      if (mounted) {
+        await _cargarDatos();
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // loading
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'No se pudo iniciar el chat: ${mensajeErrorOperacion(e)}',
+            ),
+            backgroundColor: const Color(0xFFDC2626),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -547,46 +656,81 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.of(context).pop(),
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Escribir a mi empresa',
+            onPressed: _cargando ? null : _iniciarChatConEmpresa,
+            icon: const Icon(Icons.edit, color: Colors.white),
+          ),
+        ],
       ),
+      floatingActionButton: _cargando
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _iniciarChatConEmpresa,
+              backgroundColor: const Color(0xFFFF9800),
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.chat),
+              label: const Text('Escribir a mi empresa'),
+            ),
       body: _cargando
           ? const Center(child: CircularProgressIndicator())
           : _conversaciones.isEmpty
               ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.chat_bubble_outline,
-                        size: 80,
-                        color: AppColors.darkTextMuted.withOpacity(0.3),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'No hay conversaciones',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.darkText,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 28),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.chat_bubble_outline,
+                          size: 80,
+                          color: AppColors.darkTextMuted.withOpacity(0.3),
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        SyncService().isOnline
-                            ? 'Cuando recibas mensajes de soporte,\naparecerán aquí'
-                            : 'Sin conexión: abre el chat con internet al menos una vez\npara guardar conversaciones en el teléfono.',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: AppColors.darkTextMuted,
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Sin mensajes aún',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.darkText,
+                          ),
                         ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
+                        const SizedBox(height: 8),
+                        Text(
+                          SyncService().isOnline
+                              ? 'Si tienes una duda, escribe a tu empresa.\nUn agente te responderá por aquí.'
+                              : 'Sin conexión: abre el chat con internet al menos una vez\npara guardar conversaciones en el teléfono.',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: AppColors.darkTextMuted,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        if (SyncService().isOnline) ...[
+                          const SizedBox(height: 24),
+                          ElevatedButton.icon(
+                            onPressed: _iniciarChatConEmpresa,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFFF9800),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24,
+                                vertical: 14,
+                              ),
+                            ),
+                            icon: const Icon(Icons.support_agent),
+                            label: const Text('Escribir a mi empresa'),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
                 )
               : RefreshIndicator(
                   onRefresh: _cargarConversaciones,
                   child: ListView.builder(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
                     itemCount: _conversaciones.length +
                         (SyncService().isOnline ? 0 : 1),
                     itemBuilder: (context, index) {
@@ -620,9 +764,10 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                           SyncService().isOnline ? index : index - 1;
                       final conversacion = _conversaciones[convIndex];
                       final esAdmin = conversacion['remitente_rol'] == 'ADMINISTRADOR';
-                      final esEmpleado = conversacion['remitente_rol'] == 'EMPLEADO';
                       final mensajesNoLeidos =
                           conversacion['mensajes_no_leidos'] as int? ?? 0;
+                      final modoCompleto =
+                          conversacion['modo_completo'] == true;
 
                       final tieneNuevoMensaje =
                           _nuevosMensajes[conversacion['remitente_auth_id']] == true;
@@ -639,218 +784,106 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                                 )
                               : BorderSide.none,
                         ),
-                        color: tieneNuevoMensaje
-                            ? AppColors.primary.withOpacity(0.12)
-                            : AppColors.darkSurface,
-                        child: InkWell(
-                          onTap: () {
-                            setState(() {
-                              _nuevosMensajes.remove(conversacion['remitente_auth_id']);
-                            });
-
-                            Navigator.push(
+                        color: AppColors.darkSurface,
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          onTap: () async {
+                            _nuevosMensajes.remove(conversacion['remitente_auth_id']);
+                            await Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => ChatSoporteFiltradoScreen(
+                                builder: (_) => ChatSoporteFiltradoScreen(
                                   conversacionId: conversacion['conversacion_id'],
-                                  remitenteAuthId: conversacion['remitente_auth_id'],
-                                  nombreRemitente: conversacion['remitente_nombre'],
-                                  rolRemitente: conversacion['remitente_rol'],
+                                  remitenteAuthId:
+                                      conversacion['remitente_auth_id'] ?? '',
+                                  nombreRemitente:
+                                      conversacion['remitente_nombre'] ??
+                                          'Mi empresa',
+                                  rolRemitente:
+                                      conversacion['remitente_rol'] ??
+                                          'ADMINISTRADOR',
                                   fotoRemitente: conversacion['remitente_foto'],
+                                  modoConversacionCompleta: modoCompleto,
                                 ),
                               ),
-                            ).then((_) {
-                              _cargarConversaciones();
-                            });
+                            );
+                            if (mounted) await _cargarConversaciones();
                           },
-                          borderRadius: BorderRadius.circular(12),
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Row(
-                              children: [
-                                Stack(
-                                  clipBehavior: Clip.none,
-                                  children: [
-                                    CircleAvatar(
-                                      radius: 28,
-                                      backgroundColor: esAdmin
-                                          ? const Color(0xFF4CAF50)
-                                          : esEmpleado
-                                              ? const Color(0xFFFF9800)
-                                              : AppColors.primary,
-                                      backgroundImage: conversacion['remitente_foto'] != null &&
-                                              conversacion['remitente_foto']
-                                                  .toString()
-                                                  .isNotEmpty
-                                          ? NetworkImage(conversacion['remitente_foto'])
-                                          : null,
-                                      child: conversacion['remitente_foto'] == null ||
-                                              conversacion['remitente_foto']
-                                                  .toString()
-                                                  .isEmpty
-                                          ? Icon(
-                                              esAdmin
-                                                  ? Icons.admin_panel_settings
-                                                  : Icons.person,
-                                              size: 28,
-                                              color: Colors.white,
-                                            )
-                                          : null,
-                                    ),
-                                    if (esAdmin)
-                                      Positioned(
-                                        right: 0,
-                                        bottom: 0,
-                                        child: Container(
-                                          padding: const EdgeInsets.all(4),
-                                          decoration: const BoxDecoration(
-                                            color: Color(0xFF4CAF50),
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: const Icon(
-                                            Icons.verified,
-                                            size: 12,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                      ),
-                                    if (_nuevosMensajes[conversacion['remitente_auth_id']] ==
-                                        true)
-                                      Positioned(
-                                        right: -2,
-                                        top: -2,
-                                        child: Container(
-                                          width: 16,
-                                          height: 16,
-                                          decoration: BoxDecoration(
-                                            color: AppColors.primary,
-                                            shape: BoxShape.circle,
-                                            border: Border.all(
-                                              color: Colors.white,
-                                              width: 2.5,
-                                            ),
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: AppColors.primary.withOpacity(0.5),
-                                                blurRadius: 4,
-                                                spreadRadius: 1,
-                                              ),
-                                            ],
-                                          ),
-                                          child: const Icon(
-                                            Icons.circle,
-                                            size: 8,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: Text(
-                                              esAdmin
-                                                  ? 'Administrador'
-                                                  : conversacion['remitente_nombre'],
-                                              style: TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.w600,
-                                                color: esAdmin
-                                                    ? const Color(0xFF4CAF50)
-                                                    : esEmpleado
-                                                        ? const Color(0xFFFF9800)
-                                                        : AppColors.darkText,
-                                              ),
-                                            ),
-                                          ),
-                                          if (mensajesNoLeidos > 0)
-                                            Container(
-                                              padding: const EdgeInsets.symmetric(
-                                                horizontal: 8,
-                                                vertical: 4,
-                                              ),
-                                              decoration: BoxDecoration(
-                                                color: AppColors.primary,
-                                                borderRadius: BorderRadius.circular(12),
-                                              ),
-                                              child: Text(
-                                                mensajesNoLeidos > 99
-                                                    ? '99+'
-                                                    : '$mensajesNoLeidos',
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 12,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        () {
-                                          final t = conversacion['ultimo_mensaje']
-                                              ?.toString()
-                                              .trim();
-                                          if (t != null && t.isNotEmpty) {
-                                            return t;
-                                          }
-                                          return 'Sin mensajes';
-                                        }(),
-                                        style: const TextStyle(
-                                          fontSize: 14,
-                                          color: AppColors.darkTextMuted,
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        _formatearFecha(DateTime.parse(
-                                            conversacion['ultimo_mensaje_fecha'])),
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          color: AppColors.darkTextMuted,
-                                        ),
-                                      ),
-                                    ],
+                          leading: CircleAvatar(
+                            backgroundColor: const Color(0xFFFF9800),
+                            backgroundImage: !modoCompleto &&
+                                    conversacion['remitente_foto'] != null &&
+                                    conversacion['remitente_foto']
+                                        .toString()
+                                        .isNotEmpty
+                                ? NetworkImage(conversacion['remitente_foto'])
+                                : null,
+                            child: modoCompleto ||
+                                    conversacion['remitente_foto'] == null ||
+                                    conversacion['remitente_foto']
+                                        .toString()
+                                        .isEmpty
+                                ? Icon(
+                                    modoCompleto
+                                        ? Icons.business
+                                        : (esAdmin
+                                            ? Icons.admin_panel_settings
+                                            : Icons.person),
+                                    color: Colors.white,
+                                  )
+                                : null,
+                          ),
+                          title: Text(
+                            modoCompleto
+                                ? 'Mi empresa'
+                                : (esAdmin
+                                    ? 'Administración'
+                                    : conversacion['remitente_nombre']),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.darkText,
+                            ),
+                          ),
+                          subtitle: Text(
+                            conversacion['ultimo_mensaje']?.toString() ?? '',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.darkTextMuted,
+                              fontSize: 13,
+                            ),
+                          ),
+                          trailing: mensajesNoLeidos > 0
+                              ? Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
                                   ),
-                                ),
-                                const Icon(
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFDC2626),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    '$mensajesNoLeidos',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                )
+                              : const Icon(
                                   Icons.chevron_right,
                                   color: AppColors.darkTextMuted,
                                 ),
-                              ],
-                            ),
-                          ),
                         ),
                       );
                     },
                   ),
                 ),
     );
-  }
-
-  String _formatearFecha(DateTime fecha) {
-    final ahora = DateTime.now();
-    final diferencia = ahora.difference(fecha);
-
-    if (diferencia.inDays == 0) {
-      final hora = fecha.hour.toString().padLeft(2, '0');
-      final minuto = fecha.minute.toString().padLeft(2, '0');
-      return 'Hoy $hora:$minuto';
-    } else if (diferencia.inDays == 1) {
-      return 'Ayer';
-    } else if (diferencia.inDays < 7) {
-      return '${diferencia.inDays} días';
-    } else {
-      return '${fecha.day}/${fecha.month}/${fecha.year}';
-    }
   }
 }

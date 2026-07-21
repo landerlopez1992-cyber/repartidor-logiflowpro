@@ -8,15 +8,27 @@ import 'package:latlong2/latlong.dart';
 import '../config/app_colors.dart';
 import '../services/paises_service.dart';
 import '../services/taxi_buscando_prefs.dart';
+import '../services/taxi_buscando_sonido_service.dart';
 import '../services/taxi_tarifas_chofer_service.dart';
 import '../utils/pais_mapa_centro.dart';
 import '../utils/taxi_nearby_fleet_util.dart';
+import '../widgets/taxi_uber_map_car.dart';
 
 /// Pantalla Taxis del socio: mapa del país de operación + modo «Buscando viajes».
 class TaxiChoferMapaScreen extends StatefulWidget {
-  const TaxiChoferMapaScreen({super.key, this.paisOperacion});
+  const TaxiChoferMapaScreen({
+    super.key,
+    this.paisOperacion,
+    this.embedded = false,
+    this.onBuscandoChanged,
+  });
 
   final String? paisOperacion;
+
+  /// Si true, se embebe en el home (sin botón atrás / sin Scaffold propio).
+  final bool embedded;
+
+  final ValueChanged<bool>? onBuscandoChanged;
 
   @override
   State<TaxiChoferMapaScreen> createState() => _TaxiChoferMapaScreenState();
@@ -82,6 +94,7 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
         seed: pais.hashCode,
       );
     });
+    widget.onBuscandoChanged?.call(buscando);
     _startFleetAnim();
     if (_buscando) {
       _radar.repeat();
@@ -148,6 +161,12 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
 
   Future<void> _toggleBuscando() async {
     final next = !_buscando;
+    // Feedback inmediato al tocar (antes de red / GPS).
+    if (next) {
+      unawaited(TaxiBuscandoSonidoService.alActivar());
+    } else {
+      unawaited(TaxiBuscandoSonidoService.alDesactivar());
+    }
     if (next) {
       // Guardar ya en local para que sobreviva reinicio aunque falle la red.
       await TaxiBuscandoPrefs.setActivo(true);
@@ -170,6 +189,7 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
     }
     if (!mounted) return;
     setState(() => _buscando = next);
+    widget.onBuscandoChanged?.call(next);
     if (next) {
       _radar.repeat();
       await _iniciarGps();
@@ -191,244 +211,268 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.darkBg,
-      body: _cargando
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFFFF9800)),
-            )
-          : Stack(
-              fit: StackFit.expand,
-              children: [
-                FlutterMap(
-                  mapController: _map,
-                  options: MapOptions(
-                    initialCenter: _vista.center,
-                    initialZoom: _vista.zoom,
-                    interactionOptions: const InteractionOptions(
-                      flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+    final contenido = _cargando
+        ? const Center(
+            child: CircularProgressIndicator(color: Color(0xFFFF9800)),
+          )
+        : Stack(
+            fit: StackFit.expand,
+            children: [
+              FlutterMap(
+                mapController: _map,
+                options: MapOptions(
+                  initialCenter: _vista.center,
+                  initialZoom: _vista.zoom,
+                  minZoom: 3,
+                  maxZoom: 16,
+                  backgroundColor: const Color(0xFFE8EEF4),
+                  interactionOptions: const InteractionOptions(
+                    flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+                  ),
+                ),
+                children: [
+                  // Mismo raster Voyager que el fallback de CubaLink taxi
+                  // (sin {r}: evita warning retina / tiles distintos).
+                  TileLayer(
+                    urlTemplate:
+                        'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+                    subdomains: const ['a', 'b', 'c', 'd'],
+                    userAgentPackageName: 'com.logiflow.repartidor',
+                    maxZoom: 16,
+                    maxNativeZoom: 16,
+                    retinaMode: false,
+                  ),
+                  if (_nearbyCars.isNotEmpty)
+                    MarkerLayer(
+                      markers: [
+                        for (final c in _nearbyCars)
+                          Marker(
+                            point: c,
+                            width: 32,
+                            height: 32,
+                            child: const TaxiUberMapCar(),
+                          ),
+                      ],
+                    ),
+                  if (_yo != null)
+                    MarkerLayer(
+                      markers: [
+                        Marker(
+                          point: _yo!,
+                          width: 40,
+                          height: 40,
+                          child: const TaxiUberMapCar(size: 40),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+              // Gradiente superior suave (mapa claro)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: IgnorePointer(
+                  child: Container(
+                    height: 120,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.white.withValues(alpha: 0.72),
+                          Colors.white.withValues(alpha: 0.0),
+                        ],
+                      ),
                     ),
                   ),
-                  children: [
-                    TileLayer(
-                      urlTemplate:
-                          'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-                      subdomains: const ['a', 'b', 'c', 'd'],
-                      userAgentPackageName: 'com.logiflow.repartidor',
+                ),
+              ),
+              // Gradiente inferior
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: IgnorePointer(
+                  child: Container(
+                    height: 280,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [
+                          AppColors.darkBg.withValues(alpha: 0.92),
+                          AppColors.darkBg.withValues(alpha: 0.45),
+                          AppColors.darkBg.withValues(alpha: 0.0),
+                        ],
+                      ),
                     ),
-                    if (_nearbyCars.isNotEmpty)
-                      MarkerLayer(
-                        markers: [
-                          for (final c in _nearbyCars)
-                            Marker(
-                              point: c,
-                              width: 30,
-                              height: 30,
+                  ),
+                ),
+              ),
+              SafeArea(
+                top: !widget.embedded,
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        widget.embedded ? 16 : 8,
+                        widget.embedded ? 8 : 4,
+                        16,
+                        0,
+                      ),
+                      child: Row(
+                        children: [
+                          if (!widget.embedded) ...[
+                            Material(
+                              color: Colors.white,
+                              elevation: 4,
+                              shadowColor: Colors.black38,
+                              shape: const CircleBorder(),
+                              child: InkWell(
+                                customBorder: const CircleBorder(),
+                                onTap: () => Navigator.of(context).pop(),
+                                child: const SizedBox(
+                                  width: 44,
+                                  height: 44,
+                                  child: Icon(
+                                    Icons.arrow_back,
+                                    color: Color(0xFF2C2C2C),
+                                    size: 22,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                          ],
+                          Expanded(
+                            child: Align(
+                              alignment: Alignment.centerLeft,
                               child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
                                 decoration: BoxDecoration(
                                   color: Colors.white,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: const Color(0xFF37474F),
-                                    width: 1.5,
-                                  ),
+                                  borderRadius: BorderRadius.circular(12),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Colors.black.withValues(alpha: 0.18),
-                                      blurRadius: 4,
-                                      offset: const Offset(0, 1),
+                                      color:
+                                          Colors.black.withValues(alpha: 0.18),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 2),
                                     ),
                                   ],
                                 ),
-                                alignment: Alignment.center,
-                                child: const Text('🚗', style: TextStyle(fontSize: 14)),
+                                child: Text(
+                                  widget.embedded ? 'Viajes' : 'Taxis',
+                                  style: const TextStyle(
+                                    color: Color(0xFF2C2C2C),
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
                               ),
                             ),
-                        ],
-                      ),
-                    if (_yo != null)
-                      MarkerLayer(
-                        markers: [
-                          Marker(
-                            point: _yo!,
-                            width: 48,
-                            height: 48,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF1A73E8),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Colors.white,
-                                  width: 3,
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.darkElevated,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.1),
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.25),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
                                 ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: const Color(0xFF1A73E8)
-                                        .withValues(alpha: 0.35),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 2),
+                              ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.public,
+                                  size: 14,
+                                  color: Color(0xFF9CA3AF),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  _pais,
+                                  style: const TextStyle(
+                                    color: Color(0xFFECEFF1),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
                                   ),
-                                ],
-                              ),
-                              child: const Icon(
-                                Icons.local_taxi_rounded,
-                                color: Colors.white,
-                                size: 24,
-                              ),
+                                ),
+                              ],
                             ),
                           ),
                         ],
                       ),
+                    ),
+                    const Spacer(),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
+                      child: Column(
+                        children: [
+                          _BuscandoRadarButton(
+                            activo: _buscando,
+                            animation: _radar,
+                            onTap: _toggleBuscando,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            _buscando
+                                ? 'Buscando viajes · activo'
+                                : 'Toca para buscar viajes',
+                            style: TextStyle(
+                              color: _buscando
+                                  ? const Color(0xFF4CAF50)
+                                  : const Color(0xFFECEFF1),
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            _buscando
+                                ? 'Seguirás activo aunque cierres la app. '
+                                    'Toca de nuevo para desactivar.'
+                                : 'Activa el modo para recibir ofertas de taxi',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Color(0xFF9CA3AF),
+                              fontSize: 13,
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
-                // Gradiente superior suave (mapa claro)
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: IgnorePointer(
-                    child: Container(
-                      height: 120,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Colors.white.withValues(alpha: 0.72),
-                            Colors.white.withValues(alpha: 0.0),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                // Gradiente inferior
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  child: IgnorePointer(
-                    child: Container(
-                      height: 280,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.bottomCenter,
-                          end: Alignment.topCenter,
-                          colors: [
-                            AppColors.darkBg.withValues(alpha: 0.92),
-                            AppColors.darkBg.withValues(alpha: 0.45),
-                            AppColors.darkBg.withValues(alpha: 0.0),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                SafeArea(
-                  child: Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(8, 4, 16, 0),
-                        child: Row(
-                          children: [
-                            IconButton(
-                              onPressed: () => Navigator.of(context).pop(),
-                              icon: const Icon(
-                                Icons.arrow_back,
-                                color: Color(0xFFECEFF1),
-                              ),
-                              tooltip: 'Volver',
-                            ),
-                            const SizedBox(width: 4),
-                            const Expanded(
-                              child: Text(
-                                'Taxis',
-                                style: TextStyle(
-                                  color: Color(0xFFECEFF1),
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 6,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppColors.darkElevated,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.1),
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.public,
-                                    size: 14,
-                                    color: Color(0xFF9CA3AF),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    _pais,
-                                    style: const TextStyle(
-                                      color: Color(0xFFECEFF1),
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const Spacer(),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
-                        child: Column(
-                          children: [
-                            _BuscandoRadarButton(
-                              activo: _buscando,
-                              animation: _radar,
-                              onTap: _toggleBuscando,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              _buscando
-                                  ? 'Buscando viajes · activo'
-                                  : 'Toca para buscar viajes',
-                              style: TextStyle(
-                                color: _buscando
-                                    ? const Color(0xFF4CAF50)
-                                    : const Color(0xFFECEFF1),
-                                fontSize: 18,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              _buscando
-                                  ? 'Seguirás activo aunque cierres la app. '
-                                      'Toca de nuevo para desactivar.'
-                                  : 'Activa el modo para recibir ofertas de taxi',
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                color: Color(0xFF9CA3AF),
-                                fontSize: 13,
-                                height: 1.35,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
+          );
+
+    if (widget.embedded) {
+      return ColoredBox(
+        color: AppColors.darkBg,
+        child: contenido,
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: AppColors.darkBg,
+      body: contenido,
     );
   }
 }
@@ -480,10 +524,17 @@ class _BuscandoRadarButton extends StatelessWidget {
                           ]
                         : null,
                   ),
-                  child: Icon(
-                    Icons.local_taxi,
-                    color: Colors.white,
-                    size: activo ? 34 : 30,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Image.asset(
+                      'assets/images/taxi-icon-3d-v3.png',
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => Icon(
+                        Icons.local_taxi,
+                        color: Colors.white,
+                        size: activo ? 34 : 30,
+                      ),
+                    ),
                   ),
                 ),
               ),

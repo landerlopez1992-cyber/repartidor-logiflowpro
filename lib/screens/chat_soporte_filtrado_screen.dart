@@ -12,12 +12,15 @@ import '../utils/entrega_foto_util.dart';
 import '../utils/mensaje_error_operacion.dart';
 
 /// Pantalla de chat filtrado que muestra solo mensajes de un remitente específico
+/// o, en [modoConversacionCompleta], todo el hilo con la empresa.
 class ChatSoporteFiltradoScreen extends StatefulWidget {
   final String conversacionId;
   final String remitenteAuthId;
   final String nombreRemitente;
   final String rolRemitente;
   final String? fotoRemitente;
+  /// Si true: muestra todos los mensajes de la conversación (inicio por el repartidor).
+  final bool modoConversacionCompleta;
 
   const ChatSoporteFiltradoScreen({
     super.key,
@@ -26,6 +29,7 @@ class ChatSoporteFiltradoScreen extends StatefulWidget {
     required this.nombreRemitente,
     required this.rolRemitente,
     this.fotoRemitente,
+    this.modoConversacionCompleta = false,
   });
 
   @override
@@ -265,9 +269,10 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
 
       final user = supabase.auth.currentUser;
       
-      // Filtrar solo mensajes del remitente seleccionado o del repartidor
+      // Filtrar: un agente concreto, o toda la conversación con la empresa.
       final mensajesFiltrados = todosMensajes.where((mensaje) {
         final remitenteId = mensaje['remitente_auth_id'];
+        if (widget.modoConversacionCompleta) return true;
         return remitenteId == widget.remitenteAuthId || remitenteId == user?.id;
       }).toList();
 
@@ -280,6 +285,39 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
         if (mensaje['remitente_auth_id'] == user?.id) {
           mensajeEnriquecido['remitente_nombre'] = _nombreRepartidor;
           mensajeEnriquecido['remitente_rol'] = 'REPARTIDOR';
+        } else if (widget.modoConversacionCompleta) {
+          final rid = mensaje['remitente_auth_id']?.toString() ?? '';
+          Map<String, dynamic>? data;
+          if (rid.isNotEmpty) {
+            data = await RepartidorPantallasOfflineService.cargarRemitenteChat(rid);
+            if (data == null && SyncService().isOnline) {
+              try {
+                final remote = await ejecutarConTimeout(
+                  supabase
+                      .from('usuarios')
+                      .select('nombre, rol, foto_perfil')
+                      .eq('auth_id', rid)
+                      .maybeSingle(),
+                  timeout: const Duration(seconds: 5),
+                );
+                if (remote != null) {
+                  data = remote;
+                  await RepartidorPantallasOfflineService.guardarRemitenteChat(
+                    rid,
+                    nombre: remote['nombre']?.toString() ?? 'Empresa',
+                    rol: remote['rol']?.toString() ?? 'EMPLEADO',
+                    foto: remote['foto_perfil']?.toString(),
+                  );
+                }
+              } catch (_) {}
+            }
+          }
+          mensajeEnriquecido['remitente_nombre'] =
+              data?['nombre'] ?? widget.nombreRemitente;
+          mensajeEnriquecido['remitente_rol'] =
+              data?['rol'] ?? widget.rolRemitente;
+          mensajeEnriquecido['remitente_foto'] =
+              data?['foto_perfil'] ?? widget.fotoRemitente;
         } else {
           mensajeEnriquecido['remitente_nombre'] = widget.nombreRemitente;
           mensajeEnriquecido['remitente_rol'] = widget.rolRemitente;
@@ -332,7 +370,8 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
             final user = supabase.auth.currentUser;
 
             final remitenteId = nuevoMensaje['remitente_auth_id']?.toString();
-            if (remitenteId != widget.remitenteAuthId &&
+            if (!widget.modoConversacionCompleta &&
+                remitenteId != widget.remitenteAuthId &&
                 remitenteId != user?.id) {
               return;
             }
@@ -367,13 +406,17 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     try {
       print('✅ Marcando mensajes como leídos para conversación: ${widget.conversacionId}, remitente: ${widget.remitenteAuthId}');
       
-      await supabase
+      var q = supabase
           .from('mensajes_soporte')
           .update({'leido': true})
           .eq('conversacion_id', widget.conversacionId)
-          .eq('remitente_auth_id', widget.remitenteAuthId)
           .neq('remitente_auth_id', user.id)
           .eq('leido', false);
+      if (!widget.modoConversacionCompleta &&
+          widget.remitenteAuthId.isNotEmpty) {
+        q = q.eq('remitente_auth_id', widget.remitenteAuthId);
+      }
+      await q;
       
       print('✅ Mensajes marcados como leídos');
       

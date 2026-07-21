@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../config/app_colors.dart';
 import '../services/taxi_chofer_service.dart';
+import '../widgets/taxi_uber_map_car.dart';
 
 /// Navegación GPS del socio:
 /// 1) Ubicación actual → punto A (recogida)
@@ -350,9 +351,9 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       markers.add(
         Marker(
           point: _yo!,
-          width: 36,
-          height: 36,
-          child: const Icon(Icons.local_taxi, color: Color(0xFF1565C0), size: 32),
+          width: 40,
+          height: 40,
+          child: const TaxiUberMapCar(size: 40),
         ),
       );
     }
@@ -379,13 +380,19 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
               options: MapOptions(
                 initialCenter: center,
                 initialZoom: 14,
+                minZoom: 3,
+                maxZoom: 16,
+                backgroundColor: const Color(0xFFE8EEF4),
               ),
               children: [
                 TileLayer(
                   urlTemplate:
-                      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+                      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
                   subdomains: const ['a', 'b', 'c', 'd'],
                   userAgentPackageName: 'com.logiflow.repartidor',
+                  maxZoom: 16,
+                  maxNativeZoom: 16,
+                  retinaMode: false,
                 ),
                 if (polylines.isNotEmpty) PolylineLayer(polylines: polylines),
                 MarkerLayer(markers: markers),

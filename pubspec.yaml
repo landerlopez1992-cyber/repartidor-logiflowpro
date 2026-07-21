@@ -132,11 +132,14 @@ flutter:
     - assets/logiflow_pro_logo.png
     - assets/www.logiflowpro.com.png
     - assets/sounds/chat_mensaje.mp3
+    - assets/sounds/taxi_buscando_on.wav
+    - assets/sounds/taxi_buscando_off.wav
     - assets/images/foto_vehiculo_ejemplo.png
     - assets/images/taxi-auto-clasico-3d-v3.png
     - assets/images/taxi-auto-van-3d-v3.png
     - assets/images/taxi-auto-estandar-3d-v3.png
     - assets/images/taxi-auto-comfort-3d-v3.png
+    - assets/images/taxi-icon-3d-v3.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

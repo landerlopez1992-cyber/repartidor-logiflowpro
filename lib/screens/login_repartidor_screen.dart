@@ -30,12 +30,25 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
   bool _isLoading = false;
   bool _obscurePassword = true;
 
-  // Función helper para detectar si es iOS/Android (solo móviles)
+  // Función helper para detectar si es iOS/Android (solo móviles).
+  // Excepción temporal: macOS permitido solo el 2026-07-21 para pruebas.
   bool get _esMovilSolo {
     if (kIsWeb) return false; // Web no es móvil
     if (defaultTargetPlatform == TargetPlatform.windows ||
-        (!kIsWeb && Platform.isWindows))
+        (!kIsWeb && Platform.isWindows)) {
       return false; // Windows no es móvil
+    }
+
+    // Permitir Mac solo hoy (pruebas); se desactiva solo al cambiar el día.
+    if (!kIsWeb &&
+        (Platform.isMacOS || defaultTargetPlatform == TargetPlatform.macOS)) {
+      final now = DateTime.now();
+      const y = 2026;
+      const m = 7;
+      const d = 21;
+      return now.year == y && now.month == m && now.day == d;
+    }
+
     final isMobile =
         defaultTargetPlatform == TargetPlatform.android ||
         defaultTargetPlatform == TargetPlatform.iOS;
