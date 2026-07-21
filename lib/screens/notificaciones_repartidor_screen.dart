@@ -28,6 +28,12 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
   List<Map<String, dynamic>> _notificacionesOrdenes = [];
   List<Map<String, dynamic>> _notificacionesPagos = [];
   List<Map<String, dynamic>> _notificacionesGenerales = [];
+  List<Map<String, dynamic>> _notificacionesViajes = [];
+
+  /// Contabilidad del día (viajes taxi).
+  int _viajesHoy = 0;
+  double _gananciaHoyUsd = 0;
+  List<Map<String, dynamic>> _viajesHoyDetalle = [];
   
   // Tabs
   int _tabIndex = 0;
@@ -286,11 +292,33 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
         print('ℹ️ No hay notificaciones generales para este repartidor_id');
       }
 
+      // Viajes taxi (ofertas + completados) — solo no leídas
+      List<Map<String, dynamic>> viajesResponse = [];
+      if (!_esRecolector) {
+        final viajesRaw = await ejecutarConTimeout(
+          supabase
+              .from(tablaNotificaciones)
+              .select('id, tipo, titulo, mensaje, created_at, leida, numero_orden')
+              .eq(campoId, _repartidorId!)
+              .inFilter('tipo', RepartidorNotificacionTipos.tiposTaxiViaje)
+              .eq('leida', false)
+              .order('created_at', ascending: false)
+              .limit(100),
+          timeout: const Duration(seconds: 12),
+        );
+        if (viajesRaw != null) {
+          viajesResponse = List<Map<String, dynamic>>.from(viajesRaw as List);
+        }
+      }
+
+      await _cargarResumenViajesHoy();
+
       if (mounted) {
         setState(() {
           _notificacionesOrdenes = ordenesConDatos;
           _notificacionesPagos = List<Map<String, dynamic>>.from(pagosResponse);
           _notificacionesGenerales = List<Map<String, dynamic>>.from(generalesResponse);
+          _notificacionesViajes = viajesResponse;
           _isLoading = false;
         });
 
@@ -303,6 +331,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
         
         print('✅ Notificaciones cargadas:');
         print('   - Órdenes: ${_notificacionesOrdenes.length}');
+        print('   - Viajes: ${_notificacionesViajes.length}');
         print('   - Pagos: ${_notificacionesPagos.length}');
         print('   - Generales: ${_notificacionesGenerales.length}');
       }
@@ -318,6 +347,33 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
           _isLoading = false;
         });
       }
+    }
+  }
+
+  Future<void> _cargarResumenViajesHoy() async {
+    if (_esRecolector) return;
+    try {
+      final res = await ejecutarConTimeout(
+        supabase.rpc('taxi_chofer_contador_viajes'),
+        timeout: const Duration(seconds: 10),
+      );
+      if (res is! Map || res['ok'] != true) return;
+      final detalleRaw = res['viajes_hoy_detalle'];
+      final detalle = <Map<String, dynamic>>[];
+      if (detalleRaw is List) {
+        for (final e in detalleRaw) {
+          if (e is Map) detalle.add(Map<String, dynamic>.from(e));
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _viajesHoy = (res['viajes_hoy'] as num?)?.toInt() ?? 0;
+        _gananciaHoyUsd =
+            (res['ganancia_hoy_usd'] as num?)?.toDouble() ?? 0;
+        _viajesHoyDetalle = detalle;
+      });
+    } catch (e) {
+      print('⚠️ Resumen viajes hoy: $e');
     }
   }
 
@@ -396,8 +452,8 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
-      initialIndex: _tabIndex,
+      length: 4,
+      initialIndex: _tabIndex.clamp(0, 3),
       child: Scaffold(
         backgroundColor: AppColors.darkBg,
         appBar: AppBar(
@@ -412,6 +468,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
           ),
           iconTheme: const IconThemeData(color: Colors.white),
           bottom: TabBar(
+            isScrollable: true,
             indicatorColor: const Color(0xFFFF9800),
             labelColor: Colors.white,
             unselectedLabelColor: Colors.white70,
@@ -431,6 +488,23 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                   );
                 }(),
                 text: 'Órdenes',
+              ),
+              Tab(
+                icon: () {
+                  final noLeidas = _notificacionesViajes
+                      .where((n) => n['leida'] == false)
+                      .length;
+                  if (noLeidas == 0) {
+                    return const Icon(Icons.local_taxi, size: 20);
+                  }
+                  return Badge(
+                    label: Text('$noLeidas'),
+                    backgroundColor: const Color(0xFFFF9800),
+                    textColor: Colors.white,
+                    child: const Icon(Icons.local_taxi, size: 20),
+                  );
+                }(),
+                text: 'Viajes',
               ),
               Tab(
                 icon: () {
@@ -488,6 +562,11 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                   RefreshIndicator(
                     onRefresh: _cargarNotificaciones,
                     color: const Color(0xFFFF9800),
+                    child: _buildListaViajes(),
+                  ),
+                  RefreshIndicator(
+                    onRefresh: _cargarNotificaciones,
+                    color: const Color(0xFFFF9800),
                     child: _buildListaPagos(),
                   ),
                   RefreshIndicator(
@@ -497,6 +576,257 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                   ),
                 ],
               ),
+      ),
+    );
+  }
+
+  Widget _buildListaViajes() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF252A35),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.08),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.today, color: Color(0xFF9CA3AF), size: 20),
+                      SizedBox(width: 8),
+                      Text(
+                        'Hoy',
+                        style: TextStyle(
+                          color: Color(0xFFECEFF1),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _viajesHoyStat(
+                          label: 'Viajes',
+                          value: '$_viajesHoy',
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _viajesHoyStat(
+                          label: 'Ganancia',
+                          value:
+                              '\$${_gananciaHoyUsd.toStringAsFixed(2)}',
+                          highlight: true,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_viajesHoyDetalle.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Completados hoy',
+                      style: TextStyle(
+                        color: Color(0xFF9CA3AF),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ..._viajesHoyDetalle.take(8).map((v) {
+                      final g =
+                          (v['ganancia_usd'] as num?)?.toDouble() ?? 0;
+                      final when = _formatearFecha(v['completado_at']);
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.check_circle,
+                              size: 16,
+                              color: Color(0xFF4CAF50),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                when,
+                                style: const TextStyle(
+                                  color: Color(0xFF9CA3AF),
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              '\$${g.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                color: Color(0xFF4CAF50),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (_notificacionesViajes.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 40),
+            child: Column(
+              children: [
+                Icon(
+                  Icons.local_taxi_outlined,
+                  size: 56,
+                  color: AppColors.darkTextMuted.withValues(alpha: 0.5),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Sin avisos de viajes nuevos',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: AppColors.darkTextMuted,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Al completar un viaje verás aquí la ganancia.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppColors.darkTextMuted,
+                  ),
+                ),
+              ],
+            ),
+          )
+        else
+          ..._notificacionesViajes.map((notif) {
+            final tipo = notif['tipo']?.toString() ?? '';
+            final esCompletado = tipo ==
+                RepartidorNotificacionTipos.taxiViajeCompletado;
+            return Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Card(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  color: AppColors.darkElevated,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.08),
+                    ),
+                  ),
+                  child: ListTile(
+                    onTap: () async {
+                      final id = notif['id'];
+                      if (id == null) return;
+                      try {
+                        await supabase
+                            .from('notificaciones_repartidores')
+                            .update({'leida': true})
+                            .eq('id', id);
+                      } catch (_) {}
+                      if (mounted) await _cargarNotificaciones();
+                    },
+                    leading: CircleAvatar(
+                      backgroundColor: esCompletado
+                          ? const Color(0xFF4CAF50).withValues(alpha: 0.2)
+                          : const Color(0xFFFF9800).withValues(alpha: 0.2),
+                      child: Icon(
+                        esCompletado
+                            ? Icons.check_circle
+                            : Icons.local_taxi,
+                        color: esCompletado
+                            ? const Color(0xFF4CAF50)
+                            : const Color(0xFFFF9800),
+                      ),
+                    ),
+                    title: Text(
+                      notif['titulo']?.toString() ??
+                          (esCompletado
+                              ? 'Viaje completado'
+                              : 'Nuevo viaje'),
+                      style: const TextStyle(
+                        color: Color(0xFFECEFF1),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      notif['mensaje']?.toString() ?? '',
+                      style: const TextStyle(
+                        color: Color(0xFF9CA3AF),
+                        fontSize: 13,
+                      ),
+                    ),
+                    trailing: Text(
+                      _formatearFecha(notif['created_at']),
+                      style: const TextStyle(
+                        color: Color(0xFF9CA3AF),
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }),
+      ],
+    );
+  }
+
+  Widget _viajesHoyStat({
+    required String label,
+    required String value,
+    bool highlight = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E232E),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF9CA3AF),
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              color: highlight
+                  ? const Color(0xFF4CAF50)
+                  : const Color(0xFFECEFF1),
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -161,11 +161,15 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
 
   Future<void> _toggleBuscando() async {
     final next = !_buscando;
-    // Feedback inmediato al tocar (antes de red / GPS).
-    if (next) {
-      unawaited(TaxiBuscandoSonidoService.alActivar());
-    } else {
-      unawaited(TaxiBuscandoSonidoService.alDesactivar());
+    // Sonido primero y await (no unawaited): garantiza init del player + asset.
+    try {
+      if (next) {
+        await TaxiBuscandoSonidoService.alActivar();
+      } else {
+        await TaxiBuscandoSonidoService.alDesactivar();
+      }
+    } catch (e) {
+      debugPrint('⚠️ Sonido buscando viajes: $e');
     }
     if (next) {
       // Guardar ya en local para que sobreviva reinicio aunque falle la red.

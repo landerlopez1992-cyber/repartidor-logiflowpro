@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../main.dart';
 import '../config/app_colors.dart';
+import '../constants/repartidor_chat_origen.dart';
 import '../services/repartidor_chat_soporte_service.dart';
 import '../services/repartidor_pantallas_offline_service.dart';
 import '../services/sync_service.dart';
@@ -72,8 +73,17 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
     }
 
     if (lista != null && lista!.isNotEmpty && mounted) {
+      final limpias = lista!
+          .where((c) {
+            if (c['modo_completo'] == true) return true;
+            return RepartidorChatOrigen.esRolEmpresa(
+              c['remitente_rol']?.toString(),
+            );
+          })
+          .map((c) => Map<String, dynamic>.from(c))
+          .toList();
       setState(() {
-        _conversaciones = List<Map<String, dynamic>>.from(lista!);
+        _conversaciones = limpias;
         _cargando = false;
       });
     }
@@ -100,8 +110,18 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
 
     final meta = await RepartidorPantallasOfflineService.cargarMetaChat(user.id);
     if (meta != null) {
-      _conversacionId = meta.conversacionId;
-      _tenantId = meta.tenantId;
+      final metaId = meta.conversacionId;
+      if (metaId != null &&
+          metaId.isNotEmpty &&
+          await RepartidorChatSoporteService.esConversacionCanalRepartidor(
+            metaId,
+          )) {
+        _conversacionId = metaId;
+        _tenantId = meta.tenantId;
+      } else {
+        // Meta apuntaba a chat web/cliente: no usar.
+        _conversacionId = null;
+      }
     }
 
     _tenantId ??=
@@ -135,23 +155,41 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
         _tenantId = userData?['tenant_id']?.toString();
       }
 
+      // Solo canal empresa↔repartidor (excluye cliente_web / membresía).
       var query = supabase
           .from('conversaciones_soporte')
-          .select('id')
+          .select('id, origen_participante, usuario_web_id')
           .eq('repartidor_auth_id', user.id)
-          .eq('estado', 'ABIERTA');
+          .eq('estado', 'ABIERTA')
+          .or(RepartidorChatSoporteService.filtroOrigenEmpresaRepartidor);
 
       if (_tenantId != null && _tenantId!.isNotEmpty) {
         query = query.eq('tenant_id', _tenantId!);
       }
 
       final conversaciones = await ejecutarConTimeout(
-        query.limit(1),
+        query.order('updated_at', ascending: false).limit(5),
         timeout: const Duration(seconds: 10),
       );
 
-      if (conversaciones != null && conversaciones.isNotEmpty) {
-        _conversacionId = conversaciones[0]['id']?.toString();
+      String? convIdValida;
+      if (conversaciones != null) {
+        for (final row in conversaciones) {
+          final id = row['id']?.toString();
+          if (id == null || id.isEmpty) continue;
+          if (row['usuario_web_id'] != null) continue;
+          if (!RepartidorChatOrigen.esCanalEmpresaRepartidor(
+            row['origen_participante']?.toString(),
+          )) {
+            continue;
+          }
+          convIdValida = id;
+          break;
+        }
+      }
+
+      if (convIdValida != null) {
+        _conversacionId = convIdValida;
         await RepartidorPantallasOfflineService.guardarMetaChat(
           user.id,
           conversacionId: _conversacionId,
@@ -161,8 +199,19 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
         if (_channelMensajes == null && SyncService().isOnline) {
           _suscribirseAMensajes();
         }
-      } else if (mounted) {
-        setState(() => _cargando = false);
+      } else {
+        _conversacionId = null;
+        if (mounted) {
+          setState(() {
+            _conversaciones = [];
+            _cargando = false;
+          });
+        }
+        // Limpiar caché local contaminada con hilos web.
+        await RepartidorPantallasOfflineService.guardarConversacionesChat(
+          user.id,
+          [],
+        );
       }
     } catch (e) {
       print('❌ Error cargando datos: $e');
@@ -235,7 +284,7 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
               final data = await ejecutarConTimeout(
                 supabase
                     .from('usuarios')
-                    .select('nombre, rol, foto_perfil, email')
+                    .select('nombre, rol, foto_perfil, email, tenant_id')
                     .eq('auth_id', remitenteId)
                     .maybeSingle(),
                 timeout: const Duration(seconds: 6),
@@ -253,6 +302,18 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
             } catch (e) {
               print('⚠️ Error obteniendo datos del remitente $remitenteId: $e');
             }
+          }
+
+          // Defensa: solo personal de la empresa (no clientes web / otros canales).
+          final rolRem = remitenteData?['rol']?.toString();
+          if (!RepartidorChatOrigen.esRolEmpresa(rolRem)) {
+            continue;
+          }
+          if (_tenantId != null &&
+              _tenantId!.isNotEmpty &&
+              remitenteData?['tenant_id'] != null &&
+              remitenteData!['tenant_id'].toString() != _tenantId) {
+            continue;
           }
 
           remitenteData ??= {
@@ -439,13 +500,16 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
             final data = await ejecutarConTimeout(
               supabase
                   .from('usuarios')
-                  .select('nombre, rol, foto_perfil, email')
+                  .select('nombre, rol, foto_perfil, email, tenant_id')
                   .eq('auth_id', remitenteId)
                   .maybeSingle(),
               timeout: const Duration(seconds: 6),
             );
 
             if (data != null) {
+              if (!RepartidorChatOrigen.esRolEmpresa(data['rol']?.toString())) {
+                return;
+              }
               remitenteData = {
                 'remitente_auth_id': remitenteId,
                 'remitente_nombre': data['nombre'] ?? 'Usuario',
@@ -656,29 +720,43 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        actions: [
-          IconButton(
-            tooltip: 'Escribir a mi empresa',
-            onPressed: _cargando ? null : _iniciarChatConEmpresa,
-            icon: const Icon(Icons.edit, color: Colors.white),
-          ),
-        ],
       ),
-      floatingActionButton: _cargando
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+      floatingActionButton: (_cargando || !SyncService().isOnline)
           ? null
-          : FloatingActionButton.extended(
-              onPressed: _iniciarChatConEmpresa,
-              backgroundColor: const Color(0xFFFF9800),
-              foregroundColor: Colors.white,
-              icon: const Icon(Icons.chat),
-              label: const Text('Escribir a mi empresa'),
+          : Material(
+              color: const Color(0xFFFF9800),
+              elevation: 4,
+              borderRadius: BorderRadius.circular(28),
+              child: InkWell(
+                onTap: _iniciarChatConEmpresa,
+                borderRadius: BorderRadius.circular(28),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.support_agent, color: Colors.white, size: 22),
+                      SizedBox(width: 8),
+                      Text(
+                        'Escribir a mi empresa',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
       body: _cargando
           ? const Center(child: CircularProgressIndicator())
           : _conversaciones.isEmpty
               ? Center(
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 28),
+                    padding: const EdgeInsets.fromLTRB(28, 28, 28, 88),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -707,22 +785,6 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                           ),
                           textAlign: TextAlign.center,
                         ),
-                        if (SyncService().isOnline) ...[
-                          const SizedBox(height: 24),
-                          ElevatedButton.icon(
-                            onPressed: _iniciarChatConEmpresa,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFFF9800),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 24,
-                                vertical: 14,
-                              ),
-                            ),
-                            icon: const Icon(Icons.support_agent),
-                            label: const Text('Escribir a mi empresa'),
-                          ),
-                        ],
                       ],
                     ),
                   ),

@@ -294,16 +294,28 @@ class TaxiChoferService {
     }
   }
 
-  Future<({bool ok, String? err})> completar(String solicitudId) async {
+  Future<({bool ok, String? err, double? gananciaUsd})> completar(
+    String solicitudId,
+  ) async {
     try {
       final res = await _db.rpc(
         'taxi_chofer_completar_viaje',
         params: {'p_solicitud_id': solicitudId},
       );
-      if (res is Map && res['ok'] == true) return (ok: true, err: null);
-      return (ok: false, err: 'No se pudo completar');
+      if (res is Map && res['ok'] == true) {
+        final g = (res['ganancia_usd'] as num?)?.toDouble();
+        return (ok: true, err: null, gananciaUsd: g);
+      }
+      final msg = res is Map
+          ? (res['mensaje']?.toString() ?? res['error']?.toString())
+          : null;
+      return (
+        ok: false,
+        err: msg ?? 'No se pudo completar',
+        gananciaUsd: null,
+      );
     } catch (e) {
-      return (ok: false, err: e.toString());
+      return (ok: false, err: e.toString(), gananciaUsd: null);
     }
   }
 

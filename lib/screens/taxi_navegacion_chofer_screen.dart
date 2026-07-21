@@ -129,9 +129,13 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Viaje completado'),
-          backgroundColor: Color(0xFF4CAF50),
+        SnackBar(
+          content: Text(
+            res.gananciaUsd != null
+                ? 'Viaje completado · +\$${res.gananciaUsd!.toStringAsFixed(2)} USD'
+                : 'Viaje completado',
+          ),
+          backgroundColor: const Color(0xFF4CAF50),
         ),
       );
       Navigator.of(context).pop();

@@ -132,8 +132,8 @@ flutter:
     - assets/logiflow_pro_logo.png
     - assets/www.logiflowpro.com.png
     - assets/sounds/chat_mensaje.mp3
-    - assets/sounds/taxi_buscando_on.wav
-    - assets/sounds/taxi_buscando_off.wav
+    - assets/sounds/taxi_buscando_on.mp3
+    - assets/sounds/taxi_buscando_off.mp3
     - assets/images/foto_vehiculo_ejemplo.png
     - assets/images/taxi-auto-clasico-3d-v3.png
     - assets/images/taxi-auto-van-3d-v3.png

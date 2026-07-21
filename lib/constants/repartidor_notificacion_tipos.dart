@@ -6,9 +6,11 @@ class RepartidorNotificacionTipos {
   static const String legacyOrdenNueva = 'ORDEN_NUEVA';
 
   static const String taxiViaje = 'taxi_viaje';
+  static const String taxiViajeCompletado = 'taxi_viaje_completado';
 
   static const List<String> tiposOrdenNueva = [nuevaOrden, legacyOrdenNueva];
-  static const List<String> tiposTaxiViaje = [taxiViaje];
+  static const List<String> tiposTaxiViaje = [taxiViaje, taxiViajeCompletado];
+  static const List<String> tiposTaxiViajeCompletado = [taxiViajeCompletado];
   static const String pagoAceptado = 'PAGO_ACEPTADO';
   static const String pagoCancelado = 'PAGO_CANCELADO';
   static const String pagoRechazado = 'PAGO_RECHAZADO';
