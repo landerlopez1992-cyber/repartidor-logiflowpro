@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../config/app_colors.dart';
+import '../navigation/repartidor_navigator.dart';
 import '../services/taxi_chofer_service.dart';
 import '../services/taxi_llamada_persistente_service.dart';
+import 'taxi_navegacion_chofer_screen.dart';
 
 /// Modal estilo “llamada entrante” persistente (Uber).
 /// Ringtone / notificación ongoing: [TaxiLlamadaPersistenteService].
@@ -78,7 +80,20 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
       final o =
           await TaxiChoferService.instance.detalleOferta(widget.solicitudId);
       if (!mounted) return;
-      if (o == null || o.estado != 'buscando_chofer') {
+      if (o == null) {
+        await TaxiLlamadaPersistenteService.instance.detener(
+          motivo: 'ya_no_disponible',
+          resultado: false,
+        );
+        if (mounted) Navigator.of(context).pop(false);
+        return;
+      }
+      final est = o.estado.toLowerCase();
+      if (est == 'aceptado' || est == 'en_viaje') {
+        // Ya aceptado (este u otro flujo): no cerrar como “perdido”.
+        return;
+      }
+      if (est != 'buscando_chofer') {
         await TaxiLlamadaPersistenteService.instance.detener(
           motivo: 'tomado_por_otro',
           resultado: false,
@@ -126,25 +141,51 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
   Future<void> _aceptar() async {
     if (_busy) return;
     setState(() => _busy = true);
-    final res = await TaxiChoferService.instance.aceptar(widget.solicitudId);
-    if (!mounted) return;
-    if (!res.ok || res.oferta == null) {
+    try {
+      final res = await TaxiChoferService.instance.aceptar(widget.solicitudId);
+      if (!mounted) return;
+      if (!res.ok || res.oferta == null) {
+        setState(() => _busy = false);
+        final msg = res.err ?? 'No se pudo aceptar';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg),
+            backgroundColor: AppColors.error,
+          ),
+        );
+        final low = msg.toLowerCase();
+        if (low.contains('ya_tomado') ||
+            low.contains('otro socio') ||
+            low.contains('no está disponible') ||
+            low.contains('ya_rechazado')) {
+          await TaxiLlamadaPersistenteService.instance.onRechazadoDesdeUi();
+          if (mounted) Navigator.of(context).pop(false);
+        }
+        return;
+      }
+      await TaxiLlamadaPersistenteService.instance.onAceptadoDesdeUi();
+      if (!mounted) return;
+      final oferta = res.oferta!;
+      // Cerrar modal y abrir mapa de la carrera (siempre, aunque el caller no lo haga).
+      Navigator.of(context).pop(true);
+      final rootNav = RepartidorNavigator.state;
+      if (rootNav != null) {
+        await rootNav.push(
+          MaterialPageRoute<void>(
+            builder: (_) => TaxiNavegacionChoferScreen(oferta: oferta),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
       setState(() => _busy = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(res.err ?? 'No se pudo aceptar'),
+          content: Text('Error al aceptar: $e'),
           backgroundColor: AppColors.error,
         ),
       );
-      if ((res.err ?? '').contains('ya_tomado') ||
-          (res.err ?? '').contains('Otro socio')) {
-        await TaxiLlamadaPersistenteService.instance.onRechazadoDesdeUi();
-        if (mounted) Navigator.of(context).pop(false);
-      }
-      return;
     }
-    await TaxiLlamadaPersistenteService.instance.onAceptadoDesdeUi();
-    if (mounted) Navigator.of(context).pop(true);
   }
 
   Future<void> _rechazar() async {

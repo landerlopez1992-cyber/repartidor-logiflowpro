@@ -56,6 +56,10 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   int _cantidadRemesasEntregadas = 0;
   double _totalDineroRemesas = 0.0;
   int _totalOrdenesCobradas = 0;
+  /// Viajes taxi completados (total histórico).
+  int _viajesCompletados = 0;
+  /// Viajes taxi completados esta semana.
+  int _viajesSemana = 0;
   
   List<HistorialNominaItem> _historialNomina = [];
   bool _cargandoHistorial = false;
@@ -242,6 +246,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           if (!_esRecolector) {
             await _cargarEstadisticasSemanales();
           }
+          await _cargarContadorViajes();
           await _cachearFotoPerfilLocal(_repartidorId!, response['foto_perfil']?.toString());
           await _cargarHistorialPagos();
           await _cargarSaldo();
@@ -304,6 +309,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
               if (!_esRecolector) {
                 await _cargarEstadisticasSemanales();
               }
+              await _cargarContadorViajes();
               await _cachearFotoPerfilLocal(_repartidorId!, response['foto_perfil']?.toString());
               await _cargarHistorialPagos();
               await _cargarSaldo();
@@ -387,6 +393,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           _cantidadRemesasEntregadas = estadisticasCache['cantidad_remesas_entregadas'] ?? 0;
           _totalDineroRemesas = (estadisticasCache['total_dinero_remesas'] ?? 0.0).toDouble();
           _totalOrdenesCobradas = estadisticasCache['total_ordenes_cobradas'] ?? 0;
+          _viajesCompletados = estadisticasCache['viajes_completados'] ?? 0;
+          _viajesSemana = estadisticasCache['viajes_semana'] ?? 0;
         });
         print('💾 Estadísticas cargadas desde caché');
       }
@@ -540,6 +548,30 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
       print('❌ Error al cargar estadísticas semanales: $e');
       // Si hay error, intentar cargar desde caché
       await _cargarEstadisticasDesdeCache();
+    }
+  }
+
+  /// Total de viajes taxi completados (RPC; RLS no deja leer taxi_solicitudes al chofer).
+  Future<void> _cargarContadorViajes() async {
+    try {
+      if (_repartidorId == null) return;
+      final res = await supabase.rpc('taxi_chofer_contador_viajes');
+      if (res is! Map || res['ok'] != true) return;
+      final total = (res['viajes_completados'] as num?)?.toInt() ?? 0;
+      final semana = (res['viajes_semana'] as num?)?.toInt() ?? 0;
+      if (!mounted) return;
+      setState(() {
+        _viajesCompletados = total;
+        _viajesSemana = semana;
+      });
+      final cache = await RepartidorPerfilCacheService.getCachedEstadisticas();
+      await RepartidorPerfilCacheService.cacheEstadisticas({
+        ...?cache,
+        'viajes_completados': total,
+        'viajes_semana': semana,
+      });
+    } catch (e) {
+      print('❌ Error al cargar contador de viajes: $e');
     }
   }
 
@@ -1014,8 +1046,37 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           _buildInsigniaMasterChip(),
         ],
         const SizedBox(height: 12),
+        _buildContadorViajesChip(),
+        const SizedBox(height: 12),
         _buildResumenPagoChip(),
       ],
+    );
+  }
+
+  Widget _buildContadorViajesChip() {
+    final semanaTxt = _viajesSemana > 0 ? ' · $_viajesSemana esta semana' : '';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.darkSurface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.darkBorder),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.local_taxi_rounded, color: Color(0xFFFF9800), size: 22),
+          const SizedBox(width: 10),
+          Text(
+            'Viajes: $_viajesCompletados$semanaTxt',
+            style: const TextStyle(
+              color: AppColors.darkText,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1334,6 +1395,14 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           const SizedBox(height: 16),
           
           // Lista compacta de estadísticas
+          _buildStatRow(
+            'Viajes',
+            _viajesCompletados.toString(),
+            Icons.local_taxi_rounded,
+            const Color(0xFFFF9800),
+          ),
+          const Divider(height: 16, thickness: 1, color: Color(0xFFF0F0F0)),
+
           _buildStatRow(
             'Órdenes Entregadas',
             _ordenesEntregadas.toString(),

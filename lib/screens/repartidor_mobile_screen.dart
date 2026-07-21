@@ -302,6 +302,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       unawaited(
         TaxiTarifasChoferService.instance.reafirmarDisponibleSiActivoLocal(),
       );
+      unawaited(_abrirViajeTaxiActivoSiHay());
       _suscribirseANotificaciones();
       _suscribirseANotificacionesOrdenes();
       _suscribirseACambiosPagos(); // Suscribirse a cambios en solicitudes de pago
@@ -319,6 +320,74 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         await RepartidorActualizacionForzadaService.instance.consultarDesdeConfig();
     if (!mounted) return;
     setState(() => _actualizacionForzada = estado);
+  }
+
+  /// Si hay carrera taxi aceptada/en curso, reabrir el mapa (p. ej. tras salir al home).
+  Future<void> _abrirViajeTaxiActivoSiHay() async {
+    try {
+      final oferta = await TaxiChoferService.instance.viajeActivo();
+      if (oferta == null || !mounted) return;
+      final est = oferta.estado.toLowerCase();
+      if (est != 'aceptado' && est != 'en_viaje') return;
+
+      final ir = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1E232E),
+          constraints: const BoxConstraints(maxWidth: 400),
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text(
+            'Tienes un viaje en curso',
+            style: TextStyle(
+              color: Color(0xFFECEFF1),
+              fontWeight: FontWeight.w800,
+              fontSize: 17,
+            ),
+          ),
+          content: Text(
+            'Viaje con ${oferta.pasajeroNombre}. '
+            'Abre el mapa para continuar (llegada / destino).',
+            style: const TextStyle(
+              color: Color(0xFF9CA3AF),
+              height: 1.4,
+              fontSize: 14,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text(
+                'Más tarde',
+                style: TextStyle(color: Color(0xFF9CA3AF)),
+              ),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF37474F),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text(
+                'Abrir mapa',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+      );
+      if (ir != true || !mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => TaxiNavegacionChoferScreen(oferta: oferta),
+        ),
+      );
+    } catch (e) {
+      print('⚠️ viaje taxi activo: $e');
+    }
   }
 
   /// Sin foto de perfil: aviso cada 2 días (más confianza / más órdenes).
@@ -2420,18 +2489,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           await RepartidorNotificacionesPushService.instance
               .marcarPushMostrado(notificacionId);
         }
-        if (acepto == true && mounted) {
-          final oferta =
-              await TaxiChoferService.instance.detalleOferta(solicitudId);
-          if (oferta != null && mounted) {
-            await Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => TaxiNavegacionChoferScreen(oferta: oferta),
-              ),
-            );
-          }
+        // El dialog ya abre TaxiNavegacionChoferScreen si aceptó.
+        if (acepto == true) {
+          await _cargarNotificacionesNoLeidas();
         }
-        await _cargarNotificacionesNoLeidas();
         return;
       }
 
@@ -2917,17 +2978,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   .marcarPushMostrado(eid);
               _notificacionesProcesadas.add(eid);
             }
-            if (acepto == true && mounted) {
-              final oferta = await TaxiChoferService.instance
-                  .detalleOferta(solicitudId);
-              if (oferta != null && mounted) {
-                await Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) =>
-                        TaxiNavegacionChoferScreen(oferta: oferta),
-                  ),
-                );
-              }
+            if (acepto == true) {
+              // El dialog ya abrió el mapa de navegación.
             }
           }
         }

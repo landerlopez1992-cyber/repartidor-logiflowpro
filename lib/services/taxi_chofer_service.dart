@@ -147,6 +147,18 @@ class TaxiChoferService {
     return TaxiOfertaChofer.fromJson(Map<String, dynamic>.from(res));
   }
 
+  /// Viaje aceptado / en curso del chofer autenticado (para reabrir el mapa).
+  Future<TaxiOfertaChofer?> viajeActivo() async {
+    try {
+      final res = await _db.rpc('taxi_chofer_viaje_activo');
+      if (res is! Map || res['ok'] != true) return null;
+      if (res['activo'] != true) return null;
+      return TaxiOfertaChofer.fromJson(Map<String, dynamic>.from(res));
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<({bool ok, String? err, TaxiOfertaChofer? oferta})> aceptar(
     String solicitudId,
   ) async {
@@ -168,13 +180,28 @@ class TaxiChoferService {
           oferta: null,
         );
       }
+      // Si el RPC no devolvió el detalle completo, pedirlo.
+      if (map['origen_lat'] == null && map['id'] != null) {
+        final det = await detalleOferta(solicitudId);
+        if (det != null) {
+          return (ok: true, err: null, oferta: det);
+        }
+      }
       return (
         ok: true,
         err: null,
         oferta: TaxiOfertaChofer.fromJson(map),
       );
     } catch (e) {
-      return (ok: false, err: e.toString(), oferta: null);
+      final s = e.toString();
+      if (s.contains('uuid') && s.contains('text')) {
+        return (
+          ok: false,
+          err: 'Error de sistema al aceptar. Actualiza e intenta de nuevo.',
+          oferta: null,
+        );
+      }
+      return (ok: false, err: s, oferta: null);
     }
   }
 
@@ -187,9 +214,21 @@ class TaxiChoferService {
       if (res is Map && res['ok'] == true) {
         return (ok: true, err: null);
       }
+      if (res is Map) {
+        return (
+          ok: false,
+          err: res['mensaje']?.toString() ??
+              res['error']?.toString() ??
+              'No se pudo rechazar',
+        );
+      }
       return (ok: false, err: 'No se pudo rechazar');
     } catch (e) {
-      return (ok: false, err: e.toString());
+      final s = e.toString();
+      if (s.contains('uuid') && s.contains('text')) {
+        return (ok: false, err: 'Error de sistema al rechazar. Intenta de nuevo.');
+      }
+      return (ok: false, err: s);
     }
   }
 

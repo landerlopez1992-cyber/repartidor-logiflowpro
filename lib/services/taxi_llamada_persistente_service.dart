@@ -28,6 +28,7 @@ class TaxiLlamadaPersistenteService {
   Timer? _pollTimer;
   Completer<bool?>? _resultado;
   String? _solicitudId;
+  Future<bool?>? _iniciarEnCurso;
 
   String? get solicitudActiva => _solicitudId;
   bool get activa => _solicitudId != null;
@@ -78,32 +79,98 @@ class TaxiLlamadaPersistenteService {
   Future<bool?> iniciar({
     required String solicitudId,
     String titulo = 'Viaje de taxi entrante',
-    String mensaje =
-        'Acepta o rechaza. Esta alerta no se quita sola.',
-  }) async {
+    String mensaje = 'Acepta o rechaza. Esta alerta no se quita sola.',
+  }) {
     final id = solicitudId.trim();
-    if (id.isEmpty) return null;
+    if (id.isEmpty) return Future.value(null);
 
-    if (_solicitudId == id && _resultado != null) {
-      return _resultado!.future;
+    // Si ya hay una alerta activa de la misma solicitud, unirse a ella.
+    final activo = _resultado;
+    if (_solicitudId == id && activo != null && !activo.isCompleted) {
+      return activo.future;
+    }
+
+    // Serializar inicios concurrentes (FCM + Realtime + dialog a la vez).
+    final enCurso = _iniciarEnCurso;
+    if (enCurso != null) {
+      return enCurso.then((_) async {
+        final r = _resultado;
+        if (_solicitudId == id && r != null && !r.isCompleted) {
+          return r.future;
+        }
+        return iniciar(
+          solicitudId: id,
+          titulo: titulo,
+          mensaje: mensaje,
+        );
+      });
+    }
+
+    final future = _iniciarInterno(
+      id: id,
+      titulo: titulo,
+      mensaje: mensaje,
+    );
+    _iniciarEnCurso = future;
+    future.whenComplete(() {
+      if (_iniciarEnCurso == future) {
+        _iniciarEnCurso = null;
+      }
+    });
+    return future;
+  }
+
+  Future<bool?> _iniciarInterno({
+    required String id,
+    required String titulo,
+    required String mensaje,
+  }) async {
+    final activo = _resultado;
+    if (_solicitudId == id && activo != null && !activo.isCompleted) {
+      return activo.future;
     }
 
     if (_solicitudId != null && _solicitudId != id) {
       await detener(motivo: 'reemplazo');
     }
 
+    final otraVez = _resultado;
+    if (_solicitudId == id && otraVez != null && !otraVez.isCompleted) {
+      return otraVez.future;
+    }
+
+    // Completer LOCAL: nunca usar _resultado! tras un await.
+    final completer = Completer<bool?>();
     _solicitudId = id;
-    _resultado = Completer<bool?>();
+    _resultado = completer;
 
-    await _mostrarNotificacionPersistente(
-      titulo: titulo,
-      mensaje: mensaje,
-      solicitudId: id,
-    );
-    await _iniciarRingtoneYVibracion();
-    _iniciarPollEstado(id);
+    try {
+      await _mostrarNotificacionPersistente(
+        titulo: titulo,
+        mensaje: mensaje,
+        solicitudId: id,
+      );
+      // Si otro detener/reemplazo invalidó este ciclo, no seguir.
+      if (!identical(_resultado, completer)) {
+        if (!completer.isCompleted) completer.complete(null);
+        return completer.future;
+      }
 
-    return _resultado!.future;
+      await _iniciarRingtoneYVibracion();
+      if (!identical(_resultado, completer)) {
+        if (!completer.isCompleted) completer.complete(null);
+        return completer.future;
+      }
+
+      _iniciarPollEstado(id);
+    } catch (e) {
+      print('⚠️ iniciar taxi alerta: $e');
+      if (identical(_resultado, completer) && !completer.isCompleted) {
+        // Mantener alerta aunque falle notif/ringtone (el modal igual sirve).
+      }
+    }
+
+    return completer.future;
   }
 
   /// App cerrada / isolate background: solo notification ongoing.
@@ -115,11 +182,15 @@ class TaxiLlamadaPersistenteService {
     final id = solicitudId.trim();
     if (id.isEmpty) return;
     _solicitudId ??= id;
-    await _mostrarNotificacionPersistente(
-      titulo: titulo,
-      mensaje: mensaje,
-      solicitudId: id,
-    );
+    try {
+      await _mostrarNotificacionPersistente(
+        titulo: titulo,
+        mensaje: mensaje,
+        solicitudId: id,
+      );
+    } catch (e) {
+      print('⚠️ notif persistente background: $e');
+    }
   }
 
   Future<void> onAceptadoDesdeUi() async {
@@ -135,7 +206,9 @@ class TaxiLlamadaPersistenteService {
     bool? resultado,
   }) async {
     final id = _solicitudId;
+    final completer = _resultado;
     _solicitudId = null;
+    _resultado = null;
 
     _pollTimer?.cancel();
     _pollTimer = null;
@@ -150,11 +223,12 @@ class TaxiLlamadaPersistenteService {
       await _plugin?.cancel(notificacionId);
     } catch (_) {}
 
-    if (_resultado != null && !_resultado!.isCompleted) {
-      _resultado!.complete(resultado);
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(resultado);
     }
-    _resultado = null;
 
+    // Solo cerrar el modal si otro se quedó con el viaje / ya no existe.
+    // Si yo acepté, el dialog hace pop(true) y abre el mapa.
     if (motivo == 'tomado_por_otro' || motivo == 'ya_no_disponible') {
       final nav = RepartidorNavigator.state;
       if (nav != null && nav.canPop()) {
@@ -169,18 +243,27 @@ class TaxiLlamadaPersistenteService {
 
   void _iniciarPollEstado(String solicitudId) {
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+    _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
       if (_solicitudId != solicitudId) return;
       try {
         final o = await TaxiChoferService.instance.detalleOferta(solicitudId);
         if (_solicitudId != solicitudId) return;
-        if (o == null || o.estado != 'buscando_chofer') {
-          await detener(
-            motivo: o == null ? 'ya_no_disponible' : 'tomado_por_otro',
-            resultado: false,
-          );
+        if (o == null) {
+          await detener(motivo: 'ya_no_disponible', resultado: false);
+          return;
         }
-      } catch (_) {}
+        final est = o.estado.toLowerCase();
+        // Yo (u otro flujo) ya aceptó: silenciar alerta SIN tratarlo como perdido.
+        if (est == 'aceptado' || est == 'en_viaje') {
+          await detener(motivo: 'viaje_en_curso', resultado: true);
+          return;
+        }
+        if (est != 'buscando_chofer') {
+          await detener(motivo: 'tomado_por_otro', resultado: false);
+        }
+      } catch (_) {
+        // No tumbar la alerta por un fallo puntual de red.
+      }
     });
   }
 

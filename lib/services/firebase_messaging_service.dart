@@ -332,17 +332,9 @@ class FirebaseMessagingService {
       final solicitudId =
           numeroOrden.isNotEmpty ? numeroOrden : ordenId;
       if (solicitudId.isEmpty) return;
-      // Alerta persistente (ringtone + notif ongoing) + modal.
-      unawaited(
-        TaxiLlamadaPersistenteService.instance.iniciar(
-          solicitudId: solicitudId,
-          titulo: 'Viaje de taxi entrante',
-          mensaje:
-              'Acepta o rechaza. La alerta sigue hasta que respondas o otro socio tome el viaje.',
-        ),
-      );
       final nav = RepartidorNavigator.state;
       if (nav == null) return;
+      // El dialog ya arranca la alerta persistente (evitar doble iniciar).
       await TaxiIncomingCallDialog.show(nav.context, solicitudId);
       return;
     }
