@@ -16,7 +16,19 @@ class TaxiOfertaChofer {
     required this.gananciaUsd,
     required this.pasajeroNombre,
     this.pasajeroFotoUrl,
+    this.pasajeroTelefono = '',
+    this.solicitanteNombre = '',
+    this.solicitanteTelefono = '',
+    this.paraMi = true,
+    this.ofertaTipo = '',
+    this.origenProvincia = '',
+    this.origenMunicipio = '',
+    this.precioUsd,
+    this.distanciaAlOrigenKm,
+    this.createdAt,
     this.rutaFase = 'hacia_pasajero',
+    this.pasajeros = 1,
+    this.capacidadChofer = 4,
   });
 
   final String id;
@@ -32,7 +44,19 @@ class TaxiOfertaChofer {
   final double gananciaUsd;
   final String pasajeroNombre;
   final String? pasajeroFotoUrl;
+  final String pasajeroTelefono;
+  final String solicitanteNombre;
+  final String solicitanteTelefono;
+  final bool paraMi;
+  final String ofertaTipo;
+  final String origenProvincia;
+  final String origenMunicipio;
+  final double? precioUsd;
+  final double? distanciaAlOrigenKm;
+  final DateTime? createdAt;
   final String rutaFase;
+  final int pasajeros;
+  final int capacidadChofer;
 
   bool get haciaPasajero =>
       rutaFase == 'hacia_pasajero' || estado == 'aceptado';
@@ -40,7 +64,41 @@ class TaxiOfertaChofer {
   bool get haciaDestino =>
       rutaFase == 'hacia_destino' || estado == 'en_viaje';
 
+  String get ofertaTipoEtiqueta {
+    switch (ofertaTipo.toLowerCase().trim()) {
+      case 'economico':
+      case 'económico':
+        return 'Económico';
+      case 'estandar':
+      case 'estándar':
+      case 'standard':
+        return 'Estándar';
+      case 'confort':
+      case 'comfort':
+        return 'Confort';
+      case 'premium':
+        return 'Premium';
+      case '':
+        return '—';
+      default:
+        return ofertaTipo;
+    }
+  }
+
+  String get zonaOrigen {
+    final parts = <String>[
+      if (origenMunicipio.trim().isNotEmpty) origenMunicipio.trim(),
+      if (origenProvincia.trim().isNotEmpty) origenProvincia.trim(),
+    ];
+    return parts.join(', ');
+  }
+
   factory TaxiOfertaChofer.fromJson(Map<String, dynamic> m) {
+    DateTime? created;
+    final rawCreated = m['created_at']?.toString();
+    if (rawCreated != null && rawCreated.isNotEmpty) {
+      created = DateTime.tryParse(rawCreated)?.toLocal();
+    }
     return TaxiOfertaChofer(
       id: m['id']?.toString() ?? '',
       estado: m['estado']?.toString() ?? '',
@@ -57,7 +115,19 @@ class TaxiOfertaChofer {
           0,
       pasajeroNombre: m['pasajero_nombre']?.toString() ?? 'Pasajero',
       pasajeroFotoUrl: m['pasajero_foto_url']?.toString(),
+      pasajeroTelefono: m['pasajero_telefono']?.toString() ?? '',
+      solicitanteNombre: m['solicitante_nombre']?.toString() ?? '',
+      solicitanteTelefono: m['solicitante_telefono']?.toString() ?? '',
+      paraMi: m['para_mi'] != false,
+      ofertaTipo: m['oferta_tipo']?.toString() ?? '',
+      origenProvincia: m['origen_provincia']?.toString() ?? '',
+      origenMunicipio: m['origen_municipio']?.toString() ?? '',
+      precioUsd: (m['precio_usd'] as num?)?.toDouble(),
+      distanciaAlOrigenKm: (m['distancia_al_origen_km'] as num?)?.toDouble(),
+      createdAt: created,
       rutaFase: m['ruta_fase']?.toString() ?? 'hacia_pasajero',
+      pasajeros: (m['pasajeros'] as num?)?.toInt() ?? 1,
+      capacidadChofer: (m['capacidad_chofer'] as num?)?.toInt() ?? 4,
     );
   }
 }
