@@ -47,8 +47,9 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
   StreamSubscription<Position>? _posSub;
   Timer? _fleetTimer;
   Timer? _pubGpsTimer;
-  List<LatLng> _nearbyCars = const [];
+  List<TaxiFleetCar> _nearbyCars = const [];
   int _fleetSeed = 0;
+  DateTime? _fleetLastTick;
 
   @override
   void initState() {
@@ -94,9 +95,10 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
       _cargando = false;
       _nearbyCars = TaxiNearbyFleetUtil.around(
         center: vista.center,
-        count: 5,
+        count: 10,
         seed: pais.hashCode,
-        maxDistM: 220,
+        minDistM: 8000,
+        maxDistM: 65000,
       );
     });
     widget.onBuscandoChanged?.call(buscando);
@@ -115,15 +117,26 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
 
   void _startFleetAnim() {
     _fleetTimer?.cancel();
-    _fleetTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+    _fleetLastTick = DateTime.now();
+    // ~20 fps: avance continuo (estilo Uber), no saltos cada segundo.
+    _fleetTimer = Timer.periodic(const Duration(milliseconds: 48), (_) {
       if (!mounted || _nearbyCars.isEmpty) return;
+      final now = DateTime.now();
+      final last = _fleetLastTick ?? now;
+      _fleetLastTick = now;
+      var dt = now.difference(last).inMilliseconds / 1000.0;
+      if (dt <= 0 || dt > 0.25) dt = 0.048;
       _fleetSeed++;
-      setState(() {
-        _nearbyCars = TaxiNearbyFleetUtil.nudge(
-          _nearbyCars,
-          seed: _fleetSeed,
-        );
-      });
+      final anchor = _yo ?? _vista.center;
+      final maxR = _buscando ? 5200.0 : 70000.0;
+      TaxiNearbyFleetUtil.tick(
+        _nearbyCars,
+        dt: dt,
+        anchor: anchor,
+        maxRadiusM: maxR,
+        seed: _fleetSeed,
+      );
+      setState(() {});
     });
   }
 
@@ -162,8 +175,10 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
         _yo = yo;
         _nearbyCars = TaxiNearbyFleetUtil.around(
           center: yo,
-          count: 6,
-          seed: (pos.latitude * 1000).round(),
+          count: 9,
+          seed: (pos.latitude * 1000).round() ^ (pos.longitude * 100).round(),
+          minDistM: 350,
+          maxDistM: 4800,
         );
       });
       try {
@@ -297,10 +312,11 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
                       markers: [
                         for (final c in _nearbyCars)
                           Marker(
-                            point: c,
+                            point: c.point,
                             width: 32,
                             height: 32,
-                            child: const TaxiUberMapCar(),
+                            alignment: Alignment.center,
+                            child: TaxiUberMapCar(headingDeg: c.headingDeg),
                           ),
                       ],
                     ),

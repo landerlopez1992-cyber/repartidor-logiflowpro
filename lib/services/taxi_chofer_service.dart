@@ -187,12 +187,10 @@ class TaxiChoferService {
           oferta: null,
         );
       }
-      // Si el RPC no devolvió el detalle completo, pedirlo.
-      if (map['origen_lat'] == null && map['id'] != null) {
-        final det = await detalleOferta(solicitudId);
-        if (det != null) {
-          return (ok: true, err: null, oferta: det);
-        }
+      // Siempre pedir detalle completo (incluye pasajero_foto_url del perfil web).
+      final det = await detalleOferta(solicitudId);
+      if (det != null) {
+        return (ok: true, err: null, oferta: det);
       }
       return (
         ok: true,
@@ -404,6 +402,19 @@ class TaxiChoferService {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Marca push/notificaciones de chat de este viaje como leídas.
+  Future<void> marcarChatTaxiLeido(String solicitudId) async {
+    if (solicitudId.isEmpty) return;
+    try {
+      await _db
+          .from('notificaciones_repartidores')
+          .update({'leida': true})
+          .eq('tipo', 'taxi_chat')
+          .eq('numero_orden', solicitudId)
+          .eq('leida', false);
+    } catch (_) {}
   }
 }
 

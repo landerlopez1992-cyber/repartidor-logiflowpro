@@ -7,10 +7,27 @@ class RepartidorNotificacionTipos {
 
   static const String taxiViaje = 'taxi_viaje';
   static const String taxiViajeCompletado = 'taxi_viaje_completado';
+  static const String taxiPropina = 'taxi_propina';
+  static const String taxiChat = 'taxi_chat';
 
   static const List<String> tiposOrdenNueva = [nuevaOrden, legacyOrdenNueva];
-  static const List<String> tiposTaxiViaje = [taxiViaje, taxiViajeCompletado];
+
+  /// Solo oferta entrante → modal llamada + ringtone/vibración persistente.
+  /// NO incluir propina, chat ni completado (eso vibraba sin haber viaje).
+  static const List<String> tiposTaxiViaje = [taxiViaje];
+
   static const List<String> tiposTaxiViajeCompletado = [taxiViajeCompletado];
+  static const List<String> tiposTaxiPropina = [taxiPropina];
+  static const List<String> tiposTaxiChat = [taxiChat];
+
+  /// Badge / lista de notificaciones (todos los avisos del módulo taxi).
+  static const List<String> tiposTaxiTodos = [
+    taxiViaje,
+    taxiViajeCompletado,
+    taxiPropina,
+    taxiChat,
+  ];
+
   static const String pagoAceptado = 'PAGO_ACEPTADO';
   static const String pagoCancelado = 'PAGO_CANCELADO';
   static const String pagoRechazado = 'PAGO_RECHAZADO';

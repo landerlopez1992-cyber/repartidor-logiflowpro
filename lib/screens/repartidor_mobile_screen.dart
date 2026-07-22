@@ -1132,7 +1132,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('⚠️ Error de seguridad: No se pudo verificar tu empresa. Por favor, cierra sesión e inicia sesión nuevamente.'),
+                    content: Text(
+                      'No se pudo verificar tu empresa. Cierra sesión e inicia de nuevo.',
+                    ),
                     backgroundColor: Color(0xFFDC2626),
                     duration: Duration(seconds: 5),
                   ),
@@ -1186,11 +1188,17 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             // 🔒 SEGURIDAD CRÍTICA: Para repartidores normales, tenant_id es OBLIGATORIO
             // NO se pueden mostrar órdenes sin filtro de tenant (riesgo de ver datos de otras empresas)
             if (_tenantId == null) {
+              print('🚨 CRÍTICO: Repartidor normal sin tenant_id — reintentando obtenerlo...');
+              await _obtenerTenantId();
+            }
+            if (_tenantId == null) {
               print('🚨 CRÍTICO: Repartidor normal sin tenant_id - CANCELANDO carga de órdenes por seguridad');
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('⚠️ Error de seguridad: No se pudo verificar tu empresa. Por favor, cierra sesión e inicia sesión nuevamente.'),
+                    content: Text(
+                      'No se pudo verificar tu empresa. Cierra sesión e inicia de nuevo.',
+                    ),
                     backgroundColor: Color(0xFFDC2626),
                     duration: Duration(seconds: 5),
                   ),
@@ -2939,7 +2947,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         if (RepartidorNotificacionTipos.tiposOrdenNueva.contains(tipo)) {
           contadorValido++;
           contadorOrdenes++;
-        } else if (RepartidorNotificacionTipos.tiposTaxiViaje.contains(tipo)) {
+        } else if (RepartidorNotificacionTipos.tiposTaxiTodos.contains(tipo)) {
           contadorValido++;
           contadorOrdenes++;
         } else if (tipo == 'PAGO_ACEPTADO' || 
@@ -2992,34 +3000,45 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         );
 
         // Si había viajes taxi sin aceptar (app cerrada / sin Realtime),
-        // abrir modal estilo llamada con el más reciente.
+        // abrir modal estilo llamada con el más reciente AÚN disponible.
         if (mounted && taxiPendientes.isNotEmpty) {
           taxiPendientes.sort((a, b) {
             final ca = a['created_at']?.toString() ?? '';
             final cb = b['created_at']?.toString() ?? '';
             return cb.compareTo(ca);
           });
-          final n = taxiPendientes.first;
-          final solicitudId = (n['numero_orden']?.toString() ?? '').trim();
-          final notificacionId = (n['id']?.toString() ?? '').trim();
-          if (solicitudId.isNotEmpty) {
-            final acepto =
-                await TaxiIncomingCallDialog.show(context, solicitudId);
-            if (notificacionId.isNotEmpty) {
-              await RepartidorNotificacionesPushService.instance
-                  .marcarPushMostrado(notificacionId);
-              _notificacionesProcesadas.add(notificacionId);
-            }
-            // Marcar el resto de taxi como ya vistas para no spamear.
-            for (final extra in taxiPendientes.skip(1)) {
-              final eid = extra['id']?.toString() ?? '';
-              if (eid.isEmpty) continue;
-              await RepartidorNotificacionesPushService.instance
-                  .marcarPushMostrado(eid);
-              _notificacionesProcesadas.add(eid);
-            }
-            if (acepto == true) {
-              // El dialog ya abrió el mapa de navegación.
+
+          Map<String, dynamic>? nElegida;
+          for (final n in taxiPendientes) {
+            final sid = (n['numero_orden']?.toString() ?? '').trim();
+            if (sid.isEmpty) continue;
+            try {
+              final o = await TaxiChoferService.instance.detalleOferta(sid);
+              if (o != null && o.estado == 'buscando_chofer') {
+                nElegida = n;
+                break;
+              }
+            } catch (_) {}
+          }
+
+          // Marcar todas como vistas para no reabrir llamadas fantasmas.
+          for (final extra in taxiPendientes) {
+            final eid = extra['id']?.toString() ?? '';
+            if (eid.isEmpty) continue;
+            await RepartidorNotificacionesPushService.instance
+                .marcarPushMostrado(eid);
+            _notificacionesProcesadas.add(eid);
+          }
+
+          if (mounted && nElegida != null) {
+            final solicitudId =
+                (nElegida['numero_orden']?.toString() ?? '').trim();
+            if (solicitudId.isNotEmpty) {
+              final acepto =
+                  await TaxiIncomingCallDialog.show(context, solicitudId);
+              if (acepto == true) {
+                // El dialog ya abrió el mapa de navegación.
+              }
             }
           }
         }

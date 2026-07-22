@@ -300,7 +300,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
               .from(tablaNotificaciones)
               .select('id, tipo, titulo, mensaje, created_at, leida, numero_orden')
               .eq(campoId, _repartidorId!)
-              .inFilter('tipo', RepartidorNotificacionTipos.tiposTaxiViaje)
+              .inFilter('tipo', RepartidorNotificacionTipos.tiposTaxiTodos)
               .eq('leida', false)
               .order('created_at', ascending: false)
               .limit(100),
@@ -723,6 +723,9 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
             final tipo = notif['tipo']?.toString() ?? '';
             final esCompletado = tipo ==
                 RepartidorNotificacionTipos.taxiViajeCompletado;
+            final esPropina =
+                tipo == RepartidorNotificacionTipos.taxiPropina;
+            final esChat = tipo == RepartidorNotificacionTipos.taxiChat;
             return Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 520),
@@ -748,23 +751,35 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                       if (mounted) await _cargarNotificaciones();
                     },
                     leading: CircleAvatar(
-                      backgroundColor: esCompletado
+                      backgroundColor: (esCompletado || esPropina)
                           ? const Color(0xFF4CAF50).withValues(alpha: 0.2)
-                          : const Color(0xFFFF9800).withValues(alpha: 0.2),
+                          : esChat
+                              ? const Color(0xFF64B5F6).withValues(alpha: 0.2)
+                              : const Color(0xFFFF9800).withValues(alpha: 0.2),
                       child: Icon(
-                        esCompletado
-                            ? Icons.check_circle
-                            : Icons.local_taxi,
-                        color: esCompletado
+                        esPropina
+                            ? Icons.volunteer_activism
+                            : esChat
+                                ? Icons.chat_bubble_outline
+                                : esCompletado
+                                    ? Icons.check_circle
+                                    : Icons.local_taxi,
+                        color: (esCompletado || esPropina)
                             ? const Color(0xFF4CAF50)
-                            : const Color(0xFFFF9800),
+                            : esChat
+                                ? const Color(0xFF64B5F6)
+                                : const Color(0xFFFF9800),
                       ),
                     ),
                     title: Text(
                       notif['titulo']?.toString() ??
-                          (esCompletado
-                              ? 'Viaje completado'
-                              : 'Nuevo viaje'),
+                          (esPropina
+                              ? 'Nueva propina'
+                              : esChat
+                                  ? 'Mensaje del pasajero'
+                                  : esCompletado
+                                      ? 'Viaje completado'
+                                      : 'Nuevo viaje'),
                       style: const TextStyle(
                         color: Color(0xFFECEFF1),
                         fontWeight: FontWeight.w600,

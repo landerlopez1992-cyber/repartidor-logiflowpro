@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../config/app_colors.dart';
 import '../navigation/repartidor_navigator.dart';
@@ -123,6 +122,11 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
           motivo: 'ya_no_disponible',
           resultado: false,
         );
+        // Cerrar solo: no dejar pantalla de error + vibración fantasma.
+        if (mounted) {
+          await Future<void>.delayed(const Duration(milliseconds: 600));
+          if (mounted) Navigator.of(context).pop(false);
+        }
         return;
       }
       setState(() {
@@ -251,22 +255,6 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
     Navigator.of(context).pop(false);
   }
 
-  Future<void> _llamar(String telefono) async {
-    final t = telefono.trim();
-    if (t.isEmpty) return;
-    final uri = Uri(scheme: 'tel', path: t.replaceAll(RegExp(r'[^\d+]'), ''));
-    try {
-      await launchUrl(uri);
-    } catch (_) {}
-  }
-
-  String _fmtHora(DateTime? d) {
-    if (d == null) return '—';
-    final hh = d.hour.toString().padLeft(2, '0');
-    final mm = d.minute.toString().padLeft(2, '0');
-    return '$hh:$mm · ${d.day}/${d.month}/${d.year}';
-  }
-
   @override
   void dispose() {
     _pollUi?.cancel();
@@ -345,14 +333,7 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
   }
 
   Widget _buildBody(TaxiOfertaChofer o) {
-    final foto = o.pasajeroFotoUrl?.trim();
-    final zona = o.zonaOrigen;
     final distA = o.distanciaAlOrigenKm;
-    final tel = o.pasajeroTelefono.trim();
-    final solicitanteDistinto = !o.paraMi &&
-        o.solicitanteNombre.trim().isNotEmpty &&
-        o.solicitanteNombre.trim().toLowerCase() !=
-            o.pasajeroNombre.trim().toLowerCase();
 
     return Column(
       children: [
@@ -360,115 +341,65 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 AnimatedBuilder(
                   animation: _pulse,
                   builder: (_, __) {
                     final t = _pulse.value;
-                    return Container(
-                      padding: EdgeInsets.all(4 + t * 4),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: const Color(0xFF4CAF50)
-                              .withValues(alpha: 0.35 + t * 0.4),
-                          width: 2,
-                        ),
-                      ),
-                      child: CircleAvatar(
-                        radius: 36,
-                        backgroundColor: const Color(0xFF37474F),
-                        backgroundImage: (foto != null && foto.startsWith('http'))
-                            ? NetworkImage(foto)
-                            : null,
-                        child: (foto == null || !foto.startsWith('http'))
-                            ? const Icon(Icons.person,
-                                color: Colors.white, size: 36)
-                            : null,
+                    return Icon(
+                      Icons.local_taxi_rounded,
+                      size: 36,
+                      color: Color.lerp(
+                        const Color(0xFFFF9800),
+                        const Color(0xFFFFB74D),
+                        t,
                       ),
                     );
                   },
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 const Text(
                   'Llamada de viaje · suena hasta que respondas',
+                  textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Color(0xFFFF9800),
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
+                    height: 1.3,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 6),
                 const Text(
                   'Viaje de taxi entrante',
+                  textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Color(0xFF9CA3AF),
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 8),
                 Text(
                   o.pasajeroNombre,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     color: Color(0xFFECEFF1),
-                    fontSize: 20,
+                    fontSize: 22,
                     fontWeight: FontWeight.w800,
+                    height: 1.2,
                   ),
                 ),
-                const SizedBox(height: 6),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF252A35),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    o.paraMi
-                        ? 'Viaje para el cliente'
-                        : 'Pasajero distinto al solicitante',
-                    style: const TextStyle(
-                      color: Color(0xFF9CA3AF),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 18),
                 _infoCard(
-                  icon: Icons.groups,
-                  label: 'Pasajeros en este viaje',
-                  value: o.pasajeros == 1
-                      ? '1 persona (tu auto admite hasta ${o.capacidadChofer})'
-                      : '${o.pasajeros} personas (tu auto admite hasta ${o.capacidadChofer})',
-                  highlight: true,
-                ),
-                const SizedBox(height: 8),
-                _infoCard(
-                  icon: Icons.attach_money,
+                  icon: Icons.payments_outlined,
                   label: 'Ganarás',
                   value: '\$${o.gananciaUsd.toStringAsFixed(2)} USD',
                   highlight: true,
                 ),
-                if (o.precioUsd != null) ...[
-                  const SizedBox(height: 8),
-                  _infoCard(
-                    icon: Icons.receipt_long_outlined,
-                    label: 'Precio del viaje (cliente)',
-                    value: '\$${o.precioUsd!.toStringAsFixed(2)} USD',
-                  ),
-                ],
                 const SizedBox(height: 8),
                 _infoCard(
-                  icon: Icons.local_taxi_outlined,
-                  label: 'Tipo de oferta',
-                  value: o.ofertaTipoEtiqueta,
-                ),
-                const SizedBox(height: 8),
-                _infoCard(
-                  icon: Icons.route,
+                  icon: Icons.route_outlined,
                   label: 'Trayecto A → B',
                   value:
                       '${o.distanciaKm.toStringAsFixed(2)} km · ${o.distanciaMi.toStringAsFixed(2)} mi',
@@ -476,7 +407,7 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                 if (distA != null) ...[
                   const SizedBox(height: 8),
                   _infoCard(
-                    icon: Icons.near_me,
+                    icon: Icons.near_me_outlined,
                     label: 'Distancia hasta el punto de recogida',
                     value: '${distA.toStringAsFixed(2)} km desde tu ubicación',
                   ),
@@ -486,82 +417,6 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                   icon: Icons.trip_origin,
                   label: 'Recoger en (punto A)',
                   value: o.origenTexto.isEmpty ? '—' : o.origenTexto,
-                ),
-                if (zona.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  _infoCard(
-                    icon: Icons.map_outlined,
-                    label: 'Municipio / provincia de origen',
-                    value: zona,
-                  ),
-                ],
-                const SizedBox(height: 8),
-                _infoCard(
-                  icon: Icons.flag,
-                  label: 'Destino (punto B)',
-                  value: o.destinoTexto.isEmpty ? '—' : o.destinoTexto,
-                ),
-                const SizedBox(height: 8),
-                _infoCard(
-                  icon: Icons.phone_outlined,
-                  label: 'Teléfono del pasajero',
-                  value: tel.isEmpty ? 'No disponible' : tel,
-                  trailing: tel.isEmpty
-                      ? null
-                      : IconButton(
-                          tooltip: 'Llamar',
-                          onPressed: () => _llamar(tel),
-                          icon: const Icon(
-                            Icons.call,
-                            color: Color(0xFF4CAF50),
-                            size: 20,
-                          ),
-                        ),
-                ),
-                if (solicitanteDistinto) ...[
-                  const SizedBox(height: 8),
-                  _infoCard(
-                    icon: Icons.person_outline,
-                    label: 'Solicitó el viaje',
-                    value: o.solicitanteNombre,
-                  ),
-                  if (o.solicitanteTelefono.trim().isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    _infoCard(
-                      icon: Icons.phone_iphone_outlined,
-                      label: 'Teléfono del solicitante',
-                      value: o.solicitanteTelefono.trim(),
-                      trailing: IconButton(
-                        tooltip: 'Llamar',
-                        onPressed: () => _llamar(o.solicitanteTelefono),
-                        icon: const Icon(
-                          Icons.call,
-                          color: Color(0xFF4CAF50),
-                          size: 20,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-                const SizedBox(height: 8),
-                _infoCard(
-                  icon: Icons.schedule,
-                  label: 'Solicitado',
-                  value: _fmtHora(o.createdAt),
-                ),
-                const SizedBox(height: 8),
-                _infoCard(
-                  icon: Icons.pin_drop_outlined,
-                  label: 'Coordenadas de recogida',
-                  value:
-                      '${o.origenLat.toStringAsFixed(5)}, ${o.origenLng.toStringAsFixed(5)}',
-                ),
-                const SizedBox(height: 8),
-                _infoCard(
-                  icon: Icons.flag_outlined,
-                  label: 'Coordenadas de destino',
-                  value:
-                      '${o.destinoLat.toStringAsFixed(5)}, ${o.destinoLng.toStringAsFixed(5)}',
                 ),
                 const SizedBox(height: 8),
               ],
@@ -584,6 +439,7 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                 ),
                 child: const Text(
                   'Rechazar',
+                  textAlign: TextAlign.center,
                   style: TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
@@ -611,6 +467,7 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                       )
                     : const Text(
                         'Aceptar',
+                        textAlign: TextAlign.center,
                         style: TextStyle(fontWeight: FontWeight.w800),
                       ),
               ),
@@ -626,44 +483,43 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
     required String label,
     required String value,
     bool highlight = false,
-    Widget? trailing,
   }) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       decoration: BoxDecoration(
         color: const Color(0xFF252A35),
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Icon(icon, size: 18, color: const Color(0xFF9CA3AF)),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 11),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  value,
-                  style: TextStyle(
-                    color: highlight
-                        ? const Color(0xFF4CAF50)
-                        : const Color(0xFFECEFF1),
-                    fontSize: highlight ? 18 : 13,
-                    fontWeight: highlight ? FontWeight.w800 : FontWeight.w600,
-                    height: 1.25,
-                  ),
-                ),
-              ],
+          const SizedBox(height: 8),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFF9CA3AF),
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              height: 1.25,
             ),
           ),
-          if (trailing != null) trailing,
+          const SizedBox(height: 4),
+          Text(
+            value,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: highlight
+                  ? const Color(0xFF4CAF50)
+                  : const Color(0xFFECEFF1),
+              fontSize: highlight ? 18 : 14,
+              fontWeight: highlight ? FontWeight.w800 : FontWeight.w600,
+              height: 1.3,
+            ),
+          ),
         ],
       ),
     );

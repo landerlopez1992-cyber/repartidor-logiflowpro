@@ -145,6 +145,20 @@ class TaxiLlamadaPersistenteService {
     _resultado = completer;
 
     try {
+      // No arrancar ringtone si el viaje ya no está en búsqueda.
+      final oferta = await TaxiChoferService.instance.detalleOferta(id);
+      if (oferta == null || oferta.estado != 'buscando_chofer') {
+        if (identical(_resultado, completer) && !completer.isCompleted) {
+          completer.complete(false);
+        }
+        if (identical(_resultado, completer)) {
+          _solicitudId = null;
+          _resultado = null;
+        }
+        print('🚕 Alerta taxi omitida: viaje $id ya no disponible');
+        return completer.future;
+      }
+
       await _mostrarNotificacionPersistente(
         titulo: titulo,
         mensaje: mensaje,

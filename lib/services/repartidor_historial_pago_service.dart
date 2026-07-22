@@ -185,6 +185,10 @@ class RepartidorHistorialPagoService {
         return detalle.trim().isNotEmpty ? detalle.trim() : 'Pago por recorrido';
       case 'acreditacion_dia':
         return detalle.trim().isNotEmpty ? detalle.trim() : 'Pago por día';
+      case 'acreditacion_propina_taxi':
+        return detalle.trim().isNotEmpty ? detalle.trim() : 'Propina de viaje';
+      case 'acreditacion_viaje_taxi':
+        return 'Ganancia de viaje taxi';
       case 'debito_solicitud':
         return 'Retiro a nómina (solicitud)';
       case 'debito_nomina_aceptada':

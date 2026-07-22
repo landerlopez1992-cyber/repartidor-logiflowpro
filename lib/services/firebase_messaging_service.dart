@@ -342,6 +342,18 @@ class FirebaseMessagingService {
       await TaxiIncomingCallDialog.show(nav.context, solicitudId);
       return;
     }
+    // Propina / chat / completado: no abrir «llamada»; ir a notificaciones o chat.
+    if (RepartidorNotificacionTipos.tiposTaxiChat.contains(tipo) ||
+        t == 'TAXI_CHAT') {
+      // Sin deep-link específico de chat taxi: el socio ya ve el viaje activo.
+      return;
+    }
+    if (RepartidorNotificacionTipos.tiposTaxiPropina.contains(tipo) ||
+        RepartidorNotificacionTipos.tiposTaxiViajeCompletado.contains(tipo) ||
+        t == 'TAXI_PROPINA' ||
+        t == 'TAXI_VIAJE_COMPLETADO') {
+      return;
+    }
     if (t == 'NUEVA_ORDEN' ||
         t == 'ORDEN_NUEVA' ||
         tipo == 'nueva_orden' ||

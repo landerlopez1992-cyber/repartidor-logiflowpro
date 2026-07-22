@@ -1,16 +1,26 @@
 import 'package:flutter/material.dart';
+import 'dart:math' as math;
 
 /// Auto vista superior (mismo estilo que CubaLink taxi / MapLibre).
+/// [headingDeg]: 0 = norte (arriba); rota el icono para que avance de frente.
 class TaxiUberMapCar extends StatelessWidget {
-  const TaxiUberMapCar({super.key, this.size = 32});
+  const TaxiUberMapCar({
+    super.key,
+    this.size = 32,
+    this.headingDeg = 0,
+  });
 
   final double size;
+  final double headingDeg;
 
   @override
   Widget build(BuildContext context) {
-    return CustomPaint(
-      size: Size(size, size),
-      painter: _TopDownCarPainter(),
+    return Transform.rotate(
+      angle: headingDeg * math.pi / 180,
+      child: CustomPaint(
+        size: Size(size, size),
+        painter: _TopDownCarPainter(),
+      ),
     );
   }
 }

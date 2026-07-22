@@ -1,13 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../config/app_colors.dart';
+import '../services/ruta_geometria_osrm_service.dart';
 import '../services/taxi_chofer_service.dart';
-import '../widgets/taxi_uber_map_car.dart';
+import '../widgets/taxi_chofer_maplibre.dart';
 
 /// Navegación GPS del socio:
 /// 1) Ubicación actual → punto A (recogida)
@@ -25,11 +25,18 @@ class TaxiNavegacionChoferScreen extends StatefulWidget {
 
 class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen> {
   late TaxiOfertaChofer _oferta;
-  final MapController _map = MapController();
   LatLng? _yo;
   StreamSubscription<Position>? _posSub;
   Timer? _pingTimer;
   bool _busy = false;
+  List<LatLng> _rutaReal = const [];
+  bool _cargandoRuta = false;
+  DateTime? _ultimaRutaAt;
+  LatLng? _ultimoOrigenRuta;
+  Timer? _chatBadgeTimer;
+  int _chatNoLeidos = 0;
+  String? _ultimoClienteMsgIdLeido;
+  bool _chatSheetAbierto = false;
 
   LatLng get _puntoA => LatLng(_oferta.origenLat, _oferta.origenLng);
   LatLng get _puntoB => LatLng(_oferta.destinoLat, _oferta.destinoLng);
@@ -43,20 +50,6 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     return 'Hacia el pasajero';
   }
 
-  String get _subtituloFase {
-    if (_faseDestino) {
-      return _oferta.destinoTexto.isEmpty
-          ? 'Destino del viaje (punto B)'
-          : _oferta.destinoTexto;
-    }
-    if (_faseEspera) {
-      return 'Ya estás en el punto de recogida. Cuando el pasajero aborde, inicia el viaje.';
-    }
-    return _oferta.origenTexto.isEmpty
-        ? 'Punto de recogida (punto A)'
-        : _oferta.origenTexto;
-  }
-
   String get _botonLabel {
     if (_faseDestino) return 'Completar viaje';
     if (_faseEspera) return 'Iniciar viaje';
@@ -67,10 +60,32 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
   void initState() {
     super.initState();
     _oferta = widget.oferta;
+    unawaited(_refrescarFotoPasajero());
     _iniciarGps();
     _pingTimer = Timer.periodic(const Duration(seconds: 8), (_) {
       unawaited(_enviarUbicacion());
     });
+    _chatBadgeTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      unawaited(_actualizarBadgeChat());
+    });
+    unawaited(_actualizarBadgeChat());
+  }
+
+  /// Asegura la foto de perfil del usuario web (CubaLink) en el círculo.
+  Future<void> _refrescarFotoPasajero() async {
+    final id = _oferta.id;
+    if (id.isEmpty) return;
+    try {
+      final det = await TaxiChoferService.instance.detalleOferta(id);
+      if (!mounted || det == null) return;
+      final foto = det.pasajeroFotoUrl?.trim();
+      if (foto == null || foto.isEmpty) return;
+      if (foto == _oferta.pasajeroFotoUrl?.trim() &&
+          det.pasajeroNombre == _oferta.pasajeroNombre) {
+        return;
+      }
+      setState(() => _oferta = det);
+    } catch (_) {}
   }
 
   Future<void> _iniciarGps() async {
@@ -86,8 +101,8 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       final pos = await Geolocator.getCurrentPosition();
       if (!mounted) return;
       setState(() => _yo = LatLng(pos.latitude, pos.longitude));
-      _map.move(_yo!, 15);
       await _enviarUbicacion();
+      unawaited(_actualizarRutaReal(forzar: true));
 
       _posSub = Geolocator.getPositionStream(
         locationSettings: const LocationSettings(
@@ -97,8 +112,61 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       ).listen((p) {
         if (!mounted) return;
         setState(() => _yo = LatLng(p.latitude, p.longitude));
+        unawaited(_actualizarRutaReal());
       });
     } catch (_) {}
+  }
+
+  /// Trayecto por calles (OSRM), no línea recta.
+  Future<void> _actualizarRutaReal({bool forzar = false}) async {
+    if (_cargandoRuta) return;
+    final ahora = DateTime.now();
+    if (!forzar &&
+        _ultimaRutaAt != null &&
+        ahora.difference(_ultimaRutaAt!) < const Duration(seconds: 12)) {
+      return;
+    }
+
+    final List<LatLng> waypoints;
+    if (_faseDestino) {
+      waypoints = [_yo ?? _puntoA, _puntoB];
+    } else if (_faseEspera) {
+      waypoints = [_puntoA, _puntoB];
+    } else {
+      final yo = _yo;
+      if (yo == null) return;
+      if (!forzar &&
+          _ultimoOrigenRuta != null &&
+          Geolocator.distanceBetween(
+                _ultimoOrigenRuta!.latitude,
+                _ultimoOrigenRuta!.longitude,
+                yo.latitude,
+                yo.longitude,
+              ) <
+              80) {
+        return;
+      }
+      waypoints = [yo, _puntoA];
+    }
+
+    _cargandoRuta = true;
+    try {
+      final geom =
+          await RutaGeometriaOsrmService.obtenerGeometriaConduccion(waypoints);
+      if (!mounted) return;
+      setState(() {
+        _rutaReal = geom.length >= 2 ? geom : waypoints;
+        _ultimaRutaAt = DateTime.now();
+        _ultimoOrigenRuta = waypoints.first;
+        _cargandoRuta = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _rutaReal = waypoints;
+        _cargandoRuta = false;
+      });
+    }
   }
 
   Future<void> _enviarUbicacion() async {
@@ -156,7 +224,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
         return;
       }
       setState(() => _oferta = res.oferta!);
-      _map.move(_puntoB, 14);
+      unawaited(_actualizarRutaReal(forzar: true));
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Ruta al destino cargada. ¡Buen viaje!'),
@@ -180,7 +248,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       return;
     }
     setState(() => _oferta = res.oferta!);
-    _map.move(_puntoA, 16);
+    unawaited(_actualizarRutaReal(forzar: true));
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text(
@@ -193,6 +261,10 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
 
   Future<void> _abrirChatPasajero() async {
     if (!mounted) return;
+    _chatSheetAbierto = true;
+    if (_chatNoLeidos > 0) {
+      setState(() => _chatNoLeidos = 0);
+    }
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -205,10 +277,45 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
         ),
       ),
     );
+    _chatSheetAbierto = false;
+    if (!mounted) return;
+    // Al cerrar el chat, todo lo visto cuenta como leído.
+    final list =
+        await TaxiChoferService.instance.listarMensajes(_oferta.id);
+    final cliente =
+        list.where((m) => m.autorRol == 'cliente').toList();
+    if (cliente.isNotEmpty) {
+      _ultimoClienteMsgIdLeido = cliente.last.id;
+    }
+    unawaited(TaxiChoferService.instance.marcarChatTaxiLeido(_oferta.id));
+    if (mounted) setState(() => _chatNoLeidos = 0);
+  }
+
+  /// Badge en «Enviar mensaje…» con mensajes del pasajero aún no abiertos.
+  Future<void> _actualizarBadgeChat() async {
+    if (!mounted || !_faseEspera || _chatSheetAbierto) return;
+    final list =
+        await TaxiChoferService.instance.listarMensajes(_oferta.id);
+    if (!mounted || _chatSheetAbierto) return;
+    final cliente =
+        list.where((m) => m.autorRol == 'cliente').toList();
+    int n;
+    final visto = _ultimoClienteMsgIdLeido;
+    if (visto == null || visto.isEmpty) {
+      n = cliente.length;
+    } else {
+      final idx = cliente.indexWhere((m) => m.id == visto);
+      n = idx < 0 ? cliente.length : (cliente.length - idx - 1);
+      if (n < 0) n = 0;
+    }
+    if (n != _chatNoLeidos) {
+      setState(() => _chatNoLeidos = n);
+    }
   }
 
   Future<void> _confirmarCancelarChofer() async {
-    if (_busy) return;
+    // Tras iniciar trayecto a B el socio no puede cancelar.
+    if (_busy || _faseDestino) return;
     final go = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -280,174 +387,97 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
   void dispose() {
     _posSub?.cancel();
     _pingTimer?.cancel();
+    _chatBadgeTimer?.cancel();
     super.dispose();
-  }
-
-  List<Polyline> _polylines() {
-    final out = <Polyline>[];
-    if (_faseDestino) {
-      // Trayectoria A → B
-      out.add(
-        Polyline(
-          points: [_puntoA, _puntoB],
-          color: const Color(0xFF1A73E8),
-          strokeWidth: 5,
-        ),
-      );
-      if (_yo != null) {
-        out.add(
-          Polyline(
-            points: [_yo!, _puntoB],
-            color: const Color(0xFF90CAF9),
-            strokeWidth: 3,
-          ),
-        );
-      }
-      return out;
-    }
-    if (_faseEspera) {
-      // En punto A: sin ruta de navegación
-      return out;
-    }
-    // Fase 1: ubicación actual → punto A
-    if (_yo != null) {
-      out.add(
-        Polyline(
-          points: [_yo!, _puntoA],
-          color: const Color(0xFF1A73E8),
-          strokeWidth: 4,
-        ),
-      );
-    }
-    return out;
-  }
-
-  List<Marker> _markers() {
-    final markers = <Marker>[
-      Marker(
-        point: _puntoA,
-        width: 40,
-        height: 40,
-        child: const Icon(
-          Icons.person_pin_circle,
-          color: Color(0xFF4CAF50),
-          size: 36,
-        ),
-      ),
-    ];
-    if (_faseDestino || _faseEspera) {
-      markers.add(
-        Marker(
-          point: _puntoB,
-          width: 40,
-          height: 40,
-          child: Icon(
-            Icons.flag,
-            color: _faseDestino
-                ? const Color(0xFFDC2626)
-                : const Color(0xFF9E9E9E),
-            size: 34,
-          ),
-        ),
-      );
-    }
-    if (_yo != null) {
-      markers.add(
-        Marker(
-          point: _yo!,
-          width: 40,
-          height: 40,
-          child: const TaxiUberMapCar(size: 40),
-        ),
-      );
-    }
-    return markers;
   }
 
   @override
   Widget build(BuildContext context) {
-    final polylines = _polylines();
-    final markers = _markers();
-    final center = _yo ?? (_faseDestino ? _puntoB : _puntoA);
+    final foto = _oferta.pasajeroFotoUrl?.trim();
+    final nombre = _oferta.pasajeroNombre.trim().isEmpty
+        ? 'Pasajero'
+        : _oferta.pasajeroNombre.trim();
+    final inicial =
+        nombre.isNotEmpty ? nombre.substring(0, 1).toUpperCase() : '?';
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
+      backgroundColor: const Color(0xFF12151C),
       appBar: AppBar(
         backgroundColor: const Color(0xFF37474F),
-        title: Text(_tituloFase),
+        foregroundColor: const Color(0xFFECEFF1),
+        title: Text(
+          _tituloFase,
+          style: const TextStyle(
+            color: Color(0xFFECEFF1),
+            fontWeight: FontWeight.w700,
+          ),
+        ),
       ),
       body: Column(
         children: [
           Expanded(
-            child: FlutterMap(
-              mapController: _map,
-              options: MapOptions(
-                initialCenter: center,
-                initialZoom: 14,
-                minZoom: 3,
-                maxZoom: 16,
-                backgroundColor: const Color(0xFFE8EEF4),
-              ),
-              children: [
-                TileLayer(
-                  urlTemplate:
-                      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-                  subdomains: const ['a', 'b', 'c', 'd'],
-                  userAgentPackageName: 'com.logiflow.repartidor',
-                  maxZoom: 16,
-                  maxNativeZoom: 16,
-                  retinaMode: false,
-                ),
-                if (polylines.isNotEmpty) PolylineLayer(polylines: polylines),
-                MarkerLayer(markers: markers),
-              ],
-            ),
+            child: _faseEspera
+                ? _panelEsperandoPasajero(foto, inicial, nombre)
+                : Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      TaxiChoferMapLibre(
+                        driver: _yo,
+                        pickup: _puntoA,
+                        destination: _puntoB,
+                        routePoints: _rutaReal,
+                        showDestination: _faseDestino,
+                      ),
+                      // Foto del pasajero: esquina inferior izquierda del mapa.
+                      Positioned(
+                        left: 14,
+                        bottom: 14,
+                        child: _pasajeroAvatar(foto, inicial),
+                      ),
+                    ],
+                  ),
           ),
           Material(
-            color: Colors.white,
-            elevation: 8,
+            color: const Color(0xFF1E232E),
+            elevation: 12,
             child: SafeArea(
               top: false,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      _oferta.pasajeroNombre,
+                      nombre,
+                      textAlign: TextAlign.center,
                       style: const TextStyle(
-                        color: Color(0xFF2C2C2C),
+                        color: Color(0xFFECEFF1),
                         fontWeight: FontWeight.w800,
-                        fontSize: 16,
+                        fontSize: 18,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _subtituloFase,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF666666),
-                        fontSize: 13,
-                        height: 1.3,
-                      ),
-                    ),
+                    const SizedBox(height: 12),
+                    _buildRutaDirecciones(),
                     if (_faseEspera) ...[
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 10),
                       Container(
+                        width: double.infinity,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 12,
                           vertical: 10,
                         ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFFF8E1),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: const Color(0xFFFFE082)),
+                          color: const Color(0xFF252A35),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.08),
+                          ),
                         ),
                         child: const Text(
                           'El pasajero ya recibió el aviso de que estás afuera.',
+                          textAlign: TextAlign.center,
                           style: TextStyle(
-                            color: Color(0xFF6D4C41),
+                            color: Color(0xFFECEFF1),
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
                             height: 1.3,
@@ -455,109 +485,457 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                         ),
                       ),
                     ],
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 10),
                     Text(
                       'Ganancia: \$${_oferta.gananciaUsd.toStringAsFixed(2)} · '
                       '${_oferta.distanciaKm.toStringAsFixed(1)} km',
+                      textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: Color(0xFF4CAF50),
                         fontWeight: FontWeight.w700,
-                        fontSize: 13,
+                        fontSize: 14,
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 14),
                     if (_faseEspera) ...[
-                      OutlinedButton.icon(
-                        onPressed: _busy ? null : _abrirChatPasajero,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF37474F),
-                          side: const BorderSide(
-                            color: Color(0xFF37474F),
-                            width: 1.2,
+                      Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: _busy ? null : _abrirChatPasajero,
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFFECEFF1),
+                                side: BorderSide(
+                                  color: Colors.white.withValues(alpha: 0.22),
+                                ),
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 13),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              icon: const Icon(
+                                Icons.chat_bubble_outline,
+                                size: 18,
+                              ),
+                              label: const Text(
+                                'Enviar mensaje al pasajero',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
                           ),
-                          padding: const EdgeInsets.symmetric(vertical: 13),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                        icon: const Icon(Icons.chat_bubble_outline, size: 18),
-                        label: const Text(
-                          'Enviar mensaje al pasajero',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 14,
-                          ),
-                        ),
+                          if (_chatNoLeidos > 0)
+                            Positioned(
+                              right: 10,
+                              top: -6,
+                              child: Container(
+                                constraints: const BoxConstraints(
+                                  minWidth: 20,
+                                  minHeight: 20,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFDC2626),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: const Color(0xFF1E232E),
+                                    width: 1.5,
+                                  ),
+                                ),
+                                alignment: Alignment.center,
+                                child: Text(
+                                  _chatNoLeidos > 99
+                                      ? '99+'
+                                      : '$_chatNoLeidos',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                    height: 1.1,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                       const SizedBox(height: 10),
                     ],
-                    ElevatedButton(
-                      onPressed: _busy ? null : _accionPrincipal,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _faseEspera
-                            ? const Color(0xFFFF9800)
-                            : const Color(0xFF37474F),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _busy ? null : _accionPrincipal,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF37474F),
+                          foregroundColor: const Color(0xFFECEFF1),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
+                        child: _busy
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Text(
+                                _botonLabel,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 15,
+                                ),
+                              ),
                       ),
-                      child: _busy
-                          ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : Text(
-                              _botonLabel,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 15,
-                              ),
+                    ),
+                    if (!_faseDestino) ...[
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          onPressed: _busy ? null : _confirmarCancelarChofer,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFDC2626),
+                            side: const BorderSide(
+                              color: Color(0xFFDC2626),
+                              width: 1.2,
                             ),
-                    ),
-                    const SizedBox(height: 10),
-                    OutlinedButton(
-                      onPressed: _busy ? null : _confirmarCancelarChofer,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFFDC2626),
-                        side: const BorderSide(
-                          color: Color(0xFFDC2626),
-                          width: 1.2,
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
+                            padding: const EdgeInsets.symmetric(vertical: 13),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: const Text(
+                            'Cancelar viaje',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14,
+                            ),
+                          ),
                         ),
                       ),
-                      child: const Text(
-                        'Cancelar viaje',
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Si cancelas, pierdes la carrera y el pasajero recupera su saldo.',
+                        textAlign: TextAlign.center,
                         style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
+                          color: Color(0xFF9CA3AF),
+                          fontSize: 11,
+                          height: 1.3,
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Si cancelas, pierdes la carrera y el pasajero recupera su saldo.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Color(0xFF9E9E9E),
-                        fontSize: 11,
-                        height: 1.3,
-                      ),
-                    ),
+                    ],
                   ],
                 ),
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Origen → destino con símbolos y rayitas (estilo itinerario).
+  /// En trayecto a B solo se muestra el destino.
+  Widget _buildRutaDirecciones() {
+    final origen = _oferta.origenTexto.trim().isEmpty
+        ? 'Punto de recogida'
+        : _oferta.origenTexto.trim();
+    final destino = _oferta.destinoTexto.trim().isEmpty
+        ? 'Destino'
+        : _oferta.destinoTexto.trim();
+
+    if (_faseDestino) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(12, 12, 14, 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF252A35),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Icon(Icons.flag, size: 18, color: Color(0xFFDC2626)),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Destino',
+                    style: TextStyle(
+                      color: Color(0xFF9CA3AF),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    destino,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFFECEFF1),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF252A35),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 22,
+            child: Column(
+              children: [
+                Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFF4CAF50),
+                    border: Border.all(color: Colors.white, width: 1.5),
+                  ),
+                ),
+                ...List.generate(
+                  5,
+                  (_) => Container(
+                    margin: const EdgeInsets.symmetric(vertical: 2),
+                    width: 2,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF9CA3AF).withValues(alpha: 0.55),
+                      borderRadius: BorderRadius.circular(1),
+                    ),
+                  ),
+                ),
+                const Icon(
+                  Icons.flag,
+                  size: 16,
+                  color: Color(0xFFDC2626),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Recogida',
+                  style: TextStyle(
+                    color: Color(0xFF9CA3AF),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  origen,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFFECEFF1),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    height: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Destino',
+                  style: TextStyle(
+                    color: Color(0xFF9CA3AF),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  destino,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFFECEFF1),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Tras «Llegada»: sustituye el mapa por confirmación visual del pasajero.
+  Widget _panelEsperandoPasajero(
+    String? foto,
+    String inicial,
+    String nombre,
+  ) {
+    return ColoredBox(
+      color: const Color(0xFF12151C),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 28),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _pasajeroAvatarGrande(foto, inicial),
+              const SizedBox(height: 24),
+              Text(
+                '¿Ya ves a tu pasajero $nombre?',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFFECEFF1),
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  height: 1.25,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Cuando aborde, pulsa «Iniciar viaje».',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Color(0xFF9CA3AF),
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  height: 1.35,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _pasajeroAvatarGrande(String? foto, String inicial) {
+    final url = (foto ?? '').trim();
+    final tieneFoto = url.startsWith('http://') || url.startsWith('https://');
+    const size = 120.0;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 3),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.28),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ClipOval(
+        child: tieneFoto
+            ? Image.network(
+                url,
+                fit: BoxFit.cover,
+                width: size,
+                height: size,
+                gaplessPlayback: true,
+                filterQuality: FilterQuality.medium,
+                errorBuilder: (_, __, ___) =>
+                    _avatarFallback(inicial, fontSize: 40),
+                loadingBuilder: (context, child, progress) {
+                  if (progress == null) return child;
+                  return _avatarFallback(inicial, fontSize: 40);
+                },
+              )
+            : _avatarFallback(inicial, fontSize: 40),
+      ),
+    );
+  }
+
+  Widget _pasajeroAvatar(String? foto, String inicial) {
+    final url = (foto ?? '').trim();
+    final tieneFoto = url.startsWith('http://') || url.startsWith('https://');
+    return Container(
+      width: 72,
+      height: 72,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 3),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.28),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: ClipOval(
+        child: tieneFoto
+            ? Image.network(
+                url,
+                fit: BoxFit.cover,
+                width: 72,
+                height: 72,
+                gaplessPlayback: true,
+                filterQuality: FilterQuality.medium,
+                errorBuilder: (_, __, ___) => _avatarFallback(inicial),
+                loadingBuilder: (context, child, progress) {
+                  if (progress == null) return child;
+                  return _avatarFallback(inicial);
+                },
+              )
+            : _avatarFallback(inicial),
+      ),
+    );
+  }
+
+  Widget _avatarFallback(String inicial, {double fontSize = 24}) {
+    return Container(
+      color: const Color(0xFF37474F),
+      alignment: Alignment.center,
+      child: Text(
+        inicial,
+        style: TextStyle(
+          color: const Color(0xFFECEFF1),
+          fontWeight: FontWeight.w800,
+          fontSize: fontSize,
+        ),
       ),
     );
   }
