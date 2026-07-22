@@ -327,9 +327,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     });
   }
 
-  Future<void> _comprobarActualizacionForzada() async {
-    final estado =
-        await RepartidorActualizacionForzadaService.instance.consultarDesdeConfig();
+  Future<void> _comprobarActualizacionForzada({
+    bool forceStoreLookup = false,
+  }) async {
+    final estado = await RepartidorActualizacionForzadaService.instance
+        .consultarDesdeConfig(forceStoreLookup: forceStoreLookup);
     if (!mounted) return;
     setState(() => _actualizacionForzada = estado);
   }
@@ -647,7 +649,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       _cargarOrdenes();
       _cargarMensajesNoLeidos();
       _cargarNotificacionesNoLeidas(); // CRÍTICO: Actualizar badge de notificaciones
-      _comprobarActualizacionForzada();
+      // Tras volver de Play: solo quita el modal si la versión instalada ya basta.
+      _comprobarActualizacionForzada(forceStoreLookup: true);
       unawaited(_refrescarTaxiBuscandoActivo());
       // CRÍTICO: Reactivar rastreo cuando la app vuelve a estar activa
       _verificarYActivarRastreo();
@@ -4160,9 +4163,6 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         if (_actualizacionForzada != null)
           ActualizacionForzadaOverlay(
             estado: _actualizacionForzada!,
-            onTiendaAbierta: () {
-              if (mounted) setState(() => _actualizacionForzada = null);
-            },
           ),
       ],
     );

@@ -3,16 +3,15 @@ import '../config/app_colors.dart';
 import '../services/repartidor_actualizacion_forzada_service.dart';
 import 'volonex_dialog.dart';
 
-/// Modal obligatorio y persistente hasta que el repartidor abre la tienda.
+/// Modal obligatorio hasta que la versión instalada sea >= la de la tienda.
+/// Abrir Play/App Store no cierra el modal; al volver a la app se revalida.
 class ActualizacionForzadaOverlay extends StatefulWidget {
   const ActualizacionForzadaOverlay({
     super.key,
     required this.estado,
-    this.onTiendaAbierta,
   });
 
   final ActualizacionForzadaEstado estado;
-  final VoidCallback? onTiendaAbierta;
 
   @override
   State<ActualizacionForzadaOverlay> createState() =>
@@ -26,15 +25,9 @@ class _ActualizacionForzadaOverlayState extends State<ActualizacionForzadaOverla
     if (_abriendo) return;
     setState(() => _abriendo = true);
     try {
-      final ok = await RepartidorActualizacionForzadaService.instance
+      await RepartidorActualizacionForzadaService.instance
           .abrirTienda(widget.estado.urlTienda);
-      if (ok) {
-        await RepartidorActualizacionForzadaService.instance.marcarTiendaAbierta(
-          plataforma: widget.estado.plataforma,
-          onda: widget.estado.onda,
-        );
-        widget.onTiendaAbierta?.call();
-      }
+      // No marcar onda ni cerrar: el padre reconsulta en AppLifecycleState.resumed.
     } finally {
       if (mounted) setState(() => _abriendo = false);
     }
@@ -44,6 +37,8 @@ class _ActualizacionForzadaOverlayState extends State<ActualizacionForzadaOverla
   Widget build(BuildContext context) {
     final esAndroid = widget.estado.plataforma == 'android';
     final etiquetaTienda = esAndroid ? 'Google Play' : 'App Store';
+    final instalada = widget.estado.installedVersion?.trim() ?? '';
+    final publicada = widget.estado.storePublishedVersion?.trim() ?? '';
 
     return PopScope(
       canPop: false,
@@ -69,6 +64,20 @@ class _ActualizacionForzadaOverlayState extends State<ActualizacionForzadaOverla
                     height: 1.45,
                   ),
                 ),
+                if (instalada.isNotEmpty || publicada.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    [
+                      if (instalada.isNotEmpty) 'Instalada: $instalada',
+                      if (publicada.isNotEmpty) 'En tienda: $publicada',
+                    ].join(' · '),
+                    style: const TextStyle(
+                      color: AppColors.darkTextMuted,
+                      fontSize: 12,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 Container(
                   padding: const EdgeInsets.all(10),
@@ -87,7 +96,8 @@ class _ActualizacionForzadaOverlayState extends State<ActualizacionForzadaOverla
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Debes actualizar desde $etiquetaTienda para seguir usando la app.',
+                          'Debes actualizar desde $etiquetaTienda para seguir usando la app. '
+                          'Esta ventana se cerrará solo cuando hayas instalado la nueva versión.',
                           style: const TextStyle(
                             color: AppColors.darkTextMuted,
                             fontSize: 12,

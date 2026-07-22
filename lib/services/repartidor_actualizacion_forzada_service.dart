@@ -1,10 +1,15 @@
 import 'dart:io' show Platform;
+
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:in_app_update/in_app_update.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../main.dart';
 
-/// Estado de actualización obligatoria desde tienda (Google Play / App Store).
+import '../main.dart';
+import 'store_listing_version_service.dart';
+
+/// Estado de actualización obligatoria (tienda + refuerzo Super Admin).
 class ActualizacionForzadaEstado {
   const ActualizacionForzadaEstado({
     required this.plataforma,
@@ -13,6 +18,8 @@ class ActualizacionForzadaEstado {
     this.titulo = 'Nueva versión disponible',
     this.mensaje =
         'Hay una actualización obligatoria. Instala la última versión desde la tienda para continuar.',
+    this.installedVersion,
+    this.storePublishedVersion,
   });
 
   final String plataforma; // android | ios
@@ -20,6 +27,8 @@ class ActualizacionForzadaEstado {
   final String urlTienda;
   final String titulo;
   final String mensaje;
+  final String? installedVersion;
+  final String? storePublishedVersion;
 }
 
 class RepartidorActualizacionForzadaService {
@@ -30,11 +39,20 @@ class RepartidorActualizacionForzadaService {
   static const _prefOndaAndroid = 'repartidor_onda_actualizacion_android';
   static const _prefOndaIos = 'repartidor_onda_actualizacion_ios';
 
+  static const String _playStoreFallbackUrl =
+      'https://play.google.com/store/apps/details?id=${StoreListingVersionService.androidPackageId}';
+
   String? get _plataformaActual {
     if (kIsWeb) return null;
     if (Platform.isAndroid) return 'android';
     if (Platform.isIOS) return 'ios';
     return null;
+  }
+
+  /// Solo Android consulta tienda mientras no haya listing iOS.
+  bool get storeListingCheckEnabled {
+    if (kIsWeb) return false;
+    return Platform.isAndroid;
   }
 
   Future<int> _ondaLocal(String plataforma) async {
@@ -45,10 +63,13 @@ class RepartidorActualizacionForzadaService {
     return prefs.getInt(_prefOndaIos) ?? 0;
   }
 
-  Future<void> marcarTiendaAbierta({
+  /// Persiste la onda solo cuando la versión instalada ya es suficiente
+  /// (no al abrir la tienda sin actualizar).
+  Future<void> marcarActualizacionResuelta({
     required String plataforma,
     required int onda,
   }) async {
+    if (onda <= 0) return;
     final prefs = await SharedPreferences.getInstance();
     if (plataforma == 'android') {
       await prefs.setInt(_prefOndaAndroid, onda);
@@ -57,7 +78,109 @@ class RepartidorActualizacionForzadaService {
     }
   }
 
-  Future<ActualizacionForzadaEstado?> consultarDesdeConfig() async {
+  /// @deprecated No usar para cerrar el modal: abrir tienda ≠ haber actualizado.
+  @Deprecated('Usar marcarActualizacionResuelta solo tras verificar versión')
+  Future<void> marcarTiendaAbierta({
+    required String plataforma,
+    required int onda,
+  }) async {
+    // Intencionalmente vacío: no cerrar overlay al abrir la tienda.
+  }
+
+  static int compareVersions(String a, String b) {
+    List<int> parts(String v) {
+      return v
+          .split(RegExp(r'[.\-+]'))
+          .map((e) => int.tryParse(e.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0)
+          .toList();
+    }
+
+    final pa = parts(a.trim());
+    final pb = parts(b.trim());
+    final len = pa.length > pb.length ? pa.length : pb.length;
+    for (var i = 0; i < len; i++) {
+      final va = i < pa.length ? pa[i] : 0;
+      final vb = i < pb.length ? pb[i] : 0;
+      if (va != vb) return va.compareTo(vb);
+    }
+    return 0;
+  }
+
+  static String normalizeInstalledVersion(String raw) =>
+      StoreListingVersionService.normalizeVersion(raw);
+
+  static Future<bool> playInAppUpdateAvailable() async {
+    if (kIsWeb || !Platform.isAndroid) return false;
+    try {
+      final info = await InAppUpdate.checkForUpdate()
+          .timeout(const Duration(seconds: 12));
+      return info.updateAvailability == UpdateAvailability.updateAvailable;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// ¿Bloquear? Instalada vs publicada en tienda (+ API Play) y/o onda Super Admin.
+  static bool requiresMandatoryUpdate({
+    required String installed,
+    required int ondaServidor,
+    required int ondaLocal,
+    String? storePublishedVersion,
+    bool playUpdateAvailable = false,
+  }) {
+    final inst = normalizeInstalledVersion(installed);
+    final store = storePublishedVersion != null
+        ? normalizeInstalledVersion(storePublishedVersion)
+        : '';
+
+    // Ya tiene lo último publicado → no bloquear (y la onda queda resuelta fuera).
+    if (store.isNotEmpty && compareVersions(inst, store) >= 0) {
+      return false;
+    }
+
+    if (playUpdateAvailable) return true;
+
+    if (store.isNotEmpty && compareVersions(inst, store) < 0) {
+      return true;
+    }
+
+    // Sin dato fiable de tienda: refuerzo Super Admin (onda pendiente).
+    if (ondaServidor > 0 && ondaLocal < ondaServidor) {
+      return true;
+    }
+
+    return false;
+  }
+
+  bool _esUrlTiendaAndroidValida(String url) {
+    final raw = url.trim();
+    if (raw.isEmpty) return false;
+    if (raw.startsWith('market://details')) return true;
+    final u = Uri.tryParse(raw);
+    if (u == null || !u.hasScheme) return false;
+    final host = u.host.toLowerCase();
+    if (!host.contains('play.google.com')) return false;
+    final id = u.queryParameters['id']?.trim();
+    return id != null && id.isNotEmpty;
+  }
+
+  bool _esUrlAppStoreValida(String url) {
+    final raw = url.trim();
+    if (raw.isEmpty) return false;
+    final u = Uri.tryParse(raw);
+    if (u == null || !u.hasScheme) return false;
+    final host = u.host.toLowerCase();
+    return host.contains('apps.apple.com') || host.contains('itunes.apple.com');
+  }
+
+  String _resolverUrlAndroid(String guardada) {
+    if (_esUrlTiendaAndroidValida(guardada)) return guardada.trim();
+    return _playStoreFallbackUrl;
+  }
+
+  Future<ActualizacionForzadaEstado?> consultarDesdeConfig({
+    bool forceStoreLookup = false,
+  }) async {
     final plataforma = _plataformaActual;
     if (plataforma == null) return null;
 
@@ -76,26 +199,88 @@ class RepartidorActualizacionForzadaService {
       final ondaServidor = plataforma == 'android'
           ? _parseOnda(row['onda_actualizacion_android'])
           : _parseOnda(row['onda_actualizacion_ios']);
-      if (ondaServidor <= 0) return null;
+
+      final urlAndroidRaw = _primeraUrl([
+            row['google_play_store_url'],
+            row['google_play_url'],
+          ]) ??
+          '';
+      final urlIosRaw = _primeraUrl([
+            row['apple_store_listing_url'],
+            row['apple_store_url'],
+          ]) ??
+          '';
+
+      // iOS sin listing App Store: no bloquear.
+      if (plataforma == 'ios' && !_esUrlAppStoreValida(urlIosRaw)) {
+        return null;
+      }
+
+      final urlTienda = plataforma == 'android'
+          ? _resolverUrlAndroid(urlAndroidRaw)
+          : urlIosRaw.trim();
+      if (urlTienda.isEmpty) return null;
+
+      final info = await PackageInfo.fromPlatform();
+      final installed = normalizeInstalledVersion(info.version);
+
+      String? storePublishedVersion;
+      var playUpdateAvailable = false;
+      if (storeListingCheckEnabled) {
+        if (forceStoreLookup) {
+          StoreListingVersionService.clearCache();
+        }
+        storePublishedVersion =
+            await StoreListingVersionService.fetchPublishedVersion(
+          iosStoreUrl: urlIosRaw,
+          androidStoreUrl: urlTienda,
+          forceRefresh: forceStoreLookup,
+        );
+        playUpdateAvailable = await playInAppUpdateAvailable();
+      } else if (plataforma == 'ios' && _esUrlAppStoreValida(urlIosRaw)) {
+        if (forceStoreLookup) {
+          StoreListingVersionService.clearCache();
+        }
+        storePublishedVersion =
+            await StoreListingVersionService.fetchPublishedVersion(
+          iosStoreUrl: urlIosRaw,
+          androidStoreUrl: urlAndroidRaw,
+          forceRefresh: forceStoreLookup,
+        );
+      }
 
       final ondaLocal = await _ondaLocal(plataforma);
-      if (ondaLocal >= ondaServidor) return null;
 
-      final url = plataforma == 'android'
-          ? _primeraUrl([
-              row['google_play_store_url'],
-              row['google_play_url'],
-            ])
-          : _primeraUrl([
-              row['apple_store_listing_url'],
-              row['apple_store_url'],
-            ]);
-      if (url == null || url.isEmpty) return null;
+      // Si ya está actualizado respecto a la tienda, sincronizar onda local.
+      final store = storePublishedVersion != null
+          ? normalizeInstalledVersion(storePublishedVersion)
+          : '';
+      if (store.isNotEmpty &&
+          compareVersions(installed, store) >= 0 &&
+          ondaServidor > 0 &&
+          ondaLocal < ondaServidor) {
+        await marcarActualizacionResuelta(
+          plataforma: plataforma,
+          onda: ondaServidor,
+        );
+      }
+
+      if (!requiresMandatoryUpdate(
+        installed: installed,
+        ondaServidor: ondaServidor,
+        ondaLocal: ondaLocal,
+        storePublishedVersion: storePublishedVersion,
+        playUpdateAvailable: playUpdateAvailable,
+      )) {
+        return null;
+      }
 
       return ActualizacionForzadaEstado(
         plataforma: plataforma,
-        onda: ondaServidor,
-        urlTienda: url,
+        onda: ondaServidor > 0 ? ondaServidor : 1,
+        urlTienda: urlTienda,
+        installedVersion: installed,
+        storePublishedVersion: storePublishedVersion,
         mensaje: plataforma == 'android'
             ? 'Hay una actualización obligatoria. Abre Google Play e instala la última versión para continuar.'
             : 'Hay una actualización obligatoria. Abre la App Store e instala la última versión para continuar.',
@@ -105,39 +290,57 @@ class RepartidorActualizacionForzadaService {
     }
   }
 
-  /// Consulta config global; si falla, usa datos de la notificación push/realtime.
+  /// Evalúa tienda + onda. El push solo dispara esta consulta (no cierra el modal).
   Future<ActualizacionForzadaEstado?> resolverActualizacionForzada({
     Map<String, dynamic>? notificacion,
+    bool forceStoreLookup = true,
   }) async {
-    final desdeConfig = await consultarDesdeConfig();
+    // La onda en BD ya subió con el RPC de Super Admin; no forzar solo por
+    // payload del push (evita mostrar el modal si la versión ya está al día).
+    final desdeConfig = await consultarDesdeConfig(
+      forceStoreLookup: forceStoreLookup,
+    );
     if (desdeConfig != null) return desdeConfig;
-    if (notificacion == null) return null;
 
-    final estado = desdeNotificacion(notificacion);
-    if (estado == null) return null;
+    // Respaldo: si la fila global no respondió, validar URL del push vs tienda.
+    if (notificacion == null) return null;
+    final provisional = desdeNotificacion(notificacion);
+    if (provisional == null) return null;
 
     try {
-      final row = await supabase
-          .from('logiflow_descargas_app')
-          .select('onda_actualizacion_android, onda_actualizacion_ios')
-          .eq('id', 1)
-          .maybeSingle();
-      if (row == null) return estado;
-
-      final onda = estado.plataforma == 'android'
-          ? _parseOnda(row['onda_actualizacion_android'])
-          : _parseOnda(row['onda_actualizacion_ios']);
-      if (onda <= 0) return estado;
-
+      final info = await PackageInfo.fromPlatform();
+      final installed = normalizeInstalledVersion(info.version);
+      String? storePublished;
+      var playOk = false;
+      if (storeListingCheckEnabled) {
+        storePublished = await StoreListingVersionService.fetchPublishedVersion(
+          androidStoreUrl: provisional.urlTienda,
+          forceRefresh: true,
+        );
+        playOk = await playInAppUpdateAvailable();
+      }
+      // Sin evidencia de tienda desactualizada / Play update, no bloquear.
+      if (storePublished == null && !playOk) return null;
+      if (!requiresMandatoryUpdate(
+        installed: installed,
+        ondaServidor: 0,
+        ondaLocal: 0,
+        storePublishedVersion: storePublished,
+        playUpdateAvailable: playOk,
+      )) {
+        return null;
+      }
       return ActualizacionForzadaEstado(
-        plataforma: estado.plataforma,
-        onda: onda,
-        urlTienda: estado.urlTienda,
-        titulo: estado.titulo,
-        mensaje: estado.mensaje,
+        plataforma: provisional.plataforma,
+        onda: provisional.onda,
+        urlTienda: provisional.urlTienda,
+        titulo: provisional.titulo,
+        mensaje: provisional.mensaje,
+        installedVersion: installed,
+        storePublishedVersion: storePublished,
       );
     } catch (_) {
-      return estado;
+      return null;
     }
   }
 
@@ -146,17 +349,27 @@ class RepartidorActualizacionForzadaService {
     if (plataforma == null) return null;
 
     final tipo = notif['tipo']?.toString() ?? '';
-    final esperado =
-        plataforma == 'android' ? 'actualizacion_forzada_android' : 'actualizacion_forzada_ios';
+    final esperado = plataforma == 'android'
+        ? 'actualizacion_forzada_android'
+        : 'actualizacion_forzada_ios';
     if (tipo != esperado) return null;
 
+    // iOS sin listing: no bloquear por push.
+    if (plataforma == 'ios') {
+      final url = notif['url_adjunto']?.toString().trim() ?? '';
+      if (!_esUrlAppStoreValida(url)) return null;
+    }
+
     final url = notif['url_adjunto']?.toString().trim() ?? '';
-    if (url.isEmpty) return null;
+    final urlFinal = plataforma == 'android'
+        ? (url.isNotEmpty ? _resolverUrlAndroid(url) : _playStoreFallbackUrl)
+        : url;
+    if (urlFinal.isEmpty) return null;
 
     return ActualizacionForzadaEstado(
       plataforma: plataforma,
       onda: DateTime.now().millisecondsSinceEpoch,
-      urlTienda: url,
+      urlTienda: urlFinal,
       titulo: notif['titulo']?.toString() ?? 'Nueva versión disponible',
       mensaje: notif['mensaje']?.toString() ??
           'Hay una actualización obligatoria. Instala la última versión desde la tienda.',
@@ -164,9 +377,42 @@ class RepartidorActualizacionForzadaService {
   }
 
   Future<bool> abrirTienda(String url) async {
+    if (Platform.isAndroid) {
+      return _abrirTiendaAndroid(url);
+    }
     final uri = Uri.tryParse(url);
     if (uri == null) return false;
-    return launchUrl(uri, mode: LaunchMode.externalApplication);
+    try {
+      return await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> _abrirTiendaAndroid(String urlPreferida) async {
+    const packageId = StoreListingVersionService.androidPackageId;
+    final httpsUrl = _resolverUrlAndroid(urlPreferida);
+    final marketUri = Uri.parse('market://details?id=$packageId');
+    try {
+      if (await canLaunchUrl(marketUri)) {
+        final ok = await launchUrl(
+          marketUri,
+          mode: LaunchMode.externalApplication,
+        );
+        if (ok) return true;
+      }
+    } catch (_) {}
+
+    final httpsUri = Uri.tryParse(httpsUrl);
+    if (httpsUri == null) return false;
+    try {
+      return await launchUrl(
+        httpsUri,
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      return false;
+    }
   }
 
   int _parseOnda(dynamic v) {
