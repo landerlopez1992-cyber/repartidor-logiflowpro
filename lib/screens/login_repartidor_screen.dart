@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../main.dart';
 import '../services/repartidor_seguridad_service.dart';
+import '../services/repartidor_suspension_service.dart';
 import 'repartidor_mobile_screen.dart';
 import 'aviso_ubicacion_destacado_screen.dart';
 import 'loading_data_screen.dart';
@@ -152,7 +153,7 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
         // Verificar que el usuario es un repartidor
         final userResponse = await supabase
             .from('usuarios')
-            .select('rol, nombre, tenant_id, auth_id')
+            .select('rol, nombre, tenant_id, auth_id, cuenta_suspendida')
             .eq('auth_id', response.user!.id)
             .single()
             .onError((error, stackTrace) async {
@@ -161,7 +162,7 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
               if (userEmail != null) {
                 return await supabase
                     .from('usuarios')
-                    .select('rol, nombre, tenant_id, auth_id')
+                    .select('rol, nombre, tenant_id, auth_id, cuenta_suspendida')
                     .eq('email', userEmail)
                     .single();
               }
@@ -181,6 +182,15 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
             print('💾 Datos de usuario guardados en caché para uso offline');
           } catch (e) {
             print('⚠️ Error guardando caché de usuario: $e');
+          }
+
+          final suspendido = RepartidorSuspensionService.esSuspendidoFlag(
+            userResponse['cuenta_suspendida'],
+          );
+          // Suspensión no bloquea el login: se aplica en Viajes / ajustes taxi.
+          if (suspendido) {
+            await RepartidorSuspensionService.instance
+                .marcarSuspendidoEnCache(true);
           }
           // Obtener información de la empresa para el modal
           String? empresaNombre = 'Tu empresa';

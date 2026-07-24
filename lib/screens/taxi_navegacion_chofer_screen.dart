@@ -5,11 +5,13 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../config/app_colors.dart';
+import '../services/repartidor_suspension_service.dart';
 import '../services/ruta_geometria_osrm_service.dart';
 import '../services/taxi_chofer_service.dart';
 import '../widgets/taxi_cash_cobrar_completar_modal.dart';
 import '../widgets/taxi_cash_comision_aviso_modal.dart';
 import '../widgets/taxi_chofer_maplibre.dart';
+import 'repartidor_mobile_screen.dart';
 import 'taxi_comision_pendiente_screen.dart';
 
 /// Navegación GPS del socio:
@@ -65,6 +67,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
   void initState() {
     super.initState();
     _oferta = widget.oferta;
+    unawaited(_bloquearSiCuentaSuspendida());
     unawaited(_refrescarFotoPasajero());
     _iniciarGps();
     _pingTimer = Timer.periodic(const Duration(seconds: 8), (_) {
@@ -78,6 +81,24 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     });
     unawaited(_actualizarBadgeChat());
     unawaited(_pollEstadoViajeRemoto());
+  }
+
+  Future<void> _bloquearSiCuentaSuspendida() async {
+    final suspendido =
+        await RepartidorSuspensionService.instance.estaSuspendidoAhora();
+    if (suspendido != true || !mounted) return;
+    _posSub?.cancel();
+    _pingTimer?.cancel();
+    _chatBadgeTimer?.cancel();
+    _estadoPollTimer?.cancel();
+    if (!mounted) return;
+    // No bloquea toda la app: vuelve al home (pestaña Viajes mostrará suspensión).
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => const RepartidorMobileScreen(),
+      ),
+      (_) => false,
+    );
   }
 
   /// Si el pasajero (u otro lado) cancela, salir del mapa y no quedar colgado.

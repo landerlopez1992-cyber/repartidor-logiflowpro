@@ -38,6 +38,8 @@ import 'taxi_incoming_call_dialog.dart';
 import 'taxi_navegacion_chofer_screen.dart';
 import 'taxi_chofer_mapa_screen.dart';
 import '../services/taxi_chofer_service.dart';
+import '../services/repartidor_suspension_service.dart';
+import '../widgets/repartidor_viajes_suspendido_panel.dart';
 import '../services/taxi_tarifas_chofer_service.dart';
 import '../services/taxi_buscando_prefs.dart';
 import '../services/taxi_llamada_persistente_service.dart';
@@ -163,6 +165,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   /// Pestaña home: false = Repartidor (órdenes), true = Viajes (taxi).
   bool _pestanaHomeViajes = false;
+  Timer? _suspensionPollTimer;
+  RealtimeChannel? _suspensionChannel;
+  /// Solo bloquea Viajes / taxi; no echa de la app.
+  bool _cuentaSuspendida = false;
   
   // Cache para órdenes filtradas (evitar recalcular en cada rebuild)
   List<Orden>? _ordenesFiltradasCache;
@@ -308,13 +314,17 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       await _obtenerRepartidorId();
       await _cargarNotificacionesNoLeidas();
       await _cargarSaldo(); // Cargar saldo del repartidor
-      // Modo taxi activo: persistente tras reinicio (solo se apaga manualmente).
-      unawaited(
-        TaxiTarifasChoferService.instance.reafirmarDisponibleSiActivoLocal(),
-      );
-      unawaited(_refrescarTaxiBuscandoActivo());
-      unawaited(_refrescarTaxiSocioConfigurado());
-      unawaited(_abrirViajeTaxiActivoSiHay());
+      // Suspensión primero: no reabrir Viajes/taxi si la empresa bloqueó la cuenta.
+      _iniciarVigilanciaSuspension();
+      unawaited(() async {
+        if (await _verificarSuspensionYBloquear()) return;
+        unawaited(
+          TaxiTarifasChoferService.instance.reafirmarDisponibleSiActivoLocal(),
+        );
+        unawaited(_refrescarTaxiBuscandoActivo());
+        unawaited(_refrescarTaxiSocioConfigurado());
+        unawaited(_abrirViajeTaxiActivoSiHay());
+      }());
       _suscribirseANotificaciones();
       _suscribirseANotificacionesOrdenes();
       _suscribirseACambiosPagos(); // Suscribirse a cambios en solicitudes de pago
@@ -366,9 +376,63 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     } catch (_) {}
   }
 
+  void _iniciarVigilanciaSuspension() {
+    _suspensionPollTimer?.cancel();
+    _suspensionPollTimer = Timer.periodic(const Duration(seconds: 12), (_) {
+      unawaited(_verificarSuspensionYBloquear());
+    });
+    try {
+      final user = supabase.auth.currentUser;
+      if (user == null) return;
+      _suspensionChannel?.unsubscribe();
+      _suspensionChannel = supabase
+          .channel('suspension_mobile_${user.id}')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.update,
+            schema: 'public',
+            table: 'usuarios',
+            filter: PostgresChangeFilter(
+              type: PostgresChangeFilterType.eq,
+              column: 'auth_id',
+              value: user.id,
+            ),
+            callback: (_) {
+              unawaited(_verificarSuspensionYBloquear());
+            },
+          )
+          .subscribe();
+    } catch (_) {}
+  }
+
+  /// Aplica suspensión de chofer: apaga buscar viajes, sin bloquear toda la app.
+  /// Retorna `true` si la cuenta está suspendida.
+  Future<bool> _verificarSuspensionYBloquear() async {
+    if (!mounted) return false;
+    final suspendido =
+        await RepartidorSuspensionService.instance.estaSuspendidoAhora();
+    final flag = suspendido == true;
+    if (!mounted) return flag;
+    if (_cuentaSuspendida != flag) {
+      setState(() => _cuentaSuspendida = flag);
+    }
+    if (!flag) return false;
+
+    try {
+      await TaxiTarifasChoferService.instance.setDisponible(false);
+    } catch (_) {}
+    try {
+      await TaxiBuscandoPrefs.setActivo(false);
+    } catch (_) {}
+    if (mounted && _taxiBuscandoActivo) {
+      setState(() => _taxiBuscandoActivo = false);
+    }
+    return true;
+  }
+
   /// Si hay carrera taxi aceptada/en curso, reabrir el mapa (p. ej. tras salir al home).
   Future<void> _abrirViajeTaxiActivoSiHay() async {
     try {
+      if (await _verificarSuspensionYBloquear()) return;
       final oferta = await TaxiChoferService.instance.viajeActivo();
       if (oferta == null || !mounted) return;
       final est = oferta.estado.toLowerCase();
@@ -642,6 +706,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     _timerVerificarNotificaciones?.cancel();
     _positionStreamSubscription?.cancel();
     _timerUbicacion?.cancel();
+    _suspensionPollTimer?.cancel();
+    _suspensionChannel?.unsubscribe();
     RepartidorSaldoService.revision.removeListener(_onSaldoRevisionExterna);
     super.dispose();
   }
@@ -652,6 +718,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     if (state == AppLifecycleState.resumed) {
       // Recargar configuración, órdenes y notificaciones cuando la app vuelve a estar activa
       print('🔄 App resumida - Recargando configuración, órdenes y notificaciones...');
+      unawaited(_verificarSuspensionYBloquear());
       _cargarConfiguracionPrioridad();
       _cargarOrdenes();
       _cargarMensajesNoLeidos();
@@ -2532,6 +2599,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
       // Viaje de taxi entrante (modal estilo llamada).
       if (RepartidorNotificacionTipos.tiposTaxiViaje.contains(tipo)) {
+        if (await _verificarSuspensionYBloquear()) return;
         final solicitudId = (numeroOrden).trim();
         if (solicitudId.isEmpty) return;
         if (notificacionId != null && notificacionId.isNotEmpty) {
@@ -3012,7 +3080,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
         // Si había viajes taxi sin aceptar (app cerrada / sin Realtime),
         // abrir modal estilo llamada con el más reciente AÚN disponible.
-        if (mounted && taxiPendientes.isNotEmpty) {
+        if (mounted &&
+            taxiPendientes.isNotEmpty &&
+            !await _verificarSuspensionYBloquear()) {
           taxiPendientes.sort((a, b) {
             final ca = a['created_at']?.toString() ?? '';
             final cb = b['created_at']?.toString() ?? '';
@@ -4154,14 +4224,25 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         ],
         ),
       ),
-                TaxiChoferMapaScreen(
-                  embedded: true,
-                  paisOperacion: _paisOperacion,
-                  onBuscandoChanged: (activo) {
-                    if (!mounted) return;
-                    setState(() => _taxiBuscandoActivo = activo);
-                  },
-                ),
+                _cuentaSuspendida
+                    ? RepartidorViajesSuspendidoPanel(
+                        empresaNombre: _nombreEmpresa,
+                        onAbrirChat: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const ChatRepartidorListaScreen(),
+                            ),
+                          );
+                        },
+                      )
+                    : TaxiChoferMapaScreen(
+                        embedded: true,
+                        paisOperacion: _paisOperacion,
+                        onBuscandoChanged: (activo) {
+                          if (!mounted) return;
+                          setState(() => _taxiBuscandoActivo = activo);
+                        },
+                      ),
               ],
             ),
           ),
@@ -4279,8 +4360,6 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   label: 'Repartidor',
                   icon: Icons.local_shipping_outlined,
                   selected: !_pestanaHomeViajes,
-                  // Indicador online taxi (fuera de pantalla Viajes).
-                  showDot: _taxiBuscandoActivo,
                   onTap: () {
                     if (_pestanaHomeViajes) {
                       setState(() => _pestanaHomeViajes = false);
@@ -4291,8 +4370,18 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   label: 'Viajes',
                   icon: Icons.local_taxi_outlined,
                   selected: _pestanaHomeViajes,
-                  enabled: _taxiSocioConfigurado,
+                  // Punto verde = buscando viajes (online taxi).
+                  showDot: !_cuentaSuspendida &&
+                      _taxiBuscandoActivo &&
+                      _taxiSocioConfigurado,
+                  enabled: _taxiSocioConfigurado || _cuentaSuspendida,
                   onTap: () async {
+                    if (_cuentaSuspendida) {
+                      if (!_pestanaHomeViajes) {
+                        setState(() => _pestanaHomeViajes = true);
+                      }
+                      return;
+                    }
                     await _refrescarTaxiSocioConfigurado();
                     if (!mounted) return;
                     if (!_taxiSocioConfigurado) {

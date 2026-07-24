@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'services/repartidor_telemetry_service.dart';
 import 'services/firebase_messaging_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'config/supabase_config.dart';
 import 'theme/volonex_theme.dart';
@@ -14,6 +15,7 @@ import 'screens/login_repartidor_screen.dart';
 import 'screens/repartidor_mobile_screen.dart';
 import 'screens/loading_data_screen.dart';
 import 'services/sync_service.dart';
+import 'services/repartidor_suspension_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -89,6 +91,7 @@ class AuthWrapper extends StatefulWidget {
 class _AuthWrapperState extends State<AuthWrapper> {
   bool _isLoading = true;
   bool _isAuthenticated = false;
+  bool _isSuspended = false;
 
   @override
   void initState() {
@@ -104,6 +107,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         if (mounted) {
           setState(() {
             _isAuthenticated = false;
+            _isSuspended = false;
             _isLoading = false;
           });
         }
@@ -173,9 +177,14 @@ class _AuthWrapperState extends State<AuthWrapper> {
           
           if (rol == 'REPARTIDOR') {
             print('✅ Usuario autenticado desde caché (modo offline)');
+            final suspendidoCache =
+                RepartidorSuspensionService.esSuspendidoFlag(
+              userData['cuenta_suspendida'],
+            );
             if (mounted) {
               setState(() {
                 _isAuthenticated = true;
+                _isSuspended = suspendidoCache;
                 _isLoading = false;
               });
             }
@@ -194,7 +203,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
       // 2️⃣ SEGUNDO: Si no hay caché o falló, verificar online
       var userData = await supabase
           .from('usuarios')
-          .select('rol, nombre, tenant_id, auth_id, repartidor_master, tipo_repartidor, foto_perfil')
+          .select('rol, nombre, tenant_id, auth_id, repartidor_master, tipo_repartidor, foto_perfil, cuenta_suspendida')
           .eq('auth_id', userId)
           .maybeSingle();
       
@@ -204,7 +213,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         if (user?.email != null) {
           userData = await supabase
               .from('usuarios')
-              .select('rol, nombre, tenant_id, auth_id, repartidor_master, tipo_repartidor, foto_perfil')
+              .select('rol, nombre, tenant_id, auth_id, repartidor_master, tipo_repartidor, foto_perfil, cuenta_suspendida')
               .eq('email', user!.email!)
               .maybeSingle();
         }
@@ -218,9 +227,13 @@ class _AuthWrapperState extends State<AuthWrapper> {
           await prefs.setString('cached_user_data_$userId', jsonEncode(userData));
           print('💾 Datos de usuario guardados en caché');
           
+          final suspendido = RepartidorSuspensionService.esSuspendidoFlag(
+            userData['cuenta_suspendida'],
+          );
           if (mounted) {
             setState(() {
               _isAuthenticated = true;
+              _isSuspended = suspendido;
               _isLoading = false;
             });
           }
@@ -273,9 +286,14 @@ class _AuthWrapperState extends State<AuthWrapper> {
           
           if (rol == 'REPARTIDOR') {
             print('✅ Usando caché como fallback (sin conexión)');
+            final suspendidoCache =
+                RepartidorSuspensionService.esSuspendidoFlag(
+              userData['cuenta_suspendida'],
+            );
             if (mounted) {
               setState(() {
                 _isAuthenticated = true;
+                _isSuspended = suspendidoCache;
                 _isLoading = false;
               });
             }
@@ -302,7 +320,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
       // Intentar verificar online sin bloquear
       final userData = await supabase
           .from('usuarios')
-          .select('rol, nombre, tenant_id, auth_id, repartidor_master, tipo_repartidor, foto_perfil')
+          .select('rol, nombre, tenant_id, auth_id, repartidor_master, tipo_repartidor, foto_perfil, cuenta_suspendida')
           .eq('auth_id', userId)
           .maybeSingle()
           .timeout(const Duration(seconds: 5));
@@ -315,6 +333,12 @@ class _AuthWrapperState extends State<AuthWrapper> {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('cached_user_data_$userId', jsonEncode(userData));
           print('🔄 Caché actualizado en segundo plano');
+          final suspendido = RepartidorSuspensionService.esSuspendidoFlag(
+            userData['cuenta_suspendida'],
+          );
+          if (mounted && (_isSuspended != suspendido)) {
+            setState(() => _isSuspended = suspendido);
+          }
         } else {
           // El rol cambió, cerrar sesión y limpiar TODOS los cachés
           final prefs = await SharedPreferences.getInstance();
@@ -350,7 +374,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
     }
 
     if (_isAuthenticated) {
-      // Navegar a pantalla de carga que precargará datos antes de mostrar pantalla principal
+      // Suspensión NO bloquea toda la app: se aplica en Viajes / ajustes taxi.
       return _LoadingScreenWrapper();
     } else {
       return const LoginRepartidorScreen();
@@ -408,13 +432,18 @@ class _LoadingScreenWrapperState extends State<_LoadingScreenWrapper> {
   }
 
   void _navegarAPantallaPrincipal() {
-    if (mounted) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (context) => const RepartidorMobileScreen(),
-        ),
-      );
-    }
+    if (!mounted) return;
+    unawaited(_navegarTrasCarga());
+  }
+
+  Future<void> _navegarTrasCarga() async {
+    if (!mounted) return;
+    // Suspensión se maneja dentro de la app (pestaña Viajes), no bloquea el acceso.
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (context) => const RepartidorMobileScreen(),
+      ),
+    );
   }
 
   @override

@@ -82,6 +82,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   // Tipo de repartidor
   bool _esRecolector = false;
   bool _esRepartidorMaster = false;
+  /// Suspensión de chofer (no bloquea toda la app; deshabilita ajustes taxi).
+  bool _cuentaSuspendida = false;
   
   final ImagePicker _picker = ImagePicker();
   late final void Function() _refrescarSaldoTrasSync;
@@ -212,6 +214,9 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           final tipoRepartidor = response['tipo_repartidor'] as String? ?? 'REPARTIDOR';
           final esRecolector = tipoRepartidor == 'RECOLECTOR';
           final esMaster = RepartidorMasterUtil.parseFlag(response['repartidor_master']);
+          final suspendida = response['cuenta_suspendida'] == true ||
+              response['cuenta_suspendida'] == 'true' ||
+              response['cuenta_suspendida'] == 1;
           await _persistirMasterFlag(esMaster);
 
           // Guardar en caché
@@ -250,6 +255,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             _fotoVehiculoUrl = _resolverFotoVehiculoUrl(response);
             _esRecolector = esRecolector;
             _esRepartidorMaster = esMaster;
+            _cuentaSuspendida = suspendida;
             _isLoading = false;
           });
           await _cargarPaisOperacion();
@@ -276,6 +282,9 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
               final tipoRepartidor = response['tipo_repartidor'] as String? ?? 'REPARTIDOR';
               final esRecolector = tipoRepartidor == 'RECOLECTOR';
               final esMaster = RepartidorMasterUtil.parseFlag(response['repartidor_master']);
+              final suspendida = response['cuenta_suspendida'] == true ||
+                  response['cuenta_suspendida'] == 'true' ||
+                  response['cuenta_suspendida'] == 1;
               await _persistirMasterFlag(esMaster);
 
               // Guardar en caché
@@ -313,6 +322,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                 _fotoVehiculoUrl = _resolverFotoVehiculoUrl(response);
                 _esRecolector = esRecolector;
                 _esRepartidorMaster = esMaster;
+                _cuentaSuspendida = suspendida;
                 _isLoading = false;
               });
               await _cargarPaisOperacion();
@@ -2690,114 +2700,135 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   Widget _buildAjustesTaxis() {
     return Column(
       children: [
-        Material(
-          color: AppColors.darkSurface,
-          borderRadius: BorderRadius.circular(12),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => const TaxiAjustesScreen(),
-                ),
-              );
-            },
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.darkBorder),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.local_taxi, color: Color(0xFF9CA3AF), size: 22),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Ajustes de taxis',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.darkText,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          'Define tu tarifa por km o milla',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppColors.darkTextMuted,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Icon(Icons.arrow_forward_ios,
-                      size: 16, color: AppColors.darkTextMuted),
-                ],
+        if (_cuentaSuspendida) ...[
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFDC2626).withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFDC2626)),
+            ),
+            child: const Text(
+              'Cuenta de chofer suspendida. Viajes y ajustes de taxi están '
+              'deshabilitados. Puedes usar Repartidor y chat.',
+              style: TextStyle(
+                color: Color(0xFFECEFF1),
+                fontSize: 12,
+                height: 1.35,
               ),
             ),
           ),
+        ],
+        _tileTaxiOpcion(
+          icon: Icons.local_taxi,
+          titulo: 'Ajustes de taxis',
+          subtitulo: _cuentaSuspendida
+              ? 'Deshabilitado — cuenta suspendida'
+              : 'Define tu tarifa por km o milla',
+          enabled: !_cuentaSuspendida,
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const TaxiAjustesScreen(),
+              ),
+            );
+          },
         ),
         const SizedBox(height: 8),
-        Material(
-          color: AppColors.darkSurface,
+        _tileTaxiOpcion(
+          icon: Icons.account_balance_wallet_outlined,
+          titulo: 'Comisión / fianza cash',
+          subtitulo: _cuentaSuspendida
+              ? 'Deshabilitado — cuenta suspendida'
+              : 'Deuda, fianza y transferir saldo a fianza',
+          enabled: !_cuentaSuspendida,
+          onTap: () async {
+            await Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const TaxiComisionPendienteScreen(),
+              ),
+            );
+            if (mounted) await _cargarSaldo();
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _tileTaxiOpcion({
+    required IconData icon,
+    required String titulo,
+    required String subtitulo,
+    required bool enabled,
+    required VoidCallback onTap,
+  }) {
+    final muted = enabled ? AppColors.darkTextMuted : const Color(0xFF6B7280);
+    final titleColor = enabled ? AppColors.darkText : const Color(0xFF9CA3AF);
+    return Opacity(
+      opacity: enabled ? 1 : 0.55,
+      child: Material(
+        color: AppColors.darkSurface,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
           borderRadius: BorderRadius.circular(12),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () async {
-              await Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => const TaxiComisionPendienteScreen(),
-                ),
-              );
-              if (mounted) await _cargarSaldo();
-            },
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.darkBorder),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.account_balance_wallet_outlined,
-                      color: Color(0xFF9CA3AF), size: 22),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Comisión / fianza cash',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.darkText,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          'Deuda, fianza y transferir saldo a fianza',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppColors.darkTextMuted,
-                          ),
-                        ),
-                      ],
+          onTap: enabled
+              ? onTap
+              : () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Tu cuenta de chofer está suspendida. Contacta a tu empresa.',
+                      ),
+                      backgroundColor: Color(0xFF37474F),
                     ),
-                  ),
-                  Icon(Icons.arrow_forward_ios,
-                      size: 16, color: AppColors.darkTextMuted),
-                ],
+                  );
+                },
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: enabled
+                    ? AppColors.darkBorder
+                    : const Color(0xFFDC2626).withValues(alpha: 0.45),
               ),
+            ),
+            child: Row(
+              children: [
+                Icon(icon, color: muted, size: 22),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        titulo,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: titleColor,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitulo,
+                        style: TextStyle(fontSize: 12, color: muted),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  enabled ? Icons.arrow_forward_ios : Icons.lock_outline,
+                  size: 16,
+                  color: muted,
+                ),
+              ],
             ),
           ),
         ),
-      ],
+      ),
     );
   }
 
