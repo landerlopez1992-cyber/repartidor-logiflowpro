@@ -5,7 +5,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_colors.dart';
 import '../main.dart';
 import '../services/repartidor_saldo_service.dart';
+import '../services/repartidor_seguridad_service.dart';
 import '../widgets/taxi_fianza_confirm_flow.dart';
+import '../widgets/taxi_zelle_enviar_recibo_flow.dart';
+import '../widgets/taxi_zelle_pago_explicacion_modal.dart';
 
 /// Comisión cash pendiente + fianza + transferir saldo → fianza + pagar a empresa.
 class TaxiComisionPendienteScreen extends StatefulWidget {
@@ -22,6 +25,7 @@ class _TaxiComisionPendienteScreenState
   bool _busy = false;
   String? _error;
   Map<String, dynamic> _data = {};
+  RealtimeChannel? _pagoChannel;
 
   final _transferCtrl = TextEditingController();
   final _pagoCtrl = TextEditingController();
@@ -34,6 +38,7 @@ class _TaxiComisionPendienteScreenState
 
   @override
   void dispose() {
+    _pagoChannel?.unsubscribe();
     _transferCtrl.dispose();
     _pagoCtrl.dispose();
     super.dispose();
@@ -59,6 +64,7 @@ class _TaxiComisionPendienteScreenState
           _pagoCtrl.text = deuda.toStringAsFixed(2);
         }
       });
+      _suscribirPagoPendiente();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -66,6 +72,42 @@ class _TaxiComisionPendienteScreenState
         _loading = false;
       });
     }
+  }
+
+  Map<String, dynamic>? get _pagoPendiente {
+    final p = _data['pago_pendiente'];
+    if (p is Map) return Map<String, dynamic>.from(p);
+    return null;
+  }
+
+  void _suscribirPagoPendiente() {
+    final pago = _pagoPendiente;
+    final pagoId = pago?['id']?.toString();
+    _pagoChannel?.unsubscribe();
+    _pagoChannel = null;
+    if (pagoId == null || pagoId.isEmpty) return;
+
+    _pagoChannel = supabase
+        .channel('taxi_comision_pago_chofer_$pagoId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'taxi_comision_pagos',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'id',
+            value: pagoId,
+          ),
+          callback: (_) async {
+            final habiaPendiente = _pagoPendiente != null;
+            await _cargar();
+            if (!mounted || !habiaPendiente) return;
+            if (_pagoPendiente == null) {
+              _toast('La empresa revisó tu pago');
+            }
+          },
+        )
+        .subscribe();
   }
 
   double _n(dynamic v) {
@@ -213,67 +255,135 @@ class _TaxiComisionPendienteScreenState
   }
 
   Future<void> _pagarZelle() async {
+    if (_pagoPendiente != null) {
+      _toast('Ya hay un comprobante en revisión. Espera la confirmación.');
+      return;
+    }
     final monto = double.tryParse(_pagoCtrl.text.replaceAll(',', '.'));
     if (monto == null || monto < 0.01) {
       _toast('Indica el monto', error: true);
       return;
     }
+
+    final zelle = _data['zelle'] is Map
+        ? Map<String, dynamic>.from(_data['zelle'] as Map)
+        : <String, dynamic>{};
+    final datosZelle = _datosZelleTexto(zelle);
+    final nombreEmpresa = await _nombreEmpresaActual();
+
+    if (!mounted) return;
+    final okModal = await TaxiZellePagoExplicacionModal.show(
+      context,
+      nombreEmpresa: nombreEmpresa,
+      datosZelle: datosZelle,
+      montoUsd: monto,
+    );
+    if (okModal != true || !mounted) return;
+
     final picker = ImagePicker();
     final x = await picker.pickImage(
       source: ImageSource.gallery,
       imageQuality: 75,
       maxWidth: 1600,
     );
-    if (x == null) return;
+    if (x == null || !mounted) return;
 
-    setState(() => _busy = true);
-    try {
-      final bytes = await x.readAsBytes();
-      final uid = supabase.auth.currentUser?.id ?? 'anon';
-      final path =
-          'taxi_comision_${uid}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      String url;
-      try {
-        await supabase.storage.from('comprobantes').uploadBinary(
-              path,
-              bytes,
-              fileOptions: const FileOptions(
-                contentType: 'image/jpeg',
-                upsert: true,
-              ),
-            );
-        url = supabase.storage.from('comprobantes').getPublicUrl(path);
-      } catch (_) {
-        await supabase.storage.from('fotos-perfil').uploadBinary(
-              path,
-              bytes,
-              fileOptions: const FileOptions(
-                contentType: 'image/jpeg',
-                upsert: true,
-              ),
-            );
-        url = supabase.storage.from('fotos-perfil').getPublicUrl(path);
-      }
+    final bytes = await x.readAsBytes();
+    if (!mounted) return;
 
-      final res = await supabase.rpc(
-        'taxi_comision_solicitar_pago',
-        params: {
-          'p_metodo': 'zelle',
-          'p_monto': monto,
-          'p_comprobante_url': url,
-        },
-      );
-      final map = Map<String, dynamic>.from(res as Map);
-      if (map['ok'] != true) {
-        throw Exception(map['mensaje'] ?? map['error'] ?? 'Error');
-      }
-      _toast(map['mensaje']?.toString() ?? 'Comprobante enviado');
+    final result = await TaxiZelleEnviarReciboFlow.run(
+      context,
+      imagenBytes: bytes,
+      montoUsd: monto,
+      enviar: () async {
+        final uid = supabase.auth.currentUser?.id ?? 'anon';
+        final path =
+            'taxi_comision_${uid}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        String url;
+        try {
+          await supabase.storage.from('comprobantes').uploadBinary(
+                path,
+                bytes,
+                fileOptions: const FileOptions(
+                  contentType: 'image/jpeg',
+                  upsert: true,
+                ),
+              );
+          url = supabase.storage.from('comprobantes').getPublicUrl(path);
+        } catch (_) {
+          await supabase.storage.from('fotos-perfil').uploadBinary(
+                path,
+                bytes,
+                fileOptions: const FileOptions(
+                  contentType: 'image/jpeg',
+                  upsert: true,
+                ),
+              );
+          url = supabase.storage.from('fotos-perfil').getPublicUrl(path);
+        }
+
+        final res = await supabase.rpc(
+          'taxi_comision_solicitar_pago',
+          params: {
+            'p_metodo': 'zelle',
+            'p_monto': monto,
+            'p_comprobante_url': url,
+          },
+        );
+        final map = Map<String, dynamic>.from(res as Map);
+        if (map['ok'] != true) {
+          return (
+            ok: false,
+            err: map['mensaje']?.toString() ??
+                map['error']?.toString() ??
+                'Error',
+            mensajeOk: null,
+          );
+        }
+        return (
+          ok: true,
+          err: null,
+          mensajeOk: map['mensaje']?.toString() ??
+              'La empresa revisará tu pago. Cuando lo confirme, '
+                  'se descontará de tu deuda.',
+        );
+      },
+    );
+
+    if (result?.ok == true) {
       await _cargar();
-    } catch (e) {
-      _toast('$e', error: true);
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
+  }
+
+  String _datosZelleTexto(Map<String, dynamic> zelle) {
+    final email = zelle['email']?.toString().trim() ?? '';
+    final tel = zelle['telefono']?.toString().trim() ?? '';
+    final texto = zelle['texto']?.toString().trim() ?? '';
+    final partes = <String>[];
+    if (email.isNotEmpty) partes.add(email);
+    if (tel.isNotEmpty && tel != email) partes.add(tel);
+    if (texto.isNotEmpty) partes.add(texto);
+    if (partes.isEmpty) return 'Ver datos Zelle en la empresa';
+    return partes.join(' · ');
+  }
+
+  Future<String> _nombreEmpresaActual() async {
+    final uid = supabase.auth.currentUser?.id;
+    if (uid != null) {
+      final cached =
+          await RepartidorSeguridadService.nombreEmpresaDesdeCache(uid);
+      if (cached != null && cached.trim().isNotEmpty) {
+        return cached.trim();
+      }
+    }
+    try {
+      final ctx = await RepartidorSeguridadService.cargarContexto();
+      if (ctx.nombreEmpresa.trim().isNotEmpty &&
+          ctx.nombreEmpresa.trim().toLowerCase() != 'tu empresa') {
+        return ctx.nombreEmpresa.trim();
+      }
+    } catch (_) {}
+    return 'la empresa';
   }
 
   void _toast(String msg, {bool error = false}) {
@@ -297,6 +407,8 @@ class _TaxiComisionPendienteScreenState
     final zelle = _data['zelle'] is Map
         ? Map<String, dynamic>.from(_data['zelle'] as Map)
         : <String, dynamic>{};
+    final pagoPendiente = _pagoPendiente;
+    final esperandoEmpresa = pagoPendiente != null;
 
     return Scaffold(
       backgroundColor: AppColors.darkBg,
@@ -452,6 +564,7 @@ class _TaxiComisionPendienteScreenState
                           const SizedBox(height: 8),
                           TextField(
                             controller: _pagoCtrl,
+                            enabled: !esperandoEmpresa,
                             keyboardType: const TextInputType.numberWithOptions(
                                 decimal: true),
                             style: const TextStyle(color: AppColors.darkText),
@@ -475,13 +588,67 @@ class _TaxiComisionPendienteScreenState
                                 ),
                               ),
                             const SizedBox(height: 8),
-                            ElevatedButton(
-                              onPressed: _busy || deuda < 0.01 ? null : _pagarZelle,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFFFF9800),
+                            if (esperandoEmpresa) ...[
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton(
+                                  onPressed: null,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF455A64),
+                                    disabledBackgroundColor:
+                                        const Color(0xFF455A64),
+                                    disabledForegroundColor:
+                                        const Color(0xFFECEFF1),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 12,
+                                      horizontal: 12,
+                                    ),
+                                  ),
+                                  child: const Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Color(0xFFECEFF1),
+                                        ),
+                                      ),
+                                      SizedBox(width: 10),
+                                      Flexible(
+                                        child: Text(
+                                          'Esperando confirmación…',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
-                              child: const Text('Pagar con Zelle (foto)'),
-                            ),
+                              const SizedBox(height: 6),
+                              Text(
+                                'Enviaste \$${_n(pagoPendiente['monto']).toStringAsFixed(2)} '
+                                'por ${pagoPendiente['metodo']}. '
+                                'La empresa debe aceptar el pago.',
+                                style: const TextStyle(
+                                  color: AppColors.darkTextMuted,
+                                  fontSize: 12,
+                                  height: 1.3,
+                                ),
+                              ),
+                            ] else
+                              ElevatedButton(
+                                onPressed:
+                                    _busy || deuda < 0.01 ? null : _pagarZelle,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFFF9800),
+                                ),
+                                child: const Text('Pagar con Zelle'),
+                              ),
                           ],
                           if (_data['metodo_oficina'] == true) ...[
                             const SizedBox(height: 8),
