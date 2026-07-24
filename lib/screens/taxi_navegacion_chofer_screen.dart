@@ -40,6 +40,8 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
   int _chatNoLeidos = 0;
   String? _ultimoClienteMsgIdLeido;
   bool _chatSheetAbierto = false;
+  Timer? _estadoPollTimer;
+  bool _salidaRemotaManejada = false;
 
   LatLng get _puntoA => LatLng(_oferta.origenLat, _oferta.origenLng);
   LatLng get _puntoB => LatLng(_oferta.destinoLat, _oferta.destinoLng);
@@ -71,7 +73,66 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     _chatBadgeTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       unawaited(_actualizarBadgeChat());
     });
+    _estadoPollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      unawaited(_pollEstadoViajeRemoto());
+    });
     unawaited(_actualizarBadgeChat());
+    unawaited(_pollEstadoViajeRemoto());
+  }
+
+  /// Si el pasajero (u otro lado) cancela, salir del mapa y no quedar colgado.
+  Future<void> _pollEstadoViajeRemoto() async {
+    if (_salidaRemotaManejada || _busy || !mounted) return;
+    final id = _oferta.id;
+    if (id.isEmpty) return;
+    try {
+      final det = await TaxiChoferService.instance.detalleOferta(id);
+      if (!mounted || _salidaRemotaManejada) return;
+
+      // null = error temporal / RPC; no cerrar la navegación.
+      if (det == null) return;
+
+      final est = det.estado.trim().toLowerCase();
+      if (est == 'cancelado') {
+        await _cerrarPorCancelacionRemota(
+          'El viaje fue cancelado.',
+        );
+        return;
+      }
+      if (est == 'completado') {
+        await _cerrarPorCancelacionRemota(
+          'El viaje ya finalizó.',
+        );
+        return;
+      }
+      // Actualizar oferta en vivo (fases / foto) sin salir.
+      if (est == 'aceptado' || est == 'en_camino' || est == 'en_viaje') {
+        if (det.estado != _oferta.estado ||
+            det.rutaFase != _oferta.rutaFase ||
+            det.pasajeroFotoUrl != _oferta.pasajeroFotoUrl) {
+          setState(() => _oferta = det);
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _cerrarPorCancelacionRemota(String mensaje) async {
+    if (_salidaRemotaManejada || !mounted) return;
+    _salidaRemotaManejada = true;
+    _estadoPollTimer?.cancel();
+    _pingTimer?.cancel();
+    _chatBadgeTimer?.cancel();
+    _posSub?.cancel();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(mensaje),
+        backgroundColor: const Color(0xFF37474F),
+      ),
+    );
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
   }
 
   /// Asegura la foto de perfil del usuario web (CubaLink) en el círculo.
@@ -225,7 +286,8 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
           comisionUsd: comision,
           topeDeudaUsd: _oferta.topeDeudaUsd,
           comisionPct: _oferta.comisionPct,
-          tituloAccion: 'Ir a pagar comisión',
+          gananciaChoferUsd: res.gananciaUsd ?? _oferta.gananciaUsd,
+          tituloAccion: 'Ir a pagar',
           mostrarCancelar: true,
         );
         if (!mounted) return;
@@ -361,6 +423,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
   Future<void> _confirmarCancelarChofer() async {
     // Tras iniciar trayecto a B el socio no puede cancelar.
     if (_busy || _faseDestino) return;
+    final esCash = _oferta.esPagoCash;
     final go = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -373,11 +436,19 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
             fontWeight: FontWeight.w700,
           ),
         ),
-        content: const Text(
-          'Si cancelas (por seguridad o algo sospechoso), pierdes esta carrera '
-          'y el importe se devuelve completo al pasajero.\n\n'
-          'No recibirás ganancia por este viaje.',
-          style: TextStyle(color: Color(0xFF666666), height: 1.4, fontSize: 14),
+        content: Text(
+          esCash
+              ? 'Si cancelas, pierdes esta carrera. Era pago en efectivo: '
+                  'no se devolverá saldo al pasajero porque no se cobró billetera.\n\n'
+                  'No recibirás ganancia por este viaje.'
+              : 'Si cancelas (por seguridad o algo sospechoso), pierdes esta carrera '
+                  'y el importe se devuelve completo al pasajero.\n\n'
+                  'No recibirás ganancia por este viaje.',
+          style: const TextStyle(
+            color: Color(0xFF666666),
+            height: 1.4,
+            fontSize: 14,
+          ),
         ),
         actions: [
           TextButton(
@@ -417,12 +488,17 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       return;
     }
 
+    _salidaRemotaManejada = true;
+    _estadoPollTimer?.cancel();
+
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
+      SnackBar(
         content: Text(
-          'Viaje cancelado. El saldo se devolvió al pasajero.',
+          esCash
+              ? 'Viaje cancelado. No se devolvió saldo (era cash).'
+              : 'Viaje cancelado. El saldo se devolvió al pasajero.',
         ),
-        backgroundColor: Color(0xFF37474F),
+        backgroundColor: const Color(0xFF37474F),
       ),
     );
     Navigator.of(context).pop();
@@ -433,6 +509,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     _posSub?.cancel();
     _pingTimer?.cancel();
     _chatBadgeTimer?.cancel();
+    _estadoPollTimer?.cancel();
     super.dispose();
   }
 
@@ -663,10 +740,12 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                         ),
                       ),
                       const SizedBox(height: 6),
-                      const Text(
-                        'Si cancelas, pierdes la carrera y el pasajero recupera su saldo.',
+                      Text(
+                        _oferta.esPagoCash
+                            ? 'Si cancelas, pierdes la carrera (cash: sin reembolso de billetera).'
+                            : 'Si cancelas, pierdes la carrera y el pasajero recupera su saldo.',
                         textAlign: TextAlign.center,
-                        style: TextStyle(
+                        style: const TextStyle(
                           color: Color(0xFF9CA3AF),
                           fontSize: 11,
                           height: 1.3,
@@ -840,10 +919,13 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     );
   }
 
-  /// Ganancia del chofer + indicador claro: cash al pasajero vs pago por empresa.
+  /// Ganancia + indicador cash/empresa (compacto, montos claros).
   Widget _panelPagoYGanancia() {
     final esCash = _oferta.esPagoCash;
     final totalCobrar = _oferta.precioUsd ?? _oferta.gananciaUsd;
+    final empresa = _oferta.comisionViajeUsd > 0
+        ? _oferta.comisionViajeUsd
+        : (totalCobrar - _oferta.gananciaUsd).clamp(0.0, totalCobrar).toDouble();
     final accent = esCash ? const Color(0xFF4CAF50) : const Color(0xFF64B5F6);
 
     return Container(
@@ -854,30 +936,29 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
         border: Border.all(color: accent.withValues(alpha: 0.35)),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
-                esCash ? Icons.payments_rounded : Icons.account_balance_wallet_outlined,
+                esCash
+                    ? Icons.payments_rounded
+                    : Icons.account_balance_wallet_outlined,
                 color: accent,
-                size: 20,
+                size: 18,
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  esCash
-                      ? 'Cobrar en cash al pasajero'
-                      : 'Pago por la empresa',
-                  style: TextStyle(
-                    color: accent,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 13,
-                  ),
+              const SizedBox(width: 6),
+              Text(
+                esCash ? 'Cash' : 'Pago empresa',
+                style: TextStyle(
+                  color: accent,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
                 ),
               ),
+              const SizedBox(width: 8),
               Text(
-                '${_oferta.distanciaKm.toStringAsFixed(1)} km',
+                '· ${_oferta.distanciaKm.toStringAsFixed(1)} km',
                 style: const TextStyle(
                   color: Color(0xFF9CA3AF),
                   fontSize: 12,
@@ -887,53 +968,44 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
             ],
           ),
           const SizedBox(height: 8),
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Tu ganancia',
-                  style: TextStyle(
-                    color: Color(0xFF9CA3AF),
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-              Text(
-                '\$${_oferta.gananciaUsd.toStringAsFixed(2)} USD',
-                style: const TextStyle(
-                  color: Color(0xFF4CAF50),
-                  fontWeight: FontWeight.w800,
-                  fontSize: 15,
-                ),
-              ),
-            ],
-          ),
           if (esCash) ...[
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Total a cobrar (cash)',
-                    style: TextStyle(
-                      color: Color(0xFF9CA3AF),
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-                Text(
-                  '\$${totalCobrar.toStringAsFixed(2)} USD',
-                  style: const TextStyle(
-                    color: Color(0xFFECEFF1),
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15,
-                  ),
-                ),
-              ],
+            _filaMonto('Cobrar al cliente', totalCobrar, const Color(0xFF4CAF50)),
+            const SizedBox(height: 4),
+            _filaMonto('Te quedas', _oferta.gananciaUsd, const Color(0xFFECEFF1)),
+            const SizedBox(height: 4),
+            _filaMonto('Dar a la empresa', empresa, const Color(0xFFFF9800)),
+          ] else
+            _filaMonto(
+              'Tu ganancia',
+              _oferta.gananciaUsd,
+              const Color(0xFF4CAF50),
             ),
-          ],
         ],
       ),
+    );
+  }
+
+  Widget _filaMonto(String label, double monto, Color color) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF9CA3AF),
+              fontSize: 12,
+            ),
+          ),
+        ),
+        Text(
+          '\$${monto.toStringAsFixed(2)}',
+          style: TextStyle(
+            color: color,
+            fontWeight: FontWeight.w800,
+            fontSize: 14,
+          ),
+        ),
+      ],
     );
   }
 

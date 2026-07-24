@@ -320,11 +320,17 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       _suscribirseACambiosPagos(); // Suscribirse a cambios en solicitudes de pago
       _suscribirseAOrdenesNuevas(); // Suscribirse a órdenes nuevas asignadas
       _suscribirseAPagosAceptados(); // Suscribirse a pagos aceptados
+      RepartidorSaldoService.revision.addListener(_onSaldoRevisionExterna);
       _iniciarVerificacionPeriodicaNotificaciones(); // Verificar notificaciones periódicamente como respaldo
       _verificarYActivarRastreo(); // CRÍTICO: Activar rastreo siempre que la app esté abierta (para indicador online/offline)
       _inicializarEstadoConexion(); // Inicializar estado de conexión
       await _comprobarActualizacionForzada();
     });
+  }
+
+  void _onSaldoRevisionExterna() {
+    if (!mounted || _repartidorId == null) return;
+    unawaited(_cargarSaldo());
   }
 
   Future<void> _comprobarActualizacionForzada({
@@ -636,6 +642,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     _timerVerificarNotificaciones?.cancel();
     _positionStreamSubscription?.cancel();
     _timerUbicacion?.cancel();
+    RepartidorSaldoService.revision.removeListener(_onSaldoRevisionExterna);
     super.dispose();
   }
 
@@ -649,6 +656,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       _cargarOrdenes();
       _cargarMensajesNoLeidos();
       _cargarNotificacionesNoLeidas(); // CRÍTICO: Actualizar badge de notificaciones
+      unawaited(_cargarSaldo());
       // Tras volver de Play: solo quita el modal si la versión instalada ya basta.
       _comprobarActualizacionForzada(forceStoreLookup: true);
       unawaited(_refrescarTaxiBuscandoActivo());

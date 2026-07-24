@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../main.dart';
 import 'sync_service.dart';
 import 'repartidor_perfil_cache_service.dart';
@@ -16,6 +18,34 @@ typedef RepartidorSaldoCargado = ({
 /// Saldo acumulado del repartidor (columna usuarios + solicitudes pendientes).
 class RepartidorSaldoService {
   RepartidorSaldoService._();
+
+  /// Incrementa cuando el saldo cambia (fianza, nómina, entrega, etc.).
+  /// Las pantallas de billetera deben escuchar y recargar.
+  static final ValueNotifier<int> revision = ValueNotifier<int>(0);
+
+  /// Actualiza caché local y avisa a listeners (billetera / perfil / home).
+  static Future<void> aplicarSaldoServidorYNotificar({
+    required double saldoServidor,
+    String moneda = 'USD',
+    bool? solicitudPendiente,
+  }) async {
+    var pendiente = solicitudPendiente;
+    if (pendiente == null) {
+      final cache = await RepartidorPerfilCacheService.getCachedSaldo();
+      pendiente = cache?['solicitud_pendiente'] == true;
+    }
+    await RepartidorPerfilCacheService.cacheSaldo(
+      saldoServidor,
+      moneda,
+      solicitudPendiente: pendiente,
+    );
+    revision.value = revision.value + 1;
+  }
+
+  /// Solo notifica (p. ej. tras operación que no devolvió saldo explícito).
+  static void notificarCambioSaldo() {
+    revision.value = revision.value + 1;
+  }
 
   static Future<RepartidorSaldoCargado> _desdeCache({
     required double pendienteCola,
@@ -52,7 +82,8 @@ class RepartidorSaldoService {
   }
 
   static Future<RepartidorSaldoCargado> cargarSaldo(String repartidorId) async {
-    final pendienteCola = await RepartidorSaldoOfflineService.totalPendienteEnCola();
+    final pendienteCola =
+        await RepartidorSaldoOfflineService.totalPendienteEnCola();
     final pendienteLocal =
         await RepartidorSolicitudPagoOfflineService.tieneSolicitudPendienteLocal(
       repartidorId,
@@ -98,7 +129,8 @@ class RepartidorSaldoService {
           .maybeSingle();
 
       final raw = row?['repartidor_saldo_acumulado'];
-      final saldoServidor = raw is num ? raw.toDouble() : double.tryParse('$raw') ?? 0;
+      final saldoServidor =
+          raw is num ? raw.toDouble() : double.tryParse('$raw') ?? 0;
       final moneda = row?['repartidor_saldo_moneda']?.toString() ?? 'USD';
 
       await RepartidorPerfilCacheService.cacheSaldo(
@@ -107,7 +139,8 @@ class RepartidorSaldoService {
         solicitudPendiente: solicitudPendiente,
       );
 
-      final perfilCache = await RepartidorPerfilCacheService.getCachedPerfilData();
+      final perfilCache =
+          await RepartidorPerfilCacheService.getCachedPerfilData();
       if (perfilCache != null) {
         await RepartidorPerfilCacheService.cachePerfilData({
           ...perfilCache,

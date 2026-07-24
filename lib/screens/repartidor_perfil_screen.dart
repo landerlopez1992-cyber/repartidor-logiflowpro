@@ -85,6 +85,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   
   final ImagePicker _picker = ImagePicker();
   late final void Function() _refrescarSaldoTrasSync;
+  late final VoidCallback _onSaldoRevision;
 
   @override
   void initState() {
@@ -94,7 +95,13 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         _cargarSaldo();
       }
     };
+    _onSaldoRevision = () {
+      if (mounted && _repartidorId != null) {
+        _cargarSaldo();
+      }
+    };
     SyncService().addSyncCompleteListener(_refrescarSaldoTrasSync);
+    RepartidorSaldoService.revision.addListener(_onSaldoRevision);
     _inicializarEstadoConexion();
     _cargarDatosPerfil();
   }
@@ -134,6 +141,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     _emailController.dispose();
     _channelPagos?.unsubscribe();
     SyncService().removeSyncCompleteListener(_refrescarSaldoTrasSync);
+    RepartidorSaldoService.revision.removeListener(_onSaldoRevision);
     super.dispose();
   }
 
@@ -2740,12 +2748,13 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           borderRadius: BorderRadius.circular(12),
           child: InkWell(
             borderRadius: BorderRadius.circular(12),
-            onTap: () {
-              Navigator.of(context).push(
+            onTap: () async {
+              await Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => const TaxiComisionPendienteScreen(),
                 ),
               );
+              if (mounted) await _cargarSaldo();
             },
             child: Container(
               padding: const EdgeInsets.all(16),

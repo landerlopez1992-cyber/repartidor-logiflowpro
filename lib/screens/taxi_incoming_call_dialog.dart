@@ -93,9 +93,9 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
         // Ya aceptado (este u otro flujo): no cerrar como “perdido”.
         return;
       }
-      if (est != 'buscando_chofer') {
+      if (est == 'cancelado' || est != 'buscando_chofer') {
         await TaxiLlamadaPersistenteService.instance.detener(
-          motivo: 'tomado_por_otro',
+          motivo: est == 'cancelado' ? 'cancelado_pasajero' : 'tomado_por_otro',
           resultado: false,
         );
         if (mounted) Navigator.of(context).pop(false);
@@ -156,7 +156,8 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
             : (total * ofertaActual.comisionPct / 100.0),
         topeDeudaUsd: ofertaActual.topeDeudaUsd,
         comisionPct: ofertaActual.comisionPct,
-        tituloAccion: 'Entendido, aceptar viaje',
+        gananciaChoferUsd: ofertaActual.gananciaUsd,
+        tituloAccion: 'Aceptar viaje',
       );
       if (okCash != true || !mounted) return;
     }
@@ -429,38 +430,28 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                   ),
                 ],
                 const SizedBox(height: 18),
-                _infoCard(
-                  icon: Icons.payments_outlined,
-                  label: o.esPagoCash
-                      ? 'Cobrarás del pasajero (cash)'
-                      : 'Tu ganancia',
-                  value: o.esPagoCash
-                      ? '\$${(o.precioUsd ?? o.gananciaUsd).toStringAsFixed(2)} USD'
-                      : '\$${o.gananciaUsd.toStringAsFixed(2)} USD',
-                  highlight: true,
-                ),
-                if (o.esPagoCash) ...[
-                  const SizedBox(height: 8),
+                if (o.esPagoCash)
+                  _cashMontosCompactos(
+                    cobrar: o.precioUsd ?? o.gananciaUsd,
+                    queda: o.gananciaUsd,
+                    empresa: o.comisionViajeUsd > 0
+                        ? o.comisionViajeUsd
+                        : ((o.precioUsd ?? o.gananciaUsd) - o.gananciaUsd)
+                            .clamp(0.0, o.precioUsd ?? o.gananciaUsd)
+                            .toDouble(),
+                  )
+                else ...[
                   _infoCard(
-                    icon: Icons.savings_outlined,
-                    label: 'Tu ganancia (de ese total)',
+                    icon: Icons.payments_outlined,
+                    label: 'Tu ganancia',
                     value: '\$${o.gananciaUsd.toStringAsFixed(2)} USD',
+                    highlight: true,
                   ),
-                ],
-                if (o.esPagoCash && o.comisionViajeUsd > 0) ...[
-                  const SizedBox(height: 8),
-                  _infoCard(
-                    icon: Icons.account_balance_outlined,
-                    label: 'Comisión a liquidar a la empresa',
-                    value: '\$${o.comisionViajeUsd.toStringAsFixed(2)} USD',
-                  ),
-                ],
-                if (!o.esPagoCash) ...[
                   const SizedBox(height: 8),
                   _infoCard(
                     icon: Icons.account_balance_wallet_outlined,
                     label: 'Método de pago',
-                    value: 'Por la empresa (billetera)',
+                    value: 'Por la empresa',
                   ),
                 ],
                 const SizedBox(height: 8),
@@ -541,6 +532,75 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
           ],
         ),
       ],
+    );
+  }
+
+  Widget _cashMontosCompactos({
+    required double cobrar,
+    required double queda,
+    required double empresa,
+  }) {
+    Widget fila(String label, double monto, Color color) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(
+                  color: Color(0xFF9CA3AF),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            Text(
+              '\$${monto.toStringAsFixed(2)}',
+              style: TextStyle(
+                color: color,
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF252A35),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: const Color(0xFF4CAF50).withValues(alpha: 0.35),
+        ),
+      ),
+      child: Column(
+        children: [
+          const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.payments_rounded, color: Color(0xFF4CAF50), size: 16),
+              SizedBox(width: 6),
+              Text(
+                'Pago en cash',
+                style: TextStyle(
+                  color: Color(0xFF4CAF50),
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          fila('Cobrar al cliente', cobrar, const Color(0xFF4CAF50)),
+          fila('Te quedas', queda, const Color(0xFFECEFF1)),
+          fila('Dar a la empresa', empresa, const Color(0xFFFF9800)),
+        ],
+      ),
     );
   }
 

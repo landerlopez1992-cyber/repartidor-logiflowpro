@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../config/app_colors.dart';
 import '../main.dart';
+import '../services/repartidor_saldo_service.dart';
+import '../widgets/taxi_fianza_confirm_flow.dart';
 
 /// Comisión cash pendiente + fianza + transferir saldo → fianza + pagar a empresa.
 class TaxiComisionPendienteScreen extends StatefulWidget {
@@ -78,24 +79,55 @@ class _TaxiComisionPendienteScreenState
       _toast('Indica un monto válido', error: true);
       return;
     }
-    setState(() => _busy = true);
-    try {
-      final res = await supabase.rpc(
-        'taxi_fianza_transferir_desde_saldo',
-        params: {'p_monto': monto},
-      );
-      final map = Map<String, dynamic>.from(res as Map);
-      if (map['ok'] != true) {
-        throw Exception(map['mensaje'] ?? map['error'] ?? 'Error');
-      }
-      _transferCtrl.clear();
-      _toast('Saldo transferido a tu fianza');
-      await _cargar();
-    } catch (e) {
-      _toast('$e', error: true);
-    } finally {
-      if (mounted) setState(() => _busy = false);
+    final saldo = _n(_data['saldo_billetera_usd']);
+    final fianza = _n(_data['fianza_usd']);
+    if (monto > saldo + 0.001) {
+      _toast('No tienes saldo suficiente en billetera', error: true);
+      return;
     }
+    if (_busy) return;
+
+    final ok = await TaxiFianzaConfirmFlow.run(
+      context,
+      modo: TaxiFianzaConfirmModo.transferirAFianza,
+      montoUsd: monto,
+      saldoBilleteraUsd: saldo,
+      fianzaActualUsd: fianza,
+      botonAceptar: 'Confirmar transferencia',
+      accion: () async {
+        final res = await supabase.rpc(
+          'taxi_fianza_transferir_desde_saldo',
+          params: {'p_monto': monto},
+        );
+        final map = Map<String, dynamic>.from(res as Map);
+        if (map['ok'] != true) {
+          return (
+            ok: false,
+            err: map['mensaje']?.toString() ??
+                map['error']?.toString() ??
+                'Error',
+            mensajeOk: null,
+          );
+        }
+        final saldoNuevo = map['saldo_billetera'];
+        if (saldoNuevo is num) {
+          await RepartidorSaldoService.aplicarSaldoServidorYNotificar(
+            saldoServidor: saldoNuevo.toDouble(),
+          );
+        } else {
+          RepartidorSaldoService.notificarCambioSaldo();
+        }
+        return (
+          ok: true,
+          err: null,
+          mensajeOk:
+              'Se movieron \$${monto.toStringAsFixed(2)} de tu billetera a la fianza de viajes cash.',
+        );
+      },
+    );
+    if (!ok || !mounted) return;
+    _transferCtrl.clear();
+    await _cargar();
   }
 
   Future<void> _pagarConFianza() async {
@@ -104,26 +136,51 @@ class _TaxiComisionPendienteScreenState
       _toast('Indica el monto a pagar', error: true);
       return;
     }
-    setState(() => _busy = true);
-    try {
-      final res = await supabase.rpc(
-        'taxi_comision_solicitar_pago',
-        params: {
-          'p_metodo': 'fianza',
-          'p_monto': monto,
-        },
-      );
-      final map = Map<String, dynamic>.from(res as Map);
-      if (map['ok'] != true) {
-        throw Exception(map['mensaje'] ?? map['error'] ?? 'Error');
-      }
-      _toast('Comisión cubierta con fianza');
-      await _cargar();
-    } catch (e) {
-      _toast('$e', error: true);
-    } finally {
-      if (mounted) setState(() => _busy = false);
+    final saldo = _n(_data['saldo_billetera_usd']);
+    final fianza = _n(_data['fianza_usd']);
+    if (monto > fianza + 0.001) {
+      _toast('Tu fianza no cubre ese monto', error: true);
+      return;
     }
+    if (_busy) return;
+
+    final ok = await TaxiFianzaConfirmFlow.run(
+      context,
+      modo: TaxiFianzaConfirmModo.pagarComisionConFianza,
+      montoUsd: monto,
+      saldoBilleteraUsd: saldo,
+      fianzaActualUsd: fianza,
+      botonAceptar: 'Confirmar pago',
+      accion: () async {
+        final res = await supabase.rpc(
+          'taxi_comision_solicitar_pago',
+          params: {
+            'p_metodo': 'fianza',
+            'p_monto': monto,
+          },
+        );
+        final map = Map<String, dynamic>.from(res as Map);
+        if (map['ok'] != true) {
+          return (
+            ok: false,
+            err: map['mensaje']?.toString() ??
+                map['error']?.toString() ??
+                'Error',
+            mensajeOk: null,
+          );
+        }
+        // Puede afectar deuda/fianza; refrescar billetera por si el ledger cambió.
+        RepartidorSaldoService.notificarCambioSaldo();
+        return (
+          ok: true,
+          err: null,
+          mensajeOk:
+              'Comisión de \$${monto.toStringAsFixed(2)} cubierta con tu fianza.',
+        );
+      },
+    );
+    if (!ok || !mounted) return;
+    await _cargar();
   }
 
   Future<void> _pagarOficina() async {
