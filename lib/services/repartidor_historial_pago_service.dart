@@ -174,7 +174,10 @@ class RepartidorHistorialPagoService {
 
   static bool esDebito(String tipo, double monto) {
     if (monto < 0) return true;
-    return tipo.startsWith('debito');
+    if (tipo.startsWith('debito')) return true;
+    if (tipo.startsWith('comision_viaje_cash')) return true;
+    if (tipo.startsWith('retencion_comision')) return true;
+    return false;
   }
 
   static String etiquetaMovimiento(String tipo, String detalle) {
@@ -192,9 +195,27 @@ class RepartidorHistorialPagoService {
       case 'debito_solicitud':
         return 'Retiro a nómina (solicitud)';
       case 'debito_nomina_aceptada':
-        return 'Descuento por nómina aceptada';
+        return 'Pago de nómina (neto)';
+      case 'retencion_comision_taxi_cash':
+        return detalle.trim().isNotEmpty
+            ? detalle.trim()
+            : 'Retención comisión cash en nómina';
+      case 'comision_viaje_cash_deuda':
+        return detalle.trim().isNotEmpty
+            ? detalle.trim()
+            : 'Comisión viaje cash (deuda empresa)';
+      case 'comision_viaje_cash_fianza':
+        return detalle.trim().isNotEmpty
+            ? detalle.trim()
+            : 'Comisión viaje cash (cubierta con fianza)';
+      case 'solicitud_pendiente':
+        return detalle.trim().isNotEmpty
+            ? detalle.trim()
+            : 'Solicitud de pago creada';
       case 'reintegro_rechazo':
         return 'Reintegro (nómina rechazada)';
+      case 'reverso_retencion_comision_taxi_cash':
+        return 'Reverso retención comisión cash';
       case 'reintegro_pendiente_migracion':
         return 'Reintegro de saldo';
       default:

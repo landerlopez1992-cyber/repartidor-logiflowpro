@@ -196,10 +196,14 @@ class RepartidorSolicitudPagoDialogs {
     required String moneda,
     required int totalOrdenes,
     String? paisOperacion,
+    double deudaTaxiCash = 0,
+    String? mensajeDeuda,
   }) async {
     // Moneda fija del tenant/repartidor (repartidor_saldo_moneda). Sin selector
     // hardcodeado USD/CUP: una empresa en Francia no debe ver opciones de Cuba.
     final monedaFija = MonedaTenantUtil.normalizarMoneda(moneda, paisOperacion);
+    final deuda = deudaTaxiCash < 0 ? 0.0 : deudaTaxiCash;
+    final netoMax = (saldo - deuda).clamp(0.0, double.infinity);
     final montoCtrl = TextEditingController(
       text: saldo > 0 ? saldo.toStringAsFixed(2) : '',
     );
@@ -208,67 +212,99 @@ class RepartidorSolicitudPagoDialogs {
       context: context,
       barrierDismissible: false,
       barrierColor: Colors.black54,
-      builder: (ctx) => VolonexDialog(
-        title: 'Solicitar pago',
-        leading: const Icon(Icons.payment, color: AppColors.botonPrincipal, size: 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _cajaDestacada(
-              'Saldo disponible: ${saldo.toStringAsFixed(2)} $monedaFija',
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) {
+          final pedido = double.tryParse(montoCtrl.text.trim()) ?? 0;
+          final desc = deuda >= 0.01
+              ? (pedido > 0 ? (deuda < pedido ? deuda : pedido) : 0.0)
+              : 0.0;
+          final netoEst = pedido > 0 ? (pedido - desc).clamp(0.0, double.infinity) : 0.0;
+          return VolonexDialog(
+            title: 'Solicitar pago',
+            leading: const Icon(Icons.payment, color: AppColors.botonPrincipal, size: 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _cajaDestacada(
+                  'Saldo disponible: ${saldo.toStringAsFixed(2)} $monedaFija',
+                ),
+                if (deuda >= 0.01) ...[
+                  const SizedBox(height: 10),
+                  _cajaDestacada(
+                    mensajeDeuda ??
+                        'Debes ${deuda.toStringAsFixed(2)} $monedaFija de comisión cash. '
+                            'Máximo a cobrar: ${netoMax.toStringAsFixed(2)} $monedaFija.',
+                    color: AppColors.botonPrincipal,
+                  ),
+                ],
+                const SizedBox(height: 12),
+                Text(
+                  totalOrdenes > 0
+                      ? 'Órdenes pendientes de cobro: $totalOrdenes'
+                      : 'Sin órdenes nuevas; puedes cobrar el saldo acumulado.',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: AppColors.darkTextMuted,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: montoCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  style: const TextStyle(color: AppColors.darkText, fontSize: 16),
+                  onChanged: (_) => setSt(() {}),
+                  decoration: _campoOscuro(
+                    label: 'Monto a solicitar (bruto)',
+                    suffix: monedaFija,
+                  ),
+                ),
+                if (deuda >= 0.01 && pedido > 0) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    'Retención comisión: ${desc.toStringAsFixed(2)} $monedaFija\n'
+                    'Cobrarás (neto): ${netoEst.toStringAsFixed(2)} $monedaFija',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: AppColors.exito,
+                      height: 1.4,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                Text(
+                  'Moneda de tu saldo: $monedaFija '
+                  '(definida por tu empresa)',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.darkTextMuted,
+                    height: 1.35,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            Text(
-              totalOrdenes > 0
-                  ? 'Órdenes pendientes de cobro: $totalOrdenes'
-                  : 'Sin órdenes nuevas; puedes cobrar el saldo acumulado.',
-              style: const TextStyle(
-                fontSize: 13,
-                color: AppColors.darkTextMuted,
-                height: 1.4,
-              ),
+            actions: _accionesEnviar(
+              ctx,
+              onEnviar: () {
+                final m = double.tryParse(montoCtrl.text.trim());
+                if (m == null || m <= 0) {
+                  _snack(ctx, 'Monto inválido');
+                  return;
+                }
+                if (m > saldo + 0.001) {
+                  _snack(
+                    ctx,
+                    'No puede superar el saldo (${saldo.toStringAsFixed(2)} $monedaFija)',
+                  );
+                  return;
+                }
+                Navigator.pop(ctx, true);
+              },
             ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: montoCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              style: const TextStyle(color: AppColors.darkText, fontSize: 16),
-              decoration: _campoOscuro(
-                label: 'Monto a solicitar',
-                suffix: monedaFija,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'Moneda de tu saldo: $monedaFija '
-              '(definida por tu empresa)',
-              style: const TextStyle(
-                fontSize: 12,
-                color: AppColors.darkTextMuted,
-                height: 1.35,
-              ),
-            ),
-          ],
-        ),
-        actions: _accionesEnviar(
-          ctx,
-          onEnviar: () {
-            final m = double.tryParse(montoCtrl.text.trim());
-            if (m == null || m <= 0) {
-              _snack(ctx, 'Monto inválido');
-              return;
-            }
-            if (m > saldo + 0.001) {
-              _snack(
-                ctx,
-                'No puede superar el saldo (${saldo.toStringAsFixed(2)} $monedaFija)',
-              );
-              return;
-            }
-            Navigator.pop(ctx, true);
-          },
-        ),
+          );
+        },
       ),
     );
 

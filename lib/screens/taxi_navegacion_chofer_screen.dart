@@ -7,7 +7,10 @@ import 'package:latlong2/latlong.dart';
 import '../config/app_colors.dart';
 import '../services/ruta_geometria_osrm_service.dart';
 import '../services/taxi_chofer_service.dart';
+import '../widgets/taxi_cash_cobrar_completar_modal.dart';
+import '../widgets/taxi_cash_comision_aviso_modal.dart';
 import '../widgets/taxi_chofer_maplibre.dart';
+import 'taxi_comision_pendiente_screen.dart';
 
 /// Navegación GPS del socio:
 /// 1) Ubicación actual → punto A (recogida)
@@ -181,9 +184,26 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
 
   Future<void> _accionPrincipal() async {
     if (_busy) return;
-    setState(() => _busy = true);
 
     if (_faseDestino) {
+      // Viaje cash: primero confirmar cobro al pasajero, luego completar.
+      if (_oferta.esPagoCash) {
+        final totalCobrar = _oferta.precioUsd ?? _oferta.gananciaUsd;
+        final comision = _oferta.comisionViajeUsd > 0
+            ? _oferta.comisionViajeUsd
+            : (totalCobrar > 0 && _oferta.comisionPct > 0
+                ? totalCobrar * _oferta.comisionPct / 100.0
+                : (totalCobrar - _oferta.gananciaUsd).clamp(0.0, totalCobrar));
+        final cobrado = await TaxiCashCobrarCompletarModal.show(
+          context,
+          totalCobrarUsd: totalCobrar,
+          gananciaChoferUsd: _oferta.gananciaUsd,
+          comisionEmpresaUsd: comision,
+        );
+        if (cobrado != true || !mounted) return;
+      }
+
+      setState(() => _busy = true);
       final res = await TaxiChoferService.instance.completar(_oferta.id);
       if (!mounted) return;
       setState(() => _busy = false);
@@ -194,6 +214,29 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
             backgroundColor: AppColors.error,
           ),
         );
+        return;
+      }
+      if (res.esCash || _oferta.esPagoCash) {
+        final total = _oferta.precioUsd ?? _oferta.gananciaUsd;
+        final comision = res.comisionUsd ?? _oferta.comisionViajeUsd;
+        final irPerfil = await TaxiCashComisionAvisoModal.show(
+          context,
+          totalViajeUsd: total,
+          comisionUsd: comision,
+          topeDeudaUsd: _oferta.topeDeudaUsd,
+          comisionPct: _oferta.comisionPct,
+          tituloAccion: 'Ir a pagar comisión',
+          mostrarCancelar: true,
+        );
+        if (!mounted) return;
+        Navigator.of(context).pop();
+        if (irPerfil == true && mounted) {
+          await Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const TaxiComisionPendienteScreen(),
+            ),
+          );
+        }
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
@@ -209,6 +252,8 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       Navigator.of(context).pop();
       return;
     }
+
+    setState(() => _busy = true);
 
     if (_faseEspera) {
       final res = await TaxiChoferService.instance.iniciarViaje(_oferta.id);
@@ -486,16 +531,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                       ),
                     ],
                     const SizedBox(height: 10),
-                    Text(
-                      'Ganancia: \$${_oferta.gananciaUsd.toStringAsFixed(2)} · '
-                      '${_oferta.distanciaKm.toStringAsFixed(1)} km',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Color(0xFF4CAF50),
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                      ),
-                    ),
+                    _panelPagoYGanancia(),
                     const SizedBox(height: 14),
                     if (_faseEspera) ...[
                       Stack(
@@ -799,6 +835,103 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// Ganancia del chofer + indicador claro: cash al pasajero vs pago por empresa.
+  Widget _panelPagoYGanancia() {
+    final esCash = _oferta.esPagoCash;
+    final totalCobrar = _oferta.precioUsd ?? _oferta.gananciaUsd;
+    final accent = esCash ? const Color(0xFF4CAF50) : const Color(0xFF64B5F6);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF252A35),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: accent.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                esCash ? Icons.payments_rounded : Icons.account_balance_wallet_outlined,
+                color: accent,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  esCash
+                      ? 'Cobrar en cash al pasajero'
+                      : 'Pago por la empresa',
+                  style: TextStyle(
+                    color: accent,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              Text(
+                '${_oferta.distanciaKm.toStringAsFixed(1)} km',
+                style: const TextStyle(
+                  color: Color(0xFF9CA3AF),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Tu ganancia',
+                  style: TextStyle(
+                    color: Color(0xFF9CA3AF),
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              Text(
+                '\$${_oferta.gananciaUsd.toStringAsFixed(2)} USD',
+                style: const TextStyle(
+                  color: Color(0xFF4CAF50),
+                  fontWeight: FontWeight.w800,
+                  fontSize: 15,
+                ),
+              ),
+            ],
+          ),
+          if (esCash) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Total a cobrar (cash)',
+                    style: TextStyle(
+                      color: Color(0xFF9CA3AF),
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                Text(
+                  '\$${totalCobrar.toStringAsFixed(2)} USD',
+                  style: const TextStyle(
+                    color: Color(0xFFECEFF1),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );

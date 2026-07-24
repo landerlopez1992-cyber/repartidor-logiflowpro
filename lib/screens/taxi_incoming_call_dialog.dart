@@ -6,6 +6,7 @@ import '../config/app_colors.dart';
 import '../navigation/repartidor_navigator.dart';
 import '../services/taxi_chofer_service.dart';
 import '../services/taxi_llamada_persistente_service.dart';
+import '../widgets/taxi_cash_comision_aviso_modal.dart';
 import 'taxi_navegacion_chofer_screen.dart';
 
 /// Modal estilo “llamada entrante” persistente (Uber).
@@ -144,6 +145,22 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
 
   Future<void> _aceptar() async {
     if (_busy) return;
+    final ofertaActual = _oferta;
+    if (ofertaActual != null && ofertaActual.esPagoCash) {
+      final total = ofertaActual.precioUsd ?? ofertaActual.gananciaUsd;
+      final okCash = await TaxiCashComisionAvisoModal.show(
+        context,
+        totalViajeUsd: total,
+        comisionUsd: ofertaActual.comisionViajeUsd > 0
+            ? ofertaActual.comisionViajeUsd
+            : (total * ofertaActual.comisionPct / 100.0),
+        topeDeudaUsd: ofertaActual.topeDeudaUsd,
+        comisionPct: ofertaActual.comisionPct,
+        tituloAccion: 'Entendido, aceptar viaje',
+      );
+      if (okCash != true || !mounted) return;
+    }
+
     setState(() => _busy = true);
     try {
       final res = await TaxiChoferService.instance.aceptar(widget.solicitudId);
@@ -390,13 +407,62 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                     height: 1.2,
                   ),
                 ),
+                if (o.esPagoCash) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF4CAF50).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: const Color(0xFF4CAF50).withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: const Text(
+                      'Pago en efectivo (cash)',
+                      style: TextStyle(
+                        color: Color(0xFF4CAF50),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 18),
                 _infoCard(
                   icon: Icons.payments_outlined,
-                  label: 'Ganarás',
-                  value: '\$${o.gananciaUsd.toStringAsFixed(2)} USD',
+                  label: o.esPagoCash
+                      ? 'Cobrarás del pasajero (cash)'
+                      : 'Tu ganancia',
+                  value: o.esPagoCash
+                      ? '\$${(o.precioUsd ?? o.gananciaUsd).toStringAsFixed(2)} USD'
+                      : '\$${o.gananciaUsd.toStringAsFixed(2)} USD',
                   highlight: true,
                 ),
+                if (o.esPagoCash) ...[
+                  const SizedBox(height: 8),
+                  _infoCard(
+                    icon: Icons.savings_outlined,
+                    label: 'Tu ganancia (de ese total)',
+                    value: '\$${o.gananciaUsd.toStringAsFixed(2)} USD',
+                  ),
+                ],
+                if (o.esPagoCash && o.comisionViajeUsd > 0) ...[
+                  const SizedBox(height: 8),
+                  _infoCard(
+                    icon: Icons.account_balance_outlined,
+                    label: 'Comisión a liquidar a la empresa',
+                    value: '\$${o.comisionViajeUsd.toStringAsFixed(2)} USD',
+                  ),
+                ],
+                if (!o.esPagoCash) ...[
+                  const SizedBox(height: 8),
+                  _infoCard(
+                    icon: Icons.account_balance_wallet_outlined,
+                    label: 'Método de pago',
+                    value: 'Por la empresa (billetera)',
+                  ),
+                ],
                 const SizedBox(height: 8),
                 _infoCard(
                   icon: Icons.route_outlined,

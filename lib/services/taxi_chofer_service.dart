@@ -29,6 +29,12 @@ class TaxiOfertaChofer {
     this.rutaFase = 'hacia_pasajero',
     this.pasajeros = 1,
     this.capacidadChofer = 4,
+    this.metodoPago = 'wallet',
+    this.esPagoCash = false,
+    this.cashHabilitado = false,
+    this.comisionPct = 0,
+    this.comisionViajeUsd = 0,
+    this.topeDeudaUsd = 100,
   });
 
   final String id;
@@ -57,6 +63,12 @@ class TaxiOfertaChofer {
   final String rutaFase;
   final int pasajeros;
   final int capacidadChofer;
+  final String metodoPago;
+  final bool esPagoCash;
+  final bool cashHabilitado;
+  final double comisionPct;
+  final double comisionViajeUsd;
+  final double topeDeudaUsd;
 
   /// Fase 1: yendo al punto A (recogida).
   bool get haciaPasajero =>
@@ -135,6 +147,14 @@ class TaxiOfertaChofer {
       rutaFase: m['ruta_fase']?.toString() ?? 'hacia_pasajero',
       pasajeros: (m['pasajeros'] as num?)?.toInt() ?? 1,
       capacidadChofer: (m['capacidad_chofer'] as num?)?.toInt() ?? 4,
+      metodoPago: (m['metodo_pago']?.toString() ?? 'wallet').toLowerCase(),
+      esPagoCash: m['es_pago_cash'] == true,
+      cashHabilitado: m['cash_habilitado'] == true,
+      comisionPct: (m['comision_pct'] as num?)?.toDouble() ?? 0,
+      comisionViajeUsd: (m['comision_viaje_usd'] as num?)?.toDouble() ??
+          (m['comision_empresa_usd'] as num?)?.toDouble() ??
+          0,
+      topeDeudaUsd: (m['tope_deuda_usd'] as num?)?.toDouble() ?? 100,
     );
   }
 }
@@ -292,9 +312,8 @@ class TaxiChoferService {
     }
   }
 
-  Future<({bool ok, String? err, double? gananciaUsd})> completar(
-    String solicitudId,
-  ) async {
+  Future<({bool ok, String? err, double? gananciaUsd, double? comisionUsd, bool esCash})>
+      completar(String solicitudId) async {
     try {
       final res = await _db.rpc(
         'taxi_chofer_completar_viaje',
@@ -302,7 +321,15 @@ class TaxiChoferService {
       );
       if (res is Map && res['ok'] == true) {
         final g = (res['ganancia_usd'] as num?)?.toDouble();
-        return (ok: true, err: null, gananciaUsd: g);
+        final c = (res['comision_empresa_usd'] as num?)?.toDouble();
+        final cash = (res['metodo_pago']?.toString() ?? '').toLowerCase() == 'cash';
+        return (
+          ok: true,
+          err: null,
+          gananciaUsd: g,
+          comisionUsd: c,
+          esCash: cash,
+        );
       }
       final msg = res is Map
           ? (res['mensaje']?.toString() ?? res['error']?.toString())
@@ -311,9 +338,17 @@ class TaxiChoferService {
         ok: false,
         err: msg ?? 'No se pudo completar',
         gananciaUsd: null,
+        comisionUsd: null,
+        esCash: false,
       );
     } catch (e) {
-      return (ok: false, err: e.toString(), gananciaUsd: null);
+      return (
+        ok: false,
+        err: e.toString(),
+        gananciaUsd: null,
+        comisionUsd: null,
+        esCash: false,
+      );
     }
   }
 

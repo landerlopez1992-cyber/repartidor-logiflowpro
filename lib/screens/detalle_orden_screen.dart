@@ -343,7 +343,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             print('✅ [INIT] Creando _sucursalInfo INMEDIATAMENTE con dirección desde BD...');
             setState(() {
               _sucursalInfo = {
-                'nombre': 'Sucursal GoodBarber',
+                'nombre': 'Sucursal',
                 'direccion': ordenActualizada.direccionDestino,
                 'municipio': ordenActualizada.municipioDestino ?? '',
                 'provincia': ordenActualizada.provinciaDestino ?? '',
@@ -2634,7 +2634,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                                   Icon(Icons.shopping_bag, color: Colors.white, size: 16),
                                   SizedBox(width: 6),
                                   Text(
-                                    'Recogida desde GoodBarber',
+                                    'Recogida en sucursal',
                                     style: TextStyle(
                                       color: Colors.white,
                                       fontSize: 12,

@@ -28,6 +28,7 @@ import '../widgets/repartidor_master_badge.dart';
 import '../services/paises_service.dart';
 import '../utils/moneda_tenant_util.dart';
 import 'taxi_ajustes_screen.dart';
+import 'taxi_comision_pendiente_screen.dart';
 import 'repartidor_metodo_cobro_screen.dart';
 
 class RepartidorPerfilScreen extends StatefulWidget {
@@ -2453,10 +2454,14 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
 
       if (map['ok'] != true) {
         final err = map['error']?.toString() ?? 'error';
+        final rpcMsg = map['mensaje']?.toString();
         if (err == 'saldo_insuficiente') {
           final s = map['saldo'];
           final disp = s is num ? s.toDouble() : _saldo;
-          _mostrarMensaje('Saldo insuficiente. Disponible: ${disp.toStringAsFixed(2)}', Colors.red);
+          final deudaMsg = rpcMsg != null && rpcMsg.isNotEmpty
+              ? rpcMsg
+              : 'Saldo insuficiente. Disponible: ${disp.toStringAsFixed(2)}';
+          _mostrarMensaje(deudaMsg, Colors.red);
         } else if (err == 'solicitud_pendiente_existe') {
           _mostrarMensaje('Ya tienes una solicitud pendiente', Colors.orange);
         } else if (err == 'kilometros_requeridos') {
@@ -2466,12 +2471,23 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         } else if (err == 'tarifa_no_configurada') {
           _mostrarMensaje('Tu empresa debe configurar la tarifa de pago', Colors.red);
         } else {
-          _mostrarMensaje('No se pudo enviar la solicitud', Colors.red);
+          _mostrarMensaje(
+            (rpcMsg != null && rpcMsg.isNotEmpty)
+                ? rpcMsg
+                : 'No se pudo enviar la solicitud',
+            Colors.red,
+          );
         }
         return;
       }
 
-      _mostrarMensaje('Solicitud de pago enviada correctamente', Colors.green);
+      final okMsg = map['mensaje']?.toString();
+      _mostrarMensaje(
+        (okMsg != null && okMsg.isNotEmpty)
+            ? okMsg
+            : 'Solicitud de pago enviada correctamente',
+        Colors.green,
+      );
       if (mounted) setState(() => _solicitudPendiente = true);
       await _cargarSaldo();
       await _cargarPreviewPago();
@@ -2584,6 +2600,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
       moneda: _monedaSaldo,
       totalOrdenes: ordenesIds.length,
       paisOperacion: _paisOperacion,
+      deudaTaxiCash: preview?.deudaTaxiCash ?? 0,
+      mensajeDeuda: preview?.mensajeDeuda,
     );
     if (r == null || !mounted) return;
     await _enviarSolicitudPago(
@@ -2662,56 +2680,115 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   }
 
   Widget _buildAjustesTaxis() {
-    return Material(
-      color: AppColors.darkSurface,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => const TaxiAjustesScreen(),
-            ),
-          );
-        },
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
+    return Column(
+      children: [
+        Material(
+          color: AppColors.darkSurface,
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.darkBorder),
-          ),
-          child: const Row(
-            children: [
-              Icon(Icons.local_taxi, color: Color(0xFF9CA3AF), size: 22),
-              SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Ajustes de taxis',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.darkText,
-                      ),
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      'Define tu tarifa por km o milla',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.darkTextMuted,
-                      ),
-                    ),
-                  ],
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const TaxiAjustesScreen(),
                 ),
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.darkBorder),
               ),
-              Icon(Icons.arrow_forward_ios, size: 16, color: AppColors.darkTextMuted),
-            ],
+              child: const Row(
+                children: [
+                  Icon(Icons.local_taxi, color: Color(0xFF9CA3AF), size: 22),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Ajustes de taxis',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.darkText,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          'Define tu tarifa por km o milla',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.darkTextMuted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.arrow_forward_ios,
+                      size: 16, color: AppColors.darkTextMuted),
+                ],
+              ),
+            ),
           ),
         ),
-      ),
+        const SizedBox(height: 8),
+        Material(
+          color: AppColors.darkSurface,
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const TaxiComisionPendienteScreen(),
+                ),
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.darkBorder),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.account_balance_wallet_outlined,
+                      color: Color(0xFF9CA3AF), size: 22),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Comisión / fianza cash',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.darkText,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          'Deuda, fianza y transferir saldo a fianza',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.darkTextMuted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.arrow_forward_ios,
+                      size: 16, color: AppColors.darkTextMuted),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 

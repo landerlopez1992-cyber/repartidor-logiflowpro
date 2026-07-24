@@ -15,6 +15,9 @@ class RepartidorSolicitudPreview {
     this.diasDesdeUltimaNomina = 0,
     this.montoEstimadoPorDia = 0,
     this.diasLaborablesEtiqueta = '',
+    this.deudaTaxiCash = 0,
+    this.netoMaximoCobrable,
+    this.mensajeDeuda,
   });
 
   final String metodoPago;
@@ -27,6 +30,9 @@ class RepartidorSolicitudPreview {
   final int diasDesdeUltimaNomina;
   final double montoEstimadoPorDia;
   final String diasLaborablesEtiqueta;
+  final double deudaTaxiCash;
+  final double? netoMaximoCobrable;
+  final String? mensajeDeuda;
 
   bool get esPorOrden => metodoPago == 'por_orden';
   bool get esPorDistancia => metodoPago == 'por_distancia';
@@ -34,6 +40,10 @@ class RepartidorSolicitudPreview {
   bool get unidadEsMilla => unidad == 'milla';
 
   String get etiquetaUnidadDistancia => unidadEsMilla ? 'millas' : 'kilómetros';
+
+  double get netoCobrable =>
+      netoMaximoCobrable ??
+      (saldoAcumulado - deudaTaxiCash).clamp(0, double.infinity);
 }
 
 class RepartidorSolicitudPagoService {
@@ -67,6 +77,7 @@ class RepartidorSolicitudPagoService {
       fechaUltima = DateTime.tryParse(ultima);
     }
 
+    final mensaje = map['mensaje_deuda']?.toString();
     return RepartidorSolicitudPreview(
       metodoPago: map['metodo_pago']?.toString() ?? 'por_orden',
       tarifa: _asDouble(map['tarifa']),
@@ -80,6 +91,11 @@ class RepartidorSolicitudPagoService {
           : int.tryParse('${map['dias_desde_ultima_nomina']}') ?? 0,
       montoEstimadoPorDia: _asDouble(map['monto_estimado_por_dia']),
       diasLaborablesEtiqueta: map['dias_laborables_etiqueta']?.toString() ?? '',
+      deudaTaxiCash: _asDouble(map['deuda_taxi_cash']),
+      netoMaximoCobrable: map.containsKey('neto_maximo_cobrable')
+          ? _asDouble(map['neto_maximo_cobrable'])
+          : null,
+      mensajeDeuda: (mensaje != null && mensaje.isNotEmpty) ? mensaje : null,
     );
   }
 
@@ -91,7 +107,8 @@ class RepartidorSolicitudPagoService {
         .from('usuarios')
         .select(
           'repartidor_metodo_pago, repartidor_tarifa, repartidor_tarifa_unidad, '
-          'repartidor_saldo_moneda, repartidor_saldo_acumulado',
+          'repartidor_saldo_moneda, repartidor_saldo_acumulado, '
+          'taxi_comision_pendiente_usd',
         )
         .eq('id', repartidorId)
         .maybeSingle();
@@ -111,13 +128,23 @@ class RepartidorSolicitudPagoService {
       unidad = 'orden';
     }
 
+    final saldo = _asDouble(row['repartidor_saldo_acumulado']);
+    final deuda = _asDouble(row['taxi_comision_pendiente_usd']);
+    final neto = (saldo - deuda).clamp(0.0, double.infinity).toDouble();
     return RepartidorSolicitudPreview(
       metodoPago: metodo,
       tarifa: _asDouble(row['repartidor_tarifa']),
       unidad: unidad,
       moneda: (row['repartidor_saldo_moneda']?.toString() ?? 'USD').toUpperCase(),
-      saldoAcumulado: _asDouble(row['repartidor_saldo_acumulado']),
+      saldoAcumulado: saldo,
       solicitudPendiente: false,
+      deudaTaxiCash: deuda,
+      netoMaximoCobrable: neto,
+      mensajeDeuda: deuda >= 0.01
+          ? 'Debes \$${deuda.toStringAsFixed(2)} de comisión cash. '
+              'Si solicitas \$${saldo.toStringAsFixed(2)}, solo podrás cobrar '
+              '\$${neto.toStringAsFixed(2)}.'
+          : null,
     );
   }
 
@@ -132,7 +159,6 @@ class RepartidorSolicitudPagoService {
 
       if (fromRpc != null && fromRpc.tarifa > 0) return fromRpc;
 
-      // Si RPC no trae tarifa (o falló ok), leer columnas reales del perfil.
       final fromUser = await cargarPreviewDesdeUsuarios(repartidorId);
       if (fromUser != null && fromUser.tarifa > 0) {
         return RepartidorSolicitudPreview(
@@ -148,6 +174,10 @@ class RepartidorSolicitudPagoService {
           diasDesdeUltimaNomina: fromRpc?.diasDesdeUltimaNomina ?? 0,
           montoEstimadoPorDia: fromRpc?.montoEstimadoPorDia ?? 0,
           diasLaborablesEtiqueta: fromRpc?.diasLaborablesEtiqueta ?? '',
+          deudaTaxiCash: fromRpc?.deudaTaxiCash ?? fromUser.deudaTaxiCash,
+          netoMaximoCobrable:
+              fromRpc?.netoMaximoCobrable ?? fromUser.netoMaximoCobrable,
+          mensajeDeuda: fromRpc?.mensajeDeuda ?? fromUser.mensajeDeuda,
         );
       }
       return fromRpc ?? fromUser;

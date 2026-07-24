@@ -365,6 +365,13 @@ class FirebaseMessagingService {
       await _abrirHistorialNomina(pagoId: pagoId);
       return;
     }
+    if (t == 'PAGO_CANCELADO' ||
+        tipo == 'PAGO_CANCELADO' ||
+        t == 'PAGO_RECHAZADO' ||
+        tipo == 'PAGO_RECHAZADO') {
+      await _abrirHistorialNomina(pagoId: pagoId);
+      return;
+    }
     if (tipo == 'mensaje_soporte' ||
         tipo == 'MENSAJE_SOPORTE' ||
         tipo == 'chat_soporte' ||

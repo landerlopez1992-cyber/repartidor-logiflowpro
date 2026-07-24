@@ -183,7 +183,7 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
             print('⚠️ Error guardando caché de usuario: $e');
           }
           // Obtener información de la empresa para el modal
-          String? empresaNombre = 'VolonexPro+';
+          String? empresaNombre = 'Tu empresa';
           String? empresaLogoUrl;
 
           String? tenantId = userResponse['tenant_id'];
@@ -196,11 +196,11 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
                   .maybeSingle();
 
               if (tenantData != null) {
-                empresaNombre = tenantData['nombre'] ?? 'VolonexPro+';
+                empresaNombre = tenantData['nombre'] ?? 'Tu empresa';
                 empresaLogoUrl = tenantData['logo_url'];
                 await RepartidorSeguridadService.guardarNombreEmpresaEnCache(
                   response.user!.id,
-                  empresaNombre ?? 'VolonexPro+',
+                  empresaNombre ?? 'Tu empresa',
                 );
               }
             } catch (e) {
@@ -211,7 +211,7 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
           // Mostrar modal de carga
           if (mounted) {
             await _mostrarModalInicioSistema(
-              empresaNombre ?? 'VolonexPro+',
+              empresaNombre ?? 'Tu empresa',
               empresaLogoUrl,
             );
           }
@@ -468,21 +468,16 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
                           _loginBrandLogo(),
                           const SizedBox(height: 16),
 
-                          // Título con efecto gradiente
-                          ShaderMask(
-                            shaderCallback: (bounds) => const LinearGradient(
-                              colors: [Colors.white, Color(0xFF81C784)],
-                            ).createShader(bounds),
-                            child: const Text(
-                              'VolonexPro+',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 24,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 0.5,
-                              ),
-                              textAlign: TextAlign.center,
+                          // Título (sin marca de plataforma)
+                          const Text(
+                            'Repartidor',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
                             ),
+                            textAlign: TextAlign.center,
                           ),
                           const SizedBox(height: 6),
 

@@ -5113,27 +5113,28 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 BotonVerProductosOrdenTienda(orden: orden, compact: true),
               ],
               
-              // Mostrar fecha de creación si es orden de GoodBarber
+              // Fecha de creación (órdenes importadas / externas)
               if (orden.goodbarberOrderId != null) ...[
                 const SizedBox(height: 4),
                 _buildInfoRow(
                   Icons.calendar_today, 
-                  'Creada (GoodBarber):', 
+                  'Creada:', 
                   '${orden.fechaCreacion.day}/${orden.fechaCreacion.month}/${orden.fechaCreacion.year} ${orden.fechaCreacion.hour.toString().padLeft(2, '0')}:${orden.fechaCreacion.minute.toString().padLeft(2, '0')}',
                 ),
               ],
               
-              // Mostrar shipping_amount si está en items_adicionales (GoodBarber)
+              // Costo de envío en items_adicionales (integración externa)
               if (orden.itemsAdicionales != null && orden.itemsAdicionales!.isNotEmpty) ...[
                 const SizedBox(height: 4),
-                ...orden.itemsAdicionales!.where((item) => 
-                  item['nombre']?.toString().contains('Costo de Envío (GoodBarber)') == true
-                ).map((item) {
+                ...orden.itemsAdicionales!.where((item) {
+                  final n = item['nombre']?.toString() ?? '';
+                  return n.contains('Costo de Envío') || n.contains('Costo Envío');
+                }).map((item) {
                   final precio = (item['precio'] ?? 0.0).toDouble();
                   final moneda = orden.monedaPrecioTotalEnvio ?? orden.moneda;
                   return _buildInfoRow(
                     Icons.local_shipping,
-                    'Costo Envío (GoodBarber):',
+                    'Costo de envío:',
                     '${moneda == 'USD' ? '\$' : '\$'} ${precio.toStringAsFixed(2)} $moneda',
                   );
                 }),

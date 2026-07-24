@@ -291,30 +291,52 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
               titulo: '5. Solicitud de Pagos',
               icono: Icons.payment,
               contenido: [
-                _buildSubTitulo('¿Cuándo debo cobrar?'),
-                _buildTexto(
-                  'Algunas órdenes requieren que cobres un monto al momento de la entrega. '
-                  'Esto se indica claramente en los detalles de la orden.',
+                _buildSubTitulo('Dos conceptos distintos'),
+                _buildItemLista(
+                  '• Cobro en entrega: dinero que el DESTINATARIO te paga al recibir (si la orden lo indica).',
+                ),
+                _buildItemLista(
+                  '• Liquidación / nómina: lo que la EMPRESA te paga a ti por tus entregas (solicitas desde el perfil).',
                 ),
                 const SizedBox(height: 12),
-                _buildSubTitulo('Proceso de Cobro:'),
-                _buildItemLista('1. Verifica el monto a cobrar en la orden.'),
-                _buildItemLista('2. Al entregar, indica al destinatario el monto.'),
-                _buildItemLista('3. Recibe el pago.'),
-                _buildItemLista('4. Marca la orden como "Pagado" en la app.'),
-                _buildItemLista('5. Registra el método de pago (efectivo, transferencia, etc.).'),
-                const SizedBox(height: 12),
-                _buildSubTitulo('Solicitar Pago a la Empresa:'),
+                _buildSubTitulo('Cobro al destinatario (si aplica)'),
                 _buildTexto(
-                  'En tu perfil, puedes solicitar el pago de tus entregas. '
-                  'Ve a "Mi Perfil" > "Solicitar Pago" para ver tu saldo disponible '
-                  'y enviar la solicitud a la empresa.',
+                  'Algunas órdenes muestran un monto a cobrar en la tarjeta. Verifícalo antes de entregar, '
+                  'recíbelo según lo indique la empresa y completa el flujo en la app (foto/firma si aplica).',
+                ),
+                _buildItemLista('1. Abre la orden y confirma el monto a cobrar.'),
+                _buildItemLista('2. Al entregar, indica el monto al destinatario.'),
+                _buildItemLista('3. Recibe el pago según las instrucciones de tu empresa.'),
+                _buildItemLista('4. Confirma en la app lo que el flujo te pida (no inventes montos).'),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Solicitar liquidación a la empresa'),
+                _buildTexto(
+                  'Cuando hayas acumulado entregas listadas para cobro, ve a Mi Perfil y usa '
+                  'Solicitar pago (o Liquidación, según el texto de tu app). Verás el saldo o resumen '
+                  'disponible y envías la solicitud. La empresa la recibe en Nóminas → Repartidores '
+                  'del panel web: puede aceptar, ajustar monto/moneda y luego registrar que ya te pagó.',
+                ),
+                _buildItemLista('1. Mi Perfil → Solicitar pago / liquidación.'),
+                _buildItemLista('2. Revisa el resumen de entregas o monto sugerido.'),
+                _buildItemLista('3. Envía la solicitud y espera la confirmación de la empresa.'),
+                _buildItemLista('4. No cierres sesión a medias si hay entregas offline pendientes de sincronizar.'),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Estados que verás'),
+                _buildItemLista('• Pendiente: la empresa aún no aceptó o no registró el pago.'),
+                _buildItemLista('• Aceptada / en proceso: ya la revisaron; puede faltar el pago en efectivo o transferencia.'),
+                _buildItemLista('• Pagada / registrada: la empresa confirmó que ya te liquidó.'),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Historial de pagos'),
+                _buildTexto(
+                  'En Mi Perfil → Historial de pagos consultas solicitudes anteriores, montos y fechas. '
+                  'Úsalo para aclarar dudas con la empresa (comparte el monto y la fecha de la solicitud).',
                 ),
                 const SizedBox(height: 12),
-                _buildSubTitulo('Historial de Pagos:'),
+                _buildSubTitulo('Avisos'),
                 _buildTexto(
-                  'Puedes ver el historial completo de todos los pagos recibidos en la sección '
-                  '"Historial de Pagos" de tu perfil.',
+                  'Puedes recibir notificaciones push cuando te asignen órdenes o cuando la empresa '
+                  'responda. El chat interno con la empresa (sección 9) sirve para coordinar, pero la '
+                  'liquidación formal se hace con Solicitar pago + Nóminas en el panel.',
                 ),
               ],
             ),
