@@ -108,138 +108,155 @@ class _LoadingWelcomeScreenState extends State<LoadingWelcomeScreen> {
           ),
         ),
         child: SafeArea(
-          child: Center(
-            child: Container(
-              constraints: const BoxConstraints(maxWidth: AppLayout.formMaxWidth),
-              padding: const EdgeInsets.all(32),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // Logo de la empresa
-                  if (widget.empresaLogoUrl != null && widget.empresaLogoUrl!.isNotEmpty)
-                    Container(
-                      width: 120,
-                      height: 120,
-                      margin: const EdgeInsets.only(bottom: 32),
-                      decoration: BoxDecoration(
-                        color: AppColors.darkSurface,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.2),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final landscape = constraints.maxHeight < 420;
+              final logoSize = landscape ? 72.0 : 120.0;
+              return SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: Center(
+                    child: Container(
+                      constraints: const BoxConstraints(
+                        maxWidth: AppLayout.formMaxWidth,
                       ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: Image.network(
-                          widget.empresaLogoUrl!,
-                          fit: BoxFit.contain,
-                          errorBuilder: (context, error, stackTrace) {
-                            return Container(
-                              color: AppColors.darkSurface,
+                      padding: EdgeInsets.all(landscape ? 20 : 32),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (widget.empresaLogoUrl != null &&
+                              widget.empresaLogoUrl!.isNotEmpty)
+                            Container(
+                              width: logoSize,
+                              height: logoSize,
+                              margin: EdgeInsets.only(
+                                bottom: landscape ? 16 : 32,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.darkSurface,
+                                borderRadius: BorderRadius.circular(16),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.2),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(16),
+                                child: Image.network(
+                                  widget.empresaLogoUrl!,
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return Container(
+                                      color: AppColors.darkSurface,
+                                      child: Center(
+                                        child: Text(
+                                          widget.empresaNombre?.isNotEmpty ==
+                                                  true
+                                              ? widget.empresaNombre![0]
+                                                  .toUpperCase()
+                                              : 'L',
+                                          style: TextStyle(
+                                            fontSize: landscape ? 28 : 48,
+                                            fontWeight: FontWeight.bold,
+                                            color: AppColors.header,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            )
+                          else if (widget.empresaNombre != null &&
+                              widget.empresaNombre!.isNotEmpty)
+                            Container(
+                              width: logoSize,
+                              height: logoSize,
+                              margin: EdgeInsets.only(
+                                bottom: landscape ? 16 : 32,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.darkSurface,
+                                borderRadius: BorderRadius.circular(16),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.2),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
                               child: Center(
                                 child: Text(
-                                  widget.empresaNombre?.isNotEmpty == true
-                                      ? widget.empresaNombre![0].toUpperCase()
-                                      : 'L',
-                                  style: const TextStyle(
-                                    fontSize: 48,
+                                  widget.empresaNombre![0].toUpperCase(),
+                                  style: TextStyle(
+                                    fontSize: landscape ? 28 : 48,
                                     fontWeight: FontWeight.bold,
                                     color: AppColors.header,
                                   ),
                                 ),
                               ),
-                            );
-                          },
-                        ),
-                      ),
-                    )
-                  else if (widget.empresaNombre != null && widget.empresaNombre!.isNotEmpty)
-                    Container(
-                      width: 120,
-                      height: 120,
-                      margin: const EdgeInsets.only(bottom: 32),
-                      decoration: BoxDecoration(
-                        color: AppColors.darkSurface,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.2),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
+                            ),
+                          if (widget.empresaNombre != null &&
+                              widget.empresaNombre!.isNotEmpty)
+                            Padding(
+                              padding: EdgeInsets.only(
+                                bottom: landscape ? 8 : 16,
+                              ),
+                              child: Text(
+                                widget.empresaNombre!,
+                                style: TextStyle(
+                                  fontSize: landscape ? 18 : 24,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.darkSurface,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          SizedBox(height: landscape ? 20 : 48),
+                          Text(
+                            _currentMessage,
+                            style: TextStyle(
+                              fontSize: landscape ? 15 : 18,
+                              color: Colors.white,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                          SizedBox(height: landscape ? 16 : 24),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: LinearProgressIndicator(
+                              value: _progress,
+                              minHeight: 8,
+                              backgroundColor:
+                                  Colors.white.withOpacity(0.2),
+                              valueColor:
+                                  const AlwaysStoppedAnimation<Color>(
+                                AppColors.botonPrincipal,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            '${(_progress * 100).toStringAsFixed(0)}%',
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: Colors.white.withOpacity(0.8),
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ],
                       ),
-                      child: Center(
-                        child: Text(
-                          widget.empresaNombre![0].toUpperCase(),
-                          style: const TextStyle(
-                            fontSize: 48,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.header,
-                          ),
-                        ),
-                      ),
-                    ),
-                  
-                  // Nombre de la empresa
-                  if (widget.empresaNombre != null && widget.empresaNombre!.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 16),
-                      child: Text(
-                        widget.empresaNombre!,
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.darkSurface,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  
-                  const SizedBox(height: 48),
-                  
-                  // Mensaje actual
-                  Text(
-                    _currentMessage,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      color: Colors.white,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  
-                  const SizedBox(height: 24),
-                  
-                  // Barra de progreso
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: LinearProgressIndicator(
-                      value: _progress,
-                      minHeight: 8,
-                      backgroundColor: Colors.white.withOpacity(0.2),
-                      valueColor: const AlwaysStoppedAnimation<Color>(AppColors.botonPrincipal),
                     ),
                   ),
-                  
-                  const SizedBox(height: 16),
-                  
-                  // Porcentaje
-                  Text(
-                    '${(_progress * 100).toStringAsFixed(0)}%',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.white.withOpacity(0.8),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+                ),
+              );
+            },
           ),
         ),
       ),

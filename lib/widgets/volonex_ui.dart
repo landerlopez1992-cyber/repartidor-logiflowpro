@@ -147,21 +147,29 @@ class VolonexUi {
   static Widget emptyState({
     required IconData icon,
     required String message,
+    bool compact = false,
   }) {
     return Container(
-      padding: const EdgeInsets.all(24),
-      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: EdgeInsets.all(compact ? 12 : 24),
+      margin: EdgeInsets.symmetric(vertical: compact ? 4 : 8, horizontal: 12),
       decoration: surfaceCard(),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 48, color: AppColors.darkTextMuted),
-          const SizedBox(height: 12),
+          Icon(
+            icon,
+            size: compact ? 32 : 48,
+            color: AppColors.darkTextMuted,
+          ),
+          SizedBox(height: compact ? 8 : 12),
           Text(
             message,
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            maxLines: compact ? 2 : 4,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
               color: AppColors.darkTextMuted,
-              fontSize: 14,
+              fontSize: compact ? 12 : 14,
               height: 1.45,
             ),
           ),

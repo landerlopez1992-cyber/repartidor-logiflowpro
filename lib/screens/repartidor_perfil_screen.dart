@@ -893,6 +893,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                     16,
                     16 +
                         MediaQuery.paddingOf(context).bottom +
+                        MediaQuery.viewInsetsOf(context).bottom +
                         (_isEditing ? 120 : 100),
                   ),
                   child: Form(

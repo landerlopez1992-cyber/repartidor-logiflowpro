@@ -203,68 +203,86 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
           ),
         ),
         child: SafeArea(
-          child: Center(
-            child: Container(
-              constraints: const BoxConstraints(maxWidth: AppLayout.formMaxWidth),
-              padding: const EdgeInsets.all(32),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _buildLogoSinFondo(),
-                  if (widget.empresaNombre != null && widget.empresaNombre!.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 16),
-                      child: Text(
-                        widget.empresaNombre!,
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.darkText,
-                        ),
-                        textAlign: TextAlign.center,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final landscape = constraints.maxHeight < 420;
+              final logoSize = landscape ? 72.0 : 140.0;
+              return SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: Center(
+                    child: Container(
+                      constraints: const BoxConstraints(
+                        maxWidth: AppLayout.formMaxWidth,
+                      ),
+                      padding: EdgeInsets.all(landscape ? 20 : 32),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: logoSize,
+                            height: logoSize,
+                            child: FittedBox(
+                              fit: BoxFit.contain,
+                              child: _buildLogoSinFondo(),
+                            ),
+                          ),
+                          if (widget.empresaNombre != null &&
+                              widget.empresaNombre!.isNotEmpty)
+                            Padding(
+                              padding: EdgeInsets.only(
+                                bottom: landscape ? 8 : 16,
+                              ),
+                              child: Text(
+                                widget.empresaNombre!,
+                                style: TextStyle(
+                                  fontSize: landscape ? 18 : 24,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.darkText,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          SizedBox(height: landscape ? 20 : 48),
+                          Text(
+                            _currentMessage,
+                            style: TextStyle(
+                              fontSize: landscape ? 15 : 18,
+                              color: Colors.white,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                          SizedBox(height: landscape ? 16 : 24),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: LinearProgressIndicator(
+                              value: _progress,
+                              minHeight: 8,
+                              backgroundColor:
+                                  Colors.white.withValues(alpha: 0.2),
+                              valueColor: const AlwaysStoppedAnimation<Color>(
+                                AppColors.exito,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            '${(_progress * 100).toStringAsFixed(0)}%',
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: Colors.white.withValues(alpha: 0.8),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  
-                  const SizedBox(height: 48),
-                  
-                  // Mensaje actual
-                  Text(
-                    _currentMessage,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      color: Colors.white,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    textAlign: TextAlign.center,
                   ),
-                  
-                  const SizedBox(height: 24),
-                  
-                  // Barra de progreso
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: LinearProgressIndicator(
-                      value: _progress,
-                      minHeight: 8,
-                      backgroundColor: Colors.white.withValues(alpha: 0.2),
-                      valueColor: const AlwaysStoppedAnimation<Color>(AppColors.exito),
-                    ),
-                  ),
-                  
-                  const SizedBox(height: 16),
-                  
-                  // Porcentaje
-                  Text(
-                    '${(_progress * 100).toStringAsFixed(0)}%',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.white.withValues(alpha: 0.8),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+                ),
+              );
+            },
           ),
         ),
       ),

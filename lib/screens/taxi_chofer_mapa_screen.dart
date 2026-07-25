@@ -485,43 +485,58 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
                       ),
                     ),
                     const Spacer(),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
-                      child: Column(
-                        children: [
-                          _BuscandoRadarButton(
-                            activo: _buscando,
-                            animation: _radar,
-                            onTap: _toggleBuscando,
+                    LayoutBuilder(
+                      builder: (context, panelConstraints) {
+                        final compact =
+                            MediaQuery.sizeOf(context).height < 480;
+                        return Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            24,
+                            0,
+                            24,
+                            compact ? 12 : 28,
                           ),
-                          const SizedBox(height: 16),
-                          Text(
-                            _buscando
-                                ? 'Buscando viajes · activo'
-                                : 'Toca para buscar viajes',
-                            style: TextStyle(
-                              color: _buscando
-                                  ? const Color(0xFF4CAF50)
-                                  : const Color(0xFFECEFF1),
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                            ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _BuscandoRadarButton(
+                                activo: _buscando,
+                                animation: _radar,
+                                onTap: _toggleBuscando,
+                                size: compact ? 96 : 132,
+                              ),
+                              SizedBox(height: compact ? 8 : 16),
+                              Text(
+                                _buscando
+                                    ? 'Buscando viajes · activo'
+                                    : 'Toca para buscar viajes',
+                                style: TextStyle(
+                                  color: _buscando
+                                      ? const Color(0xFF4CAF50)
+                                      : const Color(0xFFECEFF1),
+                                  fontSize: compact ? 15 : 18,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              if (!compact) ...[
+                                const SizedBox(height: 6),
+                                Text(
+                                  _buscando
+                                      ? 'Seguirás activo aunque cierres la app. '
+                                          'Toca de nuevo para desactivar.'
+                                      : 'Activa el modo para recibir ofertas de taxi',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Color(0xFF9CA3AF),
+                                    fontSize: 13,
+                                    height: 1.35,
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
-                          const SizedBox(height: 6),
-                          Text(
-                            _buscando
-                                ? 'Seguirás activo aunque cierres la app. '
-                                    'Toca de nuevo para desactivar.'
-                                : 'Activa el modo para recibir ofertas de taxi',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Color(0xFF9CA3AF),
-                              fontSize: 13,
-                              height: 1.35,
-                            ),
-                          ),
-                        ],
-                      ),
+                        );
+                      },
                     ),
                   ],
                 ),
@@ -548,19 +563,22 @@ class _BuscandoRadarButton extends StatelessWidget {
     required this.activo,
     required this.animation,
     required this.onTap,
+    this.size = 132,
   });
 
   final bool activo;
   final Animation<double> animation;
   final VoidCallback onTap;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
+    final inner = size * 0.59;
     return GestureDetector(
       onTap: onTap,
       child: SizedBox(
-        width: 132,
-        height: 132,
+        width: size,
+        height: size,
         child: AnimatedBuilder(
           animation: animation,
           builder: (context, child) {
@@ -569,8 +587,8 @@ class _BuscandoRadarButton extends StatelessWidget {
               painter: _RadarPainter(progress: t, activo: activo),
               child: Center(
                 child: Container(
-                  width: 78,
-                  height: 78,
+                  width: inner,
+                  height: inner,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: activo

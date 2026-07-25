@@ -3951,279 +3951,343 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               index: _pestanaHomeViajes ? 1 : 0,
               children: [
                 RefreshIndicator(
-        onRefresh: () async {
-          print('🔄 Pull-to-refresh activado...');
-          
-          // 🔒 CRÍTICO: Sincronizar cambios pendientes ANTES de recargar órdenes
-          final syncService = SyncService();
-          if (syncService.hasPendingOperations) {
-            print('🔄 Sincronizando ${syncService.pendingOperationsCount} operación${syncService.pendingOperationsCount > 1 ? "es" : ""} pendiente${syncService.pendingOperationsCount > 1 ? "s" : ""}...');
-            
-            // Verificar conexión antes de sincronizar
-            if (_isOnline) {
-              await syncService.syncPendingOperations();
-            } else {
-              print('📴 Sin conexión - No se puede sincronizar');
-            }
-          }
-          
-          await _cargarOrdenes();
-          await _cargarMensajesNoLeidos();
-        },
-        child: Column(
-        children: [
-          // Banner de notificación general (si existe y no está leída)
-          if (_notificacionGeneralBanner != null && !(_notificacionGeneralBanner!['leida'] ?? false))
-            _buildBannerNotificacion(),
-          
-          // ✅ BANNER "REPARTIDOR MASTER" - Solo visible para repartidores master
-          if (_esRepartidorMaster) const RepartidorMasterBannerCompact(),
-          
-          // ✅ INDICADOR DE MODO OFFLINE
-          if (!_isOnline)
-            VolonexUi.offlineBanner(
-              message: 'Sin conexión — mostrando datos guardados',
-              pendingOps: _operacionesPendientes,
-            ),
-          
-          // Barra de búsqueda
-          Container(
-            padding: const EdgeInsets.all(16),
-            color: AppColors.darkBg,
-            child: TextField(
-              key: const ValueKey('search_field'), // Key para mantener estado
-              controller: _searchController,
-              focusNode: _searchFocusNode, // FocusNode para mantener el foco
-              style: const TextStyle(color: AppColors.darkText),
-              decoration: InputDecoration(
-                hintText: 'Buscar órdenes...',
-                hintStyle: const TextStyle(color: AppColors.darkTextMuted),
-                prefixIcon: const Icon(Icons.search, color: AppColors.botonPrincipal),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(25),
-                  borderSide: const BorderSide(color: AppColors.darkBorder),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(25),
-                  borderSide: const BorderSide(color: AppColors.darkBorder),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(25),
-                  borderSide: const BorderSide(color: AppColors.botonPrincipal, width: 2),
-                ),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                filled: true,
-                fillColor: AppColors.darkElevated,
-              ),
-            ),
-          ),
-
-          // Ordenar lista por cercanía (repartidor)
-          if (!_esRecolector)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              color: AppColors.darkBg,
-              child: Center(
-                child: Wrap(
-                  alignment: WrapAlignment.center,
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: _ordenandoCercania ? null : _ordenarOrdenesPorCercania,
-                      icon: _ordenandoCercania
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.near_me, size: 20),
-                      label: Text(
-                        _modoOrdenCercania
-                            ? 'Actualizar cercanía'
-                            : 'Ordenar por cercanía',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
+                  color: const Color(0xFF1976D2),
+                  onRefresh: _refrescarHomeOrdenes,
+                  child: CustomScrollView(
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    slivers: [
+                      if (_notificacionGeneralBanner != null &&
+                          !(_notificacionGeneralBanner!['leida'] ?? false))
+                        SliverToBoxAdapter(child: _buildBannerNotificacion()),
+                      if (_esRepartidorMaster)
+                        const SliverToBoxAdapter(
+                          child: RepartidorMasterBannerCompact(),
                         ),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1976D2),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 10,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(25),
-                        ),
-                      ),
-                    ),
-                    if (_modoOrdenCercania)
-                      OutlinedButton(
-                        onPressed: _desactivarOrdenCercania,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.darkTextMuted,
-                          side: const BorderSide(color: AppColors.darkBorder),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(25),
+                      if (!_isOnline)
+                        SliverToBoxAdapter(
+                          child: VolonexUi.offlineBanner(
+                            message:
+                                'Sin conexión — mostrando datos guardados',
+                            pendingOps: _operacionesPendientes,
                           ),
                         ),
-                        child: const Text('Quitar orden'),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-
-          // Botón "Ver Ruta Optimizada" si hay órdenes con orden_ruta
-          if (_tieneRutaOptimizada)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: AppColors.darkBg,
-              child: Center(
-                child: ElevatedButton.icon(
-                  onPressed: () => _mostrarRutaOptimizada(),
-                  icon: const Icon(Icons.route, size: 20),
-                  label: const Text(
-                    'Ver Ruta Optimizada',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4CAF50),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(25),
-                    ),
-                    elevation: 2,
-                  ),
-                ),
-              ),
-            ),
-
-          // Filtros de estado (diferentes según tipo de usuario)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: AppColors.darkBg,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  if (_esRecolector) ...[
-                    // Filtros específicos para recolectores
-                    _buildFiltroChip('ACTIVAS', _filtroEstado == 'ACTIVAS'),
-                    const SizedBox(width: 8),
-                    _buildFiltroChip('POR RECOGER', _filtroEstado == 'POR RECOGER'),
-                    const SizedBox(width: 8),
-                    _buildFiltroChip('EN CAMINO', _filtroEstado == 'EN CAMINO'),
-                    const SizedBox(width: 8),
-                    _buildFiltroChip('RECOGIDO', _filtroEstado == 'RECOGIDO'),
-                  ] else ...[
-                    // Filtros para repartidores (estados normales)
-                    _buildFiltroChip('ACTIVAS', _filtroEstado == 'ACTIVAS'),
-                    // Filtro adicional para repartidores master (mostrar de primero después de ACTIVAS)
-                    if (_esRepartidorMaster) ...[
-                      const SizedBox(width: 8),
-                      _buildFiltroRepartidorChip('MÍAS', _filtroRepartidor == 'MÍAS'),
-                      const SizedBox(width: 8),
-                      _buildFiltroRepartidorChip('TODAS', _filtroRepartidor == null),
-                    ],
-                    const SizedBox(width: 8),
-                    _buildFiltroChip('URGENTES', _filtroEstado == 'URGENTES'),
-                    const SizedBox(width: 8),
-                    _buildFiltroChip('ATRASADAS', _filtroEstado == 'ATRASADAS'),
-                    const SizedBox(width: 8),
-                    _buildFiltroChip('ENTREGADAS', _filtroEstado == 'ENTREGADAS'),
-                  ],
-                ],
-              ),
-            ),
-          ),
-
-          // Contador de resultados
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: AppColors.darkBg,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  '${_ordenesFiltradas.length} órdenes encontradas',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: AppColors.darkTextMuted,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                if (_filtroEstado == 'URGENTES' && _ordenesFiltradas.isNotEmpty)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFDC2626),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Text(
-                      'URGENTE',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-
-          // Lista de órdenes
-          Expanded(
-            child: _isLoading
-                ? const Center(
-                    child: CircularProgressIndicator(
-                      color: AppColors.botonPrincipal,
-                    ),
-                  )
-                : _ordenesFiltradas.isEmpty
-                    ? _buildEmptyState()
-                    : RefreshIndicator(
-                        onRefresh: () async {
-                          print('🔄 Pull-to-refresh en lista activado...');
-                          
-                          // 🔒 CRÍTICO: Sincronizar cambios pendientes ANTES de recargar órdenes
-                          final syncService = SyncService();
-                          if (syncService.hasPendingOperations) {
-                            print('🔄 Sincronizando ${syncService.pendingOperationsCount} operación${syncService.pendingOperationsCount > 1 ? "es" : ""} pendiente${syncService.pendingOperationsCount > 1 ? "s" : ""}...');
-                            
-                            // Verificar conexión antes de sincronizar
-                            if (_isOnline) {
-                              await syncService.syncPendingOperations();
-                            } else {
-                              print('📴 Sin conexión - No se puede sincronizar');
-                            }
-                          }
-                          
-                          await _cargarConfiguracionPrioridad(); // Recargar configuración de prioridad
-                          await _cargarOrdenes();
-                          await _cargarMensajesNoLeidos();
-                        },
-                        color: const Color(0xFF1976D2),
-                        child: ListView.builder(
-                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 100), // Padding extra al final para que la última orden sea visible
-                          itemCount: _ordenesFiltradas.length,
-                          itemBuilder: (context, index) {
-                            final orden = _ordenesFiltradas[index];
-                            return _buildOrdenCard(orden);
+                      SliverToBoxAdapter(
+                        child: Builder(
+                          builder: (context) {
+                            final shortViewport =
+                                MediaQuery.sizeOf(context).height < 500 ||
+                                    MediaQuery.viewInsetsOf(context).bottom >
+                                        0;
+                            return Container(
+                              padding: EdgeInsets.fromLTRB(
+                                16,
+                                shortViewport ? 8 : 16,
+                                16,
+                                shortViewport ? 8 : 16,
+                              ),
+                              color: AppColors.darkBg,
+                              child: TextField(
+                                key: const ValueKey('search_field'),
+                                controller: _searchController,
+                                focusNode: _searchFocusNode,
+                                style: const TextStyle(
+                                  color: AppColors.darkText,
+                                ),
+                                scrollPadding: EdgeInsets.only(
+                                  bottom:
+                                      MediaQuery.viewInsetsOf(context).bottom +
+                                          120,
+                                ),
+                                decoration: InputDecoration(
+                                  hintText: 'Buscar órdenes...',
+                                  hintStyle: const TextStyle(
+                                    color: AppColors.darkTextMuted,
+                                  ),
+                                  prefixIcon: const Icon(
+                                    Icons.search,
+                                    color: AppColors.botonPrincipal,
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(25),
+                                    borderSide: const BorderSide(
+                                      color: AppColors.darkBorder,
+                                    ),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(25),
+                                    borderSide: const BorderSide(
+                                      color: AppColors.darkBorder,
+                                    ),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(25),
+                                    borderSide: const BorderSide(
+                                      color: AppColors.botonPrincipal,
+                                      width: 2,
+                                    ),
+                                  ),
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 20,
+                                    vertical: shortViewport ? 8 : 12,
+                                  ),
+                                  filled: true,
+                                  fillColor: AppColors.darkElevated,
+                                ),
+                              ),
+                            );
                           },
                         ),
                       ),
-          ),
-        ],
-        ),
-      ),
+                      if (!_esRecolector)
+                        SliverToBoxAdapter(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 4,
+                            ),
+                            color: AppColors.darkBg,
+                            child: Center(
+                              child: Wrap(
+                                alignment: WrapAlignment.center,
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  ElevatedButton.icon(
+                                    onPressed: _ordenandoCercania
+                                        ? null
+                                        : _ordenarOrdenesPorCercania,
+                                    icon: _ordenandoCercania
+                                        ? const SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white,
+                                            ),
+                                          )
+                                        : const Icon(Icons.near_me, size: 20),
+                                    label: Text(
+                                      _modoOrdenCercania
+                                          ? 'Actualizar cercanía'
+                                          : 'Ordenar por cercanía',
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor:
+                                          const Color(0xFF1976D2),
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 20,
+                                        vertical: 10,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(25),
+                                      ),
+                                    ),
+                                  ),
+                                  if (_modoOrdenCercania)
+                                    OutlinedButton(
+                                      onPressed: _desactivarOrdenCercania,
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor:
+                                            AppColors.darkTextMuted,
+                                        side: const BorderSide(
+                                          color: AppColors.darkBorder,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(25),
+                                        ),
+                                      ),
+                                      child: const Text('Quitar orden'),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      if (_tieneRutaOptimizada)
+                        SliverToBoxAdapter(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            color: AppColors.darkBg,
+                            child: Center(
+                              child: ElevatedButton.icon(
+                                onPressed: () => _mostrarRutaOptimizada(),
+                                icon: const Icon(Icons.route, size: 20),
+                                label: const Text(
+                                  'Ver Ruta Optimizada',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF4CAF50),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 24,
+                                    vertical: 12,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(25),
+                                  ),
+                                  elevation: 2,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      SliverToBoxAdapter(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          color: AppColors.darkBg,
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                if (_esRecolector) ...[
+                                  _buildFiltroChip(
+                                    'ACTIVAS',
+                                    _filtroEstado == 'ACTIVAS',
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _buildFiltroChip(
+                                    'POR RECOGER',
+                                    _filtroEstado == 'POR RECOGER',
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _buildFiltroChip(
+                                    'EN CAMINO',
+                                    _filtroEstado == 'EN CAMINO',
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _buildFiltroChip(
+                                    'RECOGIDO',
+                                    _filtroEstado == 'RECOGIDO',
+                                  ),
+                                ] else ...[
+                                  _buildFiltroChip(
+                                    'ACTIVAS',
+                                    _filtroEstado == 'ACTIVAS',
+                                  ),
+                                  if (_esRepartidorMaster) ...[
+                                    const SizedBox(width: 8),
+                                    _buildFiltroRepartidorChip(
+                                      'MÍAS',
+                                      _filtroRepartidor == 'MÍAS',
+                                    ),
+                                    const SizedBox(width: 8),
+                                    _buildFiltroRepartidorChip(
+                                      'TODAS',
+                                      _filtroRepartidor == null,
+                                    ),
+                                  ],
+                                  const SizedBox(width: 8),
+                                  _buildFiltroChip(
+                                    'URGENTES',
+                                    _filtroEstado == 'URGENTES',
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _buildFiltroChip(
+                                    'ATRASADAS',
+                                    _filtroEstado == 'ATRASADAS',
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _buildFiltroChip(
+                                    'ENTREGADAS',
+                                    _filtroEstado == 'ENTREGADAS',
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      SliverToBoxAdapter(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          color: AppColors.darkBg,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                '${_ordenesFiltradas.length} órdenes encontradas',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  color: AppColors.darkTextMuted,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              if (_filtroEstado == 'URGENTES' &&
+                                  _ordenesFiltradas.isNotEmpty)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFDC2626),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Text(
+                                    'URGENTE',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (_isLoading)
+                        const SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: Center(
+                            child: CircularProgressIndicator(
+                              color: AppColors.botonPrincipal,
+                            ),
+                          ),
+                        )
+                      else if (_ordenesFiltradas.isEmpty)
+                        SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: Center(child: _buildEmptyState()),
+                        )
+                      else
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 100),
+                          sliver: SliverList(
+                            delegate: SliverChildBuilderDelegate(
+                              (context, index) {
+                                final orden = _ordenesFiltradas[index];
+                                return _buildOrdenCard(orden);
+                              },
+                              childCount: _ordenesFiltradas.length,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
                 _cuentaSuspendida
                     ? RepartidorViajesSuspendidoPanel(
                         empresaNombre: _nombreEmpresa,
@@ -4447,10 +4511,32 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   }
 
   Widget _buildEmptyState() {
+    final compact = MediaQuery.sizeOf(context).height < 420;
     return VolonexUi.emptyState(
       icon: Icons.inbox_outlined,
-      message: 'No hay órdenes asignadas en este momento.\nPrueba otro filtro o espera nuevas asignaciones.',
+      message: compact
+          ? 'No hay órdenes asignadas.'
+          : 'No hay órdenes asignadas en este momento.\nPrueba otro filtro o espera nuevas asignaciones.',
+      compact: compact,
     );
+  }
+
+  Future<void> _refrescarHomeOrdenes() async {
+    print('🔄 Pull-to-refresh activado...');
+    final syncService = SyncService();
+    if (syncService.hasPendingOperations) {
+      print(
+        '🔄 Sincronizando ${syncService.pendingOperationsCount} operación${syncService.pendingOperationsCount > 1 ? "es" : ""} pendiente${syncService.pendingOperationsCount > 1 ? "s" : ""}...',
+      );
+      if (_isOnline) {
+        await syncService.syncPendingOperations();
+      } else {
+        print('📴 Sin conexión - No se puede sincronizar');
+      }
+    }
+    await _cargarConfiguracionPrioridad();
+    await _cargarOrdenes();
+    await _cargarMensajesNoLeidos();
   }
 
   // Tarjeta especial para remesas (estilo dorado/amarillo como en web)

@@ -585,11 +585,17 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
             elevation: 12,
             child: SafeArea(
               top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final maxPanel = MediaQuery.sizeOf(context).height * 0.48;
+                  return ConstrainedBox(
+                    constraints: BoxConstraints(maxHeight: maxPanel),
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
                     Text(
                       nombre,
                       textAlign: TextAlign.center,
@@ -773,8 +779,11 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                         ),
                       ),
                     ],
-                  ],
-                ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
           ),
