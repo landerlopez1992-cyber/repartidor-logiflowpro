@@ -6,8 +6,8 @@ import 'package:latlong2/latlong.dart';
 
 import '../config/app_colors.dart';
 import '../services/repartidor_suspension_service.dart';
-import '../services/ruta_geometria_osrm_service.dart';
 import '../services/taxi_chofer_service.dart';
+import '../services/taxi_directions_service.dart';
 import '../widgets/taxi_cash_cobrar_completar_modal.dart';
 import '../widgets/taxi_cash_comision_aviso_modal.dart';
 import '../widgets/taxi_chofer_maplibre.dart';
@@ -38,6 +38,9 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
   bool _cargandoRuta = false;
   DateTime? _ultimaRutaAt;
   LatLng? _ultimoOrigenRuta;
+  String? _etaLabel;
+  int? _etaSegundos;
+  bool _etaConTrafico = false;
   Timer? _chatBadgeTimer;
   int _chatNoLeidos = 0;
   String? _ultimoClienteMsgIdLeido;
@@ -202,7 +205,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     } catch (_) {}
   }
 
-  /// Trayecto por calles (OSRM), no línea recta.
+  /// Trayecto por calles + ETA (Google Directions con tráfico; fallback OSRM).
   Future<void> _actualizarRutaReal({bool forzar = false}) async {
     if (_cargandoRuta) return;
     final ahora = DateTime.now();
@@ -212,11 +215,15 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       return;
     }
 
-    final List<LatLng> waypoints;
+    final LatLng origen;
+    final LatLng destino;
     if (_faseDestino) {
-      waypoints = [_yo ?? _puntoA, _puntoB];
+      origen = _yo ?? _puntoA;
+      destino = _puntoB;
     } else if (_faseEspera) {
-      waypoints = [_puntoA, _puntoB];
+      // Ya en punto A: mostrar ETA A→B informativo (próximo tramo).
+      origen = _puntoA;
+      destino = _puntoB;
     } else {
       final yo = _yo;
       if (yo == null) return;
@@ -231,24 +238,40 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
               80) {
         return;
       }
-      waypoints = [yo, _puntoA];
+      origen = yo;
+      destino = _puntoA;
     }
 
     _cargandoRuta = true;
     try {
-      final geom =
-          await RutaGeometriaOsrmService.obtenerGeometriaConduccion(waypoints);
+      final result = await TaxiDirectionsService.instance.rutaConEta(
+        origen: origen,
+        destino: destino,
+      );
       if (!mounted) return;
+      final haciaPasajero = !_faseDestino && !_faseEspera;
+      final eta = _faseEspera
+          ? 'En el punto de recogida — espera al pasajero'
+          : TaxiDirectionsService.formatEtaChofer(
+              haciaPasajero: haciaPasajero,
+              haciaDestino: _faseDestino,
+              durationS: result.durationS,
+              durationText: result.durationText,
+            );
       setState(() {
-        _rutaReal = geom.length >= 2 ? geom : waypoints;
+        _rutaReal =
+            result.points.length >= 2 ? result.points : [origen, destino];
         _ultimaRutaAt = DateTime.now();
-        _ultimoOrigenRuta = waypoints.first;
+        _ultimoOrigenRuta = origen;
+        _etaSegundos = result.durationS;
+        _etaConTrafico = result.traffic;
+        _etaLabel = eta;
         _cargandoRuta = false;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _rutaReal = waypoints;
+        _rutaReal = [origen, destino];
         _cargandoRuta = false;
       });
     }
@@ -605,6 +628,8 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                         fontSize: 18,
                       ),
                     ),
+                    const SizedBox(height: 10),
+                    _buildEtaBanner(),
                     const SizedBox(height: 12),
                     _buildRutaDirecciones(),
                     if (_faseEspera) ...[
@@ -787,6 +812,106 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// Banner claro: tiempo hasta el pasajero (A) o hasta el destino (B).
+  Widget _buildEtaBanner() {
+    final label = _etaLabel ??
+        (_faseEspera
+            ? 'En el punto de recogida'
+            : (_faseDestino
+                ? 'Calculando llegada al destino…'
+                : 'Calculando llegada al pasajero…'));
+    final minutos = _etaSegundos != null && _etaSegundos! > 0
+        ? (_etaSegundos! / 60).ceil()
+        : null;
+    final sub = _faseEspera
+        ? 'El pasajero te ve en el mapa'
+        : (_etaConTrafico
+            ? 'Según tráfico actual'
+            : 'Estimación por ruta');
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF252A35),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: const Color(0xFF37474F),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              _faseEspera
+                  ? Icons.person_pin_circle_outlined
+                  : Icons.schedule,
+              color: const Color(0xFFECEFF1),
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: Color(0xFFECEFF1),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                    height: 1.25,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  minutos != null && !_faseEspera
+                      ? '$sub · ~$minutos min'
+                      : sub,
+                  style: const TextStyle(
+                    color: Color(0xFF9CA3AF),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (minutos != null && !_faseEspera)
+            Text(
+              '$minutos',
+              style: const TextStyle(
+                color: Color(0xFFECEFF1),
+                fontWeight: FontWeight.w900,
+                fontSize: 28,
+                height: 1,
+              ),
+            ),
+          if (minutos != null && !_faseEspera) ...[
+            const SizedBox(width: 4),
+            const Padding(
+              padding: EdgeInsets.only(top: 10),
+              child: Text(
+                'min',
+                style: TextStyle(
+                  color: Color(0xFF9CA3AF),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
