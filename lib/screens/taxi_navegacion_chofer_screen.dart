@@ -41,6 +41,8 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
   String? _etaLabel;
   int? _etaSegundos;
   bool _etaConTrafico = false;
+  /// Velocidad GPS actual (m/s). Null si aún no hay lectura.
+  double? _speedMps;
   Timer? _chatBadgeTimer;
   int _chatNoLeidos = 0;
   String? _ultimoClienteMsgIdLeido;
@@ -188,7 +190,10 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       }
       final pos = await Geolocator.getCurrentPosition();
       if (!mounted) return;
-      setState(() => _yo = LatLng(pos.latitude, pos.longitude));
+      setState(() {
+        _yo = LatLng(pos.latitude, pos.longitude);
+        _speedMps = pos.speed >= 0 ? pos.speed : null;
+      });
       await _enviarUbicacion();
       unawaited(_actualizarRutaReal(forzar: true));
 
@@ -199,7 +204,10 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
         ),
       ).listen((p) {
         if (!mounted) return;
-        setState(() => _yo = LatLng(p.latitude, p.longitude));
+        setState(() {
+          _yo = LatLng(p.latitude, p.longitude);
+          _speedMps = p.speed >= 0 ? p.speed : null;
+        });
         unawaited(_actualizarRutaReal());
       });
     } catch (_) {}
@@ -833,6 +841,12 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
         : (_etaConTrafico
             ? 'Según tráfico actual'
             : 'Estimación por ruta');
+    final speedKmh = (_speedMps != null && _speedMps! >= 1.0)
+        ? (_speedMps! * 3.6).round().clamp(1, 200)
+        : null;
+    final subConVel = speedKmh != null && !_faseEspera
+        ? '$sub · $speedKmh km/h'
+        : sub;
 
     return Container(
       width: double.infinity,
@@ -877,8 +891,8 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                 const SizedBox(height: 2),
                 Text(
                   minutos != null && !_faseEspera
-                      ? '$sub · ~$minutos min'
-                      : sub,
+                      ? '$subConVel · ~$minutos min'
+                      : subConVel,
                   style: const TextStyle(
                     color: Color(0xFF9CA3AF),
                     fontSize: 12,
