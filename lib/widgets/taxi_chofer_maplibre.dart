@@ -253,7 +253,7 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
         initialCenter: _center,
         initialZoom: 14,
         minZoom: 3,
-        maxZoom: 16,
+        maxZoom: 18,
         backgroundColor: const Color(0xFFE8EEF4),
         interactionOptions: const InteractionOptions(
           flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
@@ -261,7 +261,11 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
         onMapReady: _fitFallback,
       ),
       children: [
-        RepartidorMapTileLayer(tenantId: widget.tenantId),
+        RepartidorMapTileLayer(
+          preferOnline: true,
+          maxZoom: 18,
+          tenantId: widget.tenantId,
+        ),
         if (polylines.isNotEmpty) PolylineLayer(polylines: polylines),
         MarkerLayer(markers: markers),
       ],

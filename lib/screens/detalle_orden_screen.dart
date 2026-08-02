@@ -1575,7 +1575,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                       ],
                     ),
                     const SizedBox(height: 16),
-                    // Dirección con botón GPS
+                    // Dirección (acciones GPS/llamar/mensaje/WhatsApp al final)
                     Row(
                       children: [
                         const Icon(Icons.location_on, color: Color(0xFF1976D2), size: 20),
@@ -1605,24 +1605,9 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                             ],
                           ),
                         ),
-                        // Botón de GPS
-                        Container(
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF4CAF50),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: IconButton(
-                            onPressed: () => _abrirGPSConDireccion(),
-                            icon: const Icon(Icons.navigation, color: Colors.white, size: 20),
-                            style: IconButton.styleFrom(
-                              padding: const EdgeInsets.all(12),
-                            ),
-                            tooltip: 'Abrir GPS con dirección',
-                          ),
-                        ),
                       ],
                     ),
-                    // Botones de contacto si hay teléfono
+                    // Teléfono (sin botones inline)
                     if (_ordenActual.telefonoDestinatario != null && _ordenActual.telefonoDestinatario!.isNotEmpty) ...[
                       const SizedBox(height: 16),
                       Row(
@@ -1652,53 +1637,11 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                               ],
                             ),
                           ),
-                          // Botón de llamar
-                          Container(
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF4CAF50),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: IconButton(
-                              onPressed: () => _llamarDestinatario(_ordenActual.telefonoDestinatario!),
-                              icon: const Icon(Icons.call, color: Colors.white, size: 20),
-                              style: IconButton.styleFrom(
-                                padding: const EdgeInsets.all(12),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          // Botón de mensaje
-                          Container(
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF1976D2),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: IconButton(
-                              onPressed: () => _enviarMensajeDestinatario(_ordenActual.telefonoDestinatario!),
-                              icon: const Icon(Icons.message, color: Colors.white, size: 20),
-                              style: IconButton.styleFrom(
-                                padding: const EdgeInsets.all(12),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          // Botón de WhatsApp
-                          Container(
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF25D366),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: IconButton(
-                              onPressed: () => _enviarWhatsAppDestinatario(_ordenActual.telefonoDestinatario!),
-                              icon: const FaIcon(FontAwesomeIcons.whatsapp, color: Colors.white, size: 20),
-                              style: IconButton.styleFrom(
-                                padding: const EdgeInsets.all(12),
-                              ),
-                            ),
-                          ),
                         ],
                       ),
                     ],
+                    const SizedBox(height: 16),
+                    _buildAccionesContactoDestinatarioBar(),
                   ],
                 ),
               ),
@@ -2472,7 +2415,7 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             ),
             const SizedBox(height: 12),
             
-            // Dirección completa de recogida/entrega con botón de GPS
+            // Dirección completa de recogida/entrega (acciones al final de la tarjeta)
             Row(
               children: [
                 const Icon(Icons.location_on, color: Color(0xFF1976D2), size: 20),
@@ -2501,21 +2444,6 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                         ),
                       ),
                     ],
-                  ),
-                ),
-                // Botón de GPS
-                Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF4CAF50), // Verde para GPS
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: IconButton(
-                    onPressed: () => _abrirGPSConDireccion(),
-                    icon: const Icon(Icons.navigation, color: Colors.white, size: 20),
-                    style: IconButton.styleFrom(
-                      padding: const EdgeInsets.all(12),
-                    ),
-                    tooltip: 'Abrir GPS con dirección completa',
                   ),
                 ),
               ],
@@ -2778,50 +2706,6 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                       ],
                     ),
                   ),
-                  // Botón de llamar
-                  Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF4CAF50),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: IconButton(
-                      onPressed: () => _llamarDestinatario(_ordenActual.telefonoDestinatario!),
-                      icon: const Icon(Icons.call, color: Colors.white, size: 20),
-                      style: IconButton.styleFrom(
-                        padding: const EdgeInsets.all(12),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  // Botón de mensaje
-                  Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1976D2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: IconButton(
-                      onPressed: () => _enviarMensajeDestinatario(_ordenActual.telefonoDestinatario!),
-                      icon: const Icon(Icons.message, color: Colors.white, size: 20),
-                      style: IconButton.styleFrom(
-                        padding: const EdgeInsets.all(12),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  // Botón de WhatsApp
-                  Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF25D366), // Color verde de WhatsApp
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: IconButton(
-                      onPressed: () => _enviarWhatsAppDestinatario(_ordenActual.telefonoDestinatario!),
-                      icon: const FaIcon(FontAwesomeIcons.whatsapp, color: Colors.white, size: 20),
-                      style: IconButton.styleFrom(
-                        padding: const EdgeInsets.all(12),
-                      ),
-                    ),
-                  ),
                 ],
               ),
             ] else ...[
@@ -2839,8 +2723,82 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                 ],
               ),
             ],
+            const SizedBox(height: 16),
+            _buildAccionesContactoDestinatarioBar(),
           ],
         ),
+      ),
+    );
+  }
+
+  /// GPS + llamar + SMS + WhatsApp en una sola fila al final de la tarjeta.
+  Widget _buildAccionesContactoDestinatarioBar() {
+    final tel = _ordenActual.telefonoDestinatario?.trim();
+    final hasTel = tel != null && tel.isNotEmpty;
+
+    Widget actionBtn({
+      required Color color,
+      required Widget icon,
+      required VoidCallback onPressed,
+      String? tooltip,
+    }) {
+      final btn = Container(
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: IconButton(
+          onPressed: onPressed,
+          icon: icon,
+          style: IconButton.styleFrom(
+            padding: const EdgeInsets.all(12),
+          ),
+        ),
+      );
+      if (tooltip == null || tooltip.isEmpty) return btn;
+      return Tooltip(message: tooltip, child: btn);
+    }
+
+    return Align(
+      alignment: Alignment.center,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          actionBtn(
+            color: const Color(0xFF4CAF50),
+            icon: const Icon(Icons.navigation, color: Colors.white, size: 20),
+            onPressed: () => _abrirGPSConDireccion(),
+            tooltip: 'Abrir GPS con dirección',
+          ),
+          if (hasTel) ...[
+            const SizedBox(width: 8),
+            actionBtn(
+              color: const Color(0xFF4CAF50),
+              icon: const Icon(Icons.call, color: Colors.white, size: 20),
+              onPressed: () => _llamarDestinatario(tel),
+              tooltip: 'Llamar',
+            ),
+            const SizedBox(width: 8),
+            actionBtn(
+              color: const Color(0xFF1976D2),
+              icon: const Icon(Icons.message, color: Colors.white, size: 20),
+              onPressed: () => _enviarMensajeDestinatario(tel),
+              tooltip: 'Mensaje',
+            ),
+            const SizedBox(width: 8),
+            actionBtn(
+              color: const Color(0xFF25D366),
+              icon: const FaIcon(
+                FontAwesomeIcons.whatsapp,
+                color: Colors.white,
+                size: 20,
+              ),
+              onPressed: () => _enviarWhatsAppDestinatario(tel),
+              tooltip: 'WhatsApp',
+            ),
+          ],
+        ],
       ),
     );
   }

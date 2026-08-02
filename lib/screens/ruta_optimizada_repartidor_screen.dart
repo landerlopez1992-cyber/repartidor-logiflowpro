@@ -1622,15 +1622,17 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                     : MapaRegionService.centroPorPais(_paisOperacion)),
               initialZoom: _zoomMapaInicial,
               minZoom: 3.0,
-              maxZoom: 16.0,
+              maxZoom: 18.0,
               backgroundColor: const Color(0xFFE8EEF4),
               interactionOptions: const InteractionOptions(
                 flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
               ),
             ),
             children: [
-              // MBTiles del tenant (offline) o Carto con caché en disco.
+              // Con internet: calles Carto modernas (no MBTiles en blanco).
               RepartidorMapTileLayer(
+                preferOnline: true,
+                maxZoom: 18,
                 tenantId: _ordenesOrdenadas.isNotEmpty
                     ? _ordenesOrdenadas.first.tenantId
                     : (widget.ordenes.isNotEmpty
@@ -2034,35 +2036,37 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                               ),
                             ),
                           Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Row(
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.botonPrincipal,
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: Text(
-                                      'Parada ${_ordenActualIndex + 1} de ${_ordenesOrdenadas.length}',
-                                      style: const TextStyle(
-                                        color: AppColors.onAccentButton,
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.botonPrincipal,
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Text(
+                                  'Parada ${_ordenActualIndex + 1} de ${_ordenesOrdenadas.length}',
+                                  style: const TextStyle(
+                                    color: AppColors.onAccentButton,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
                                   ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    '#${_ordenActual!.numeroOrden}',
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: AppColors.darkText,
-                                    ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  '#${_ordenActual!.numeroOrden}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.darkText,
                                   ),
-                                ],
+                                ),
                               ),
                               Builder(
                                 builder: (_) {
@@ -2082,12 +2086,17 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                                   if (parts.isEmpty) {
                                     return const SizedBox.shrink();
                                   }
-                                  return Text(
-                                    parts.join(' · '),
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w700,
-                                      color: Color(0xFF1A73E8),
+                                  return Padding(
+                                    padding: const EdgeInsets.only(left: 8),
+                                    child: Text(
+                                      parts.join(' · '),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700,
+                                        color: Color(0xFF1A73E8),
+                                      ),
                                     ),
                                   );
                                 },
@@ -2097,6 +2106,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                           const SizedBox(height: 12),
                           Text(
                             _ordenActual!.direccionDestino,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: 14,
                               color: AppColors.darkText,
@@ -2106,6 +2117,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                             const SizedBox(height: 4),
                             Text(
                               'Destinatario: ${_ordenActual!.receptor}',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontSize: 12,
                                 color: AppColors.darkTextMuted,

@@ -175,8 +175,18 @@ class RepartidorBootCacheService {
     await OfflineStorageService().initialize();
 
     updateProgress(0.15, 'Verificando sesión...');
-    final user = supabase.auth.currentUser;
+    var user = supabase.auth.currentUser;
     if (user == null) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final lastId = prefs.getString('last_repartidor_auth_id');
+        if (lastId != null && lastId.isNotEmpty) {
+          // Sesión offline: no hay currentUser pero sí caché del repartidor.
+          updateProgress(0.28, 'Cargando desde caché (sin internet)…');
+          await _bootOfflineConAuthId(lastId, updateProgress);
+          return;
+        }
+      } catch (_) {}
       updateProgress(1.0, 'Sin sesión');
       return;
     }
@@ -268,6 +278,45 @@ class RepartidorBootCacheService {
     updateProgress(
       1.0,
       nOrdenes > 0 ? 'Listo · $nOrdenes órdenes en caché' : 'Listo',
+    );
+  }
+
+  /// Arranque sin `currentUser` (token vencido / sin red): solo disco.
+  Future<void> _bootOfflineConAuthId(
+    String userId,
+    void Function(double progress, String message) updateProgress,
+  ) async {
+    updateProgress(0.35, 'Cargando empresa (caché)…');
+    final empresa = await loadEmpresaCached(userId);
+    if (empresa != null) {
+      print('🏢 Boot offline empresa: ${empresa.nombre}');
+    }
+
+    updateProgress(0.55, 'Cargando órdenes en caché…');
+    final ordenes = await OrdenCacheService.getCachedOrders();
+    final nOrdenes = ordenes.length;
+
+    updateProgress(0.75, 'Preparando mapa offline…');
+    await _precargarMapaOffline(userId: userId, online: false);
+
+    updateProgress(0.88, 'Preparando chat / notificaciones…');
+    try {
+      final meta =
+          await RepartidorPantallasOfflineService.cargarMetaChat(userId);
+      final convId = meta?.conversacionId;
+      if (convId != null && convId.isNotEmpty) {
+        await RepartidorPantallasOfflineService.cargarMensajesChat(convId);
+      }
+    } catch (_) {}
+    try {
+      await RepartidorPantallasOfflineService.cargarNotificaciones(userId);
+    } catch (_) {}
+
+    updateProgress(
+      1.0,
+      nOrdenes > 0
+          ? 'Listo offline · $nOrdenes órdenes en caché'
+          : 'Listo offline · sin internet',
     );
   }
 

@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../utils/repartidor_connectivity.dart';
 import 'taxi_buscando_prefs.dart';
 import 'taxi_vehiculo_catalog.dart';
 
@@ -120,22 +121,67 @@ class TaxiTarifasChoferService {
     return (ok: false, err: err);
   }
 
-  Future<({bool ok, String? err})> setDisponible(bool value) async {
-    final res = await _db.rpc(
-      'taxi_chofer_set_disponible',
-      params: {'p_disponible': value},
-    );
-    if (res is Map && res['ok'] == true) return (ok: true, err: null);
-    final msg = res is Map
-        ? (res['mensaje']?.toString() ??
-            res['error']?.toString() ??
-            'No se pudo actualizar')
-        : 'No se pudo actualizar';
-    return (ok: false, err: msg);
+  /// Actualiza disponibilidad en BD. Sin red: encola y devuelve ok (caché local manda).
+  Future<({bool ok, String? err, bool queued})> setDisponible(bool value) async {
+    try {
+      if (RepartidorConnectivity.online.value == false) {
+        await TaxiBuscandoPrefs.marcarPendienteSyncDisponible(value);
+        return (ok: true, err: null, queued: true);
+      }
+      final res = await _db
+          .rpc(
+            'taxi_chofer_set_disponible',
+            params: {'p_disponible': value},
+          )
+          .timeout(const Duration(seconds: 4));
+      if (res is Map && res['ok'] == true) {
+        await TaxiBuscandoPrefs.limpiarPendienteSyncDisponible();
+        return (ok: true, err: null, queued: false);
+      }
+      final msg = res is Map
+          ? (res['mensaje']?.toString() ??
+              res['error']?.toString() ??
+              'No se pudo actualizar')
+          : 'No se pudo actualizar';
+      // Error de negocio (tarifa, fianza…): no encolar como si fuera éxito.
+      final lower = msg.toLowerCase();
+      final esNegocio = lower.contains('tarifa') ||
+          lower.contains('fianza') ||
+          lower.contains('configur') ||
+          lower.contains('suspend');
+      if (esNegocio) {
+        return (ok: false, err: msg, queued: false);
+      }
+      await TaxiBuscandoPrefs.marcarPendienteSyncDisponible(value);
+      return (ok: true, err: null, queued: true);
+    } catch (e) {
+      print('⚠️ setDisponible offline/timeout → cola: $e');
+      await TaxiBuscandoPrefs.marcarPendienteSyncDisponible(value);
+      return (ok: true, err: null, queued: true);
+    }
+  }
+
+  /// Empuja a BD el estado local / pendiente cuando vuelve internet.
+  Future<void> flushPendienteDisponibleSiHay() async {
+    try {
+      final pendiente = await TaxiBuscandoPrefs.pendienteSyncDisponible();
+      final local = await TaxiBuscandoPrefs.esActivo();
+      final desired = pendiente ?? local;
+      // Si no hay pendiente y local coincide con lo esperado, igual reafirmamos
+      // solo cuando hay flag pendiente.
+      if (pendiente == null) return;
+      final res = await setDisponible(desired);
+      if (res.ok && !res.queued) {
+        print('✅ disponible sincronizado tras offline: $desired');
+      }
+    } catch (e) {
+      print('⚠️ flushPendienteDisponibleSiHay: $e');
+    }
   }
 
   Future<void> reafirmarDisponibleSiActivoLocal() async {
     try {
+      await flushPendienteDisponibleSiHay();
       final local = await TaxiBuscandoPrefs.esActivo();
       if (!local) return;
       final tarifa = await get();

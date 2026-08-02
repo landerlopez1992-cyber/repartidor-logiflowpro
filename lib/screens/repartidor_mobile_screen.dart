@@ -24,6 +24,7 @@ import '../services/repartidor_pantallas_offline_service.dart';
 import '../services/network_timeout.dart';
 import '../services/offline_storage_service.dart';
 import '../services/connectivity_assistant_service.dart';
+import '../widgets/repartidor_connectivity_app_bar_icon.dart';
 import '../services/shorebird_service.dart';
 import '../services/goodbarber_sync_service.dart';
 import '../services/paises_service.dart';
@@ -3727,13 +3728,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 ],
               ),
             ),
-            // Indicador de estado de conexión - Más compacto
-            const SizedBox(width: 4),
-            Icon(
-              _isOnline ? Icons.cloud_done : Icons.cloud_off,
-              color: _isOnline ? const Color(0xFF4CAF50) : const Color(0xFFFF9800),
-              size: 18,
-            ),
+            // Indicador de conexión (idéntico a CubaLink23: wifi + punto)
+            const SizedBox(width: 2),
+            const RepartidorConnectivityAppBarIcon(),
             if (_operacionesPendientes > 0) ...[
               const SizedBox(width: 4),
               InkWell(

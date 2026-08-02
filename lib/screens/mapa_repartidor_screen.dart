@@ -9,6 +9,7 @@ import '../services/sync_service.dart';
 import '../services/network_timeout.dart';
 import '../models/orden.dart';
 import '../widgets/profile_avatar.dart';
+import '../widgets/repartidor_map_tile_layer.dart';
 import '../config/app_colors.dart';
 
 class MapaRepartidorScreen extends StatefulWidget {
@@ -466,9 +467,10 @@ class _MapaRepartidorScreenState extends State<MapaRepartidorScreen> {
                             maxZoom: 18.0,
                           ),
                           children: [
-                            TileLayer(
-                              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                              userAgentPackageName: 'com.paqueteria.app',
+                            RepartidorMapTileLayer(
+                              preferOnline: true,
+                              maxZoom: 18,
+                              tenantId: widget.orden.tenantId,
                             ),
                             MarkerLayer(
                               markers: [

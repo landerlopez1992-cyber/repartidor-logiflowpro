@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:mbtiles/mbtiles.dart';
@@ -9,22 +10,23 @@ import 'package:mbtiles/mbtiles.dart';
 import '../services/map_tile_disk_cache.dart';
 import '../services/tenant_mapa_offline_service.dart';
 
-/// Capa base del mapa: MBTiles del tenant (si es usable) o Carto online.
+/// Capa base del mapa: con internet → Carto Voyager (calles modernas);
+/// sin internet → MBTiles del tenant si hay cobertura.
 ///
-/// Si el MBTiles no tiene teselas en la zona / esquema incorrecto, cae a red
-/// para no dejar el mapa en blanco.
+/// Antes se prefería MBTiles aunque hubiera red: si el paquete no tenía
+/// teselas de calle en la zona, el mapa quedaba en blanco.
 class RepartidorMapTileLayer extends StatefulWidget {
   const RepartidorMapTileLayer({
     super.key,
     this.tenantId,
-    this.maxZoom = 16,
+    this.maxZoom = 18,
     this.preferOnline = false,
   });
 
   final String? tenantId;
   final int maxZoom;
 
-  /// Si true, usa Carto online (útil en zoom calle cuando el MBTiles no cubre).
+  /// Si true, fuerza Carto online (ignora MBTiles aunque no haya red).
   final bool preferOnline;
 
   @override
@@ -52,18 +54,29 @@ class _RepartidorMapTileLayerState extends State<RepartidorMapTileLayer> {
     }
   }
 
+  Future<bool> _hayRed() async {
+    try {
+      final r = await Connectivity().checkConnectivity();
+      if (r.isEmpty) return true;
+      return !r.every((e) => e == ConnectivityResult.none);
+    } catch (_) {
+      // Ante duda: online, para no mostrar mapa en blanco.
+      return true;
+    }
+  }
+
   Future<void> _load() async {
     MbTiles? opened;
     var useOffline = false;
     var tms = false;
     try {
-      if (!widget.preferOnline) {
+      final forzarOnline = widget.preferOnline || await _hayRed();
+      if (!forzarOnline) {
         var tid = widget.tenantId?.trim();
         tid ??= await TenantMapaOfflineService.instance.tenantIdChofer();
         final path =
             await TenantMapaOfflineService.instance.ensureLocalMbtiles(tid);
         if (path != null && path.isNotEmpty) {
-          // La mayoría de MBTiles guardan PNG gzip; si falla, reintentar sin gzip.
           opened = await _abrirMbtilesUsable(path);
           if (opened != null) {
             final probe = _probeEsquema(opened);
@@ -76,11 +89,13 @@ class _RepartidorMapTileLayerState extends State<RepartidorMapTileLayer> {
               } catch (_) {}
               opened = null;
               print(
-                '⚠️ MBTiles local sin teselas útiles en la zona → mapa online',
+                '⚠️ MBTiles local sin teselas útiles → mapa online',
               );
             }
           }
         }
+      } else {
+        print('🗺️ Mapa base: Carto online (calles)');
       }
     } catch (e) {
       print('⚠️ RepartidorMapTileLayer MBTiles: $e');
@@ -146,7 +161,6 @@ class _RepartidorMapTileLayerState extends State<RepartidorMapTileLayer> {
   }
 
   static bool _pareceImagen(Uint8List raw) {
-    // PNG
     if (raw.length > 8 &&
         raw[0] == 0x89 &&
         raw[1] == 0x50 &&
@@ -154,9 +168,7 @@ class _RepartidorMapTileLayerState extends State<RepartidorMapTileLayer> {
         raw[3] == 0x47) {
       return true;
     }
-    // JPEG
     if (raw.length > 3 && raw[0] == 0xFF && raw[1] == 0xD8) return true;
-    // WebP
     if (raw.length > 12 &&
         raw[0] == 0x52 &&
         raw[1] == 0x49 &&
@@ -192,12 +204,12 @@ class _RepartidorMapTileLayerState extends State<RepartidorMapTileLayer> {
 
   TileLayer _capaOnline() {
     final maxZ = widget.maxZoom.toDouble();
-    final maxNative = widget.maxZoom;
-    // NetworkTileProvider nativo de flutter_map (fiable en macOS/iOS/Android).
+    final maxNative = widget.maxZoom.clamp(1, 19);
     return TileLayer(
       urlTemplate: MapTileDiskCache.urlTemplate,
       subdomains: MapTileDiskCache.subdomains,
       userAgentPackageName: MapTileDiskCache.userAgent,
+      tileProvider: DiskCachedCartoTileProvider(),
       maxZoom: maxZ,
       maxNativeZoom: maxNative,
       retinaMode: false,
@@ -242,7 +254,6 @@ class MbtilesMapTileProvider extends TileProvider {
         y = (1 << z) - 1 - y;
       }
       var raw = db.getTile(z: z, x: x, y: y);
-      // Fallback al otro esquema si el probe no coincidió en este zoom.
       if (raw == null || raw.isEmpty) {
         final yAlt = (1 << z) - 1 - coordinates.y;
         raw = db.getTile(z: z, x: x, y: yAlt);
@@ -251,7 +262,6 @@ class MbtilesMapTileProvider extends TileProvider {
         return MemoryImage(raw);
       }
     } catch (_) {}
-    // Transparente: deja ver el fondo; no tapa con “blanco sólido” engañoso.
     return MemoryImage(emptyPng);
   }
 }

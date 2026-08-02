@@ -13,6 +13,7 @@ import '../services/taxi_tarifas_chofer_service.dart';
 import '../services/taxi_ubicacion_matching_service.dart';
 import '../services/tenant_mapa_offline_service.dart';
 import '../utils/pais_mapa_centro.dart';
+import '../utils/repartidor_connectivity.dart';
 import '../utils/taxi_nearby_fleet_util.dart';
 import '../utils/taxi_road_fleet_util.dart';
 import '../widgets/repartidor_map_tile_layer.dart';
@@ -450,13 +451,66 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
       return;
     }
 
+    // ——— DESACTIVAR: caché + UI al instante (evita ANR sin internet) ———
+    if (!activando) {
+      try {
+        await TaxiBuscandoPrefs.setActivo(false);
+        await TaxiBuscandoPrefs.marcarPendienteSyncDisponible(false);
+      } catch (_) {}
+      if (mounted) {
+        setState(() => _buscando = false);
+      }
+      widget.onBuscandoChanged?.call(false);
+      _radar.stop();
+      _radar.reset();
+      _pararPublicacionGps();
+      await _posSub?.cancel();
+      _posSub = null;
+      if (_esCubalink23) {
+        unawaited(_aplicarVistaCubalink23Habana(recentrarMapa: true));
+      }
+
+      try {
+        try {
+          await TaxiBuscandoSonidoService.alDesactivar();
+        } catch (e) {
+          debugPrint('⚠️ Sonido desactivar: $e');
+        }
+
+        final sinRed = RepartidorConnectivity.online.value == false;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                sinRed
+                    ? 'Viajes desactivados sin internet. Se actualizará al volver la red.'
+                    : 'Viajes desactivados.',
+              ),
+              backgroundColor: AppColors.header,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+
+        // Nunca await en el hilo del toque: sin red el RPC colgaba → ANR.
+        // Cola en prefs; SyncService / reconnect empuja a BD.
+        if (!sinRed) {
+          unawaited(
+            TaxiTarifasChoferService.instance.setDisponible(false),
+          );
+        }
+      } finally {
+        _toggleBusy = false;
+      }
+      return;
+    }
+
+    // ——— ACTIVAR ———
     unawaited(
       showVolonexProgressDialog(
         context,
-        title: activando ? 'Activando viajes' : 'Desactivando viajes',
-        message: activando
-            ? 'Activando su cuenta para empezar a recibir viajes…'
-            : 'Desactivando su cuenta. Dejará de recibir ofertas de viaje…',
+        title: 'Activando viajes',
+        message: 'Activando su cuenta para empezar a recibir viajes…',
       ),
     );
 
@@ -464,47 +518,43 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
     var okFinal = false;
     String? errorMsg;
     String? accionAjustes;
+    var queued = false;
 
     try {
-      if (activando) {
-        // Primero GPS + disponibilidad; el sonido solo si quedó activo de verdad.
-        final gps = await _iniciarGpsMatching();
-        if (!gps.ok) {
-          errorMsg = gps.err ?? 'Activa la ubicación para buscar viajes.';
-          accionAjustes = gps.accionAjustes;
-        } else {
-          await TaxiBuscandoPrefs.setActivo(true);
-          final res =
-              await TaxiTarifasChoferService.instance.setDisponible(true);
-          if (!res.ok) {
-            await TaxiBuscandoPrefs.setActivo(false);
-            _pararPublicacionGps();
-            await _posSub?.cancel();
-            _posSub = null;
-            errorMsg = res.err ?? 'Configura tu tarifa en Ajustes de taxis';
-          } else {
-            try {
-              await TaxiBuscandoSonidoService.alActivar();
-            } catch (e) {
-              debugPrint('⚠️ Sonido buscando viajes: $e');
-            }
-            okFinal = true;
-          }
-        }
+      final gps = await _iniciarGpsMatching().timeout(
+        const Duration(seconds: 12),
+        onTimeout: () => (
+          ok: false,
+          err:
+              'No se pudo obtener GPS a tiempo. Activa la ubicación e intenta de nuevo.',
+          accionAjustes: 'app_settings',
+        ),
+      );
+      if (!gps.ok) {
+        errorMsg = gps.err ?? 'Activa la ubicación para buscar viajes.';
+        accionAjustes = gps.accionAjustes;
       } else {
-        try {
-          await TaxiBuscandoSonidoService.alDesactivar();
-        } catch (e) {
-          debugPrint('⚠️ Sonido buscando viajes: $e');
+        await TaxiBuscandoPrefs.setActivo(true);
+        final res =
+            await TaxiTarifasChoferService.instance.setDisponible(true);
+        if (!res.ok) {
+          await TaxiBuscandoPrefs.setActivo(false);
+          _pararPublicacionGps();
+          await _posSub?.cancel();
+          _posSub = null;
+          errorMsg = res.err ?? 'Configura tu tarifa en Ajustes de taxis';
+        } else {
+          queued = res.queued;
+          try {
+            await TaxiBuscandoSonidoService.alActivar();
+          } catch (e) {
+            debugPrint('⚠️ Sonido buscando viajes: $e');
+          }
+          okFinal = true;
         }
-        await TaxiBuscandoPrefs.setActivo(false);
-        await TaxiTarifasChoferService.instance.setDisponible(false);
-        _pararPublicacionGps();
-        okFinal = true;
       }
 
-      // Modal visible unos segundos para feedback claro.
-      const minShow = Duration(milliseconds: 2200);
+      const minShow = Duration(milliseconds: 900);
       final elapsed = DateTime.now().difference(started);
       if (elapsed < minShow) {
         await Future<void>.delayed(minShow - elapsed);
@@ -518,7 +568,6 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
 
     if (!okFinal) {
       if (errorMsg != null) {
-        // Si el mensaje es de ubicación, diálogo centrado con acceso a ajustes.
         final esUbicacion = accionAjustes != null ||
             errorMsg.toLowerCase().contains('ubicación') ||
             errorMsg.toLowerCase().contains('gps') ||
@@ -540,19 +589,19 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
       return;
     }
 
-    setState(() => _buscando = next);
-    widget.onBuscandoChanged?.call(next);
-    if (next) {
-      _radar.repeat();
-    } else {
-      _radar.stop();
-      _radar.reset();
-      await _posSub?.cancel();
-      _posSub = null;
-      // Volver a la zona Habana al salir de «buscar» (solo Cubalink23).
-      if (_esCubalink23) {
-        unawaited(_aplicarVistaCubalink23Habana(recentrarMapa: true));
-      }
+    setState(() => _buscando = true);
+    widget.onBuscandoChanged?.call(true);
+    _radar.repeat();
+    if (queued) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Viajes activados en el dispositivo. Se sincronizará al tener internet.',
+          ),
+          backgroundColor: AppColors.header,
+          duration: Duration(seconds: 3),
+        ),
+      );
     }
   }
 
@@ -592,9 +641,9 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
                 ),
                 children: [
                   RepartidorMapTileLayer(
-                    // Cubalink23 zoom calle: MBTiles suele quedar en blanco → online.
-                    preferOnline: _esCubalink23,
-                    maxZoom: _esCubalink23 ? 17 : 16,
+                    // Con internet: Carto calles; sin red el widget cae a MBTiles.
+                    preferOnline: true,
+                    maxZoom: 18,
                   ),
                   if (_nearbyCars.isNotEmpty)
                     MarkerLayer(

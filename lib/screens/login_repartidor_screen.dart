@@ -179,6 +179,17 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
               'cached_user_data_${response.user!.id}',
               jsonEncode(userResponse),
             );
+            await prefs.setString(
+              'last_repartidor_auth_id',
+              response.user!.id,
+            );
+            final tid = userResponse['tenant_id']?.toString();
+            if (tid != null && tid.isNotEmpty) {
+              await prefs.setString(
+                'cached_tenant_id_${response.user!.id}',
+                tid,
+              );
+            }
             print('💾 Datos de usuario guardados en caché para uso offline');
           } catch (e) {
             print('⚠️ Error guardando caché de usuario: $e');

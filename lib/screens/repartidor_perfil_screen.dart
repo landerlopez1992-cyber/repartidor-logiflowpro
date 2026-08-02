@@ -2054,6 +2054,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             await prefs.remove('cached_repartidor_foto_${user.id}');
             await prefs.remove('cached_tenant_id_${user.id}'); // 🔒 CRÍTICO: Limpiar tenant_id
             await prefs.remove('cached_user_data_${user.id}');
+            await prefs.remove('last_repartidor_auth_id');
             
             // 🔒 Cola de sync, medios pendientes y órdenes en caché
             await SesionOfflineCleanup.limpiarTodo();

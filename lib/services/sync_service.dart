@@ -10,6 +10,7 @@ import 'offline_storage_service.dart';
 import 'ubicacion_offline_service.dart';
 import 'repartidor_pantallas_offline_service.dart';
 import 'orden_cache_service.dart';
+import 'taxi_tarifas_chofer_service.dart';
 // (imports limpiados por lints)
 
 const _ordenUpdateSyncTypes = {'update_orden_estado', 'mark_delivered'};
@@ -102,6 +103,11 @@ class SyncService {
       if (hasRealConnection) {
         print('✅ Conexión a Supabase verificada - Sincronizando colas...');
         await RepartidorPantallasOfflineService.sincronizarMensajesSoporte();
+        try {
+          await TaxiTarifasChoferService.instance.flushPendienteDisponibleSiHay();
+        } catch (e) {
+          print('⚠️ flush disponible taxi (reconnect): $e');
+        }
         if (_pendingOperations.isNotEmpty) {
           await syncPendingOperations();
         }
@@ -543,6 +549,11 @@ class SyncService {
     // GPS pendiente y luego fotos/firmas antes de estados de orden
     await UbicacionOfflineService.sincronizarPendientes();
     await RepartidorPantallasOfflineService.sincronizarMensajesSoporte();
+    try {
+      await TaxiTarifasChoferService.instance.flushPendienteDisponibleSiHay();
+    } catch (e) {
+      print('⚠️ flush disponible taxi: $e');
+    }
     await syncPendingPhotosAndSignatures();
     
     if (_pendingOperations.isEmpty) {

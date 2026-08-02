@@ -149,6 +149,7 @@ flutter:
     - assets/images/taxi-auto-comfort-3d-v3.png
     - assets/images/taxi-icon-3d-v3.png
     - assets/images/payment_zelle_3d.png
+    - assets/images/connectivity_offline_3d.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
