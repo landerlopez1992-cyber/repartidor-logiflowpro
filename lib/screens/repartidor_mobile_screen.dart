@@ -26,6 +26,7 @@ import '../services/offline_storage_service.dart';
 import '../services/connectivity_assistant_service.dart';
 import '../widgets/repartidor_connectivity_app_bar_icon.dart';
 import '../utils/repartidor_connectivity.dart';
+import '../utils/repartidor_requires_online.dart';
 import '../services/shorebird_service.dart';
 import '../services/goodbarber_sync_service.dart';
 import '../services/paises_service.dart';
@@ -301,27 +302,38 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     WidgetsBinding.instance.addObserver(this);
     // Usar listener con debounce para evitar que el teclado se cierre
     _searchController.addListener(_onSearchChanged);
-    // Cargar datos de forma asíncrona sin bloquear el hilo principal
+    // Cargar datos de forma asíncrona sin bloquear el hilo principal.
+    // ÓRDENES PRIMERO: si perfil/tenant se cuelgan sin red, las tarjetas
+    // ya deben estar visibles desde caché.
     Future.microtask(() async {
-      // Persistir sesión offline apenas entra al home (cierre app + sin red).
       await _persistirSesionOfflineParaReabrir();
-      await _obtenerNombreRepartidor();
-      await _obtenerTenantId();
-      await _cargarPaisOperacion(); // Cargar país de operación desde BD
-      await _cargarConfiguracionFoto();
-      await _cargarConfiguracionPrioridad(); // Cargar configuración de prioridad
-      await _obtenerUbicacionActual(); // Obtener ubicación para ordenamiento por distancia
-      await _cargarConfiguracionRastreo(); // Cargar configuración de rastreo
-      await _cargarConfiguracionEntregaGeo();
-      await _cargarProvinciasRepartidor();
-      await _cargarConfiguracionRecogidaSucursal(); // Cargar configuración de recogida en sucursal
-      await _cargarOrdenes();
-      await _cargarMensajesNoLeidos();
-      await _inicializarNotificaciones();
-      await _obtenerRepartidorId();
-      await _cargarNotificacionesNoLeidas();
-      await _cargarSaldo(); // Cargar saldo del repartidor
-      // Suspensión primero: no reabrir Viajes/taxi si la empresa bloqueó la cuenta.
+      await _hidratarOrdenesDesdeCacheAlInstante();
+      // Perfil/tenant con tope de tiempo (nunca bloquear tarjetas).
+      await Future.wait([
+        _obtenerNombreRepartidor().timeout(
+          const Duration(seconds: 4),
+          onTimeout: () {},
+        ),
+        _obtenerTenantId().timeout(
+          const Duration(seconds: 4),
+          onTimeout: () {},
+        ),
+      ]);
+      // Recarga órdenes (caché otra vez + red solo si hay internet real).
+      unawaited(_cargarOrdenes());
+      unawaited(_cargarPaisOperacion());
+      unawaited(_cargarConfiguracionFoto());
+      unawaited(_cargarConfiguracionPrioridad());
+      unawaited(_obtenerUbicacionActual());
+      unawaited(_cargarConfiguracionRastreo());
+      unawaited(_cargarConfiguracionEntregaGeo());
+      unawaited(_cargarProvinciasRepartidor());
+      unawaited(_cargarConfiguracionRecogidaSucursal());
+      unawaited(_cargarMensajesNoLeidos());
+      unawaited(_inicializarNotificaciones());
+      unawaited(_obtenerRepartidorId());
+      unawaited(_cargarNotificacionesNoLeidas());
+      unawaited(_cargarSaldo());
       _iniciarVigilanciaSuspension();
       unawaited(() async {
         if (await _verificarSuspensionYBloquear()) return;
@@ -334,15 +346,42 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       }());
       _suscribirseANotificaciones();
       _suscribirseANotificacionesOrdenes();
-      _suscribirseACambiosPagos(); // Suscribirse a cambios en solicitudes de pago
-      _suscribirseAOrdenesNuevas(); // Suscribirse a órdenes nuevas asignadas
-      _suscribirseAPagosAceptados(); // Suscribirse a pagos aceptados
+      _suscribirseACambiosPagos();
+      _suscribirseAOrdenesNuevas();
+      _suscribirseAPagosAceptados();
       RepartidorSaldoService.revision.addListener(_onSaldoRevisionExterna);
-      _iniciarVerificacionPeriodicaNotificaciones(); // Verificar notificaciones periódicamente como respaldo
-      _verificarYActivarRastreo(); // CRÍTICO: Activar rastreo siempre que la app esté abierta (para indicador online/offline)
-      _inicializarEstadoConexion(); // Inicializar estado de conexión
-      await _comprobarActualizacionForzada();
+      _iniciarVerificacionPeriodicaNotificaciones();
+      _verificarYActivarRastreo();
+      _inicializarEstadoConexion();
+      unawaited(_comprobarActualizacionForzada());
     });
+  }
+
+  /// Pinta tarjetas desde SharedPreferences al abrir (sin red / sin esperar perfil).
+  Future<void> _hidratarOrdenesDesdeCacheAlInstante() async {
+    try {
+      final ordenesCache = await OrdenCacheService.getCachedOrders();
+      if (!mounted) return;
+      if (ordenesCache.isNotEmpty) {
+        setState(() {
+          _ordenes = ordenesCache;
+          _isLoading = false;
+          _ordenesFiltradasCache = null;
+          _cacheKeyFiltradas = null;
+        });
+        print(
+          '💾 Home: ${ordenesCache.length} órdenes pintadas desde caché al instante',
+        );
+      } else {
+        // Sin caché: apagar spinner ya (vacío > spinner eterno).
+        // Si hay red real, _cargarOrdenes volverá a poner loading un momento.
+        setState(() => _isLoading = false);
+        print('⚠️ Home: caché de órdenes vacío al abrir');
+      }
+    } catch (e) {
+      print('⚠️ _hidratarOrdenesDesdeCacheAlInstante: $e');
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   void _onSaldoRevisionExterna() {
@@ -907,7 +946,36 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   Future<void> _obtenerNombreRepartidor() async {
     try {
+      final prefsEarly = await SharedPreferences.getInstance();
+      final authId = supabase.auth.currentUser?.id ??
+          supabase.auth.currentSession?.user.id ??
+          prefsEarly.getString(kLastRepartidorAuthIdKey);
       final user = supabase.auth.currentUser;
+
+      // Sin currentUser (sesión solo caché): cargar nombre local y salir.
+      if (user == null && authId != null && authId.isNotEmpty) {
+        final cachedNombre =
+            prefsEarly.getString('cached_repartidor_nombre_$authId');
+        final cachedMaster = await RepartidorMasterUtil.loadCached(authId);
+        final cachedTipo =
+            prefsEarly.getString('cached_repartidor_tipo_$authId');
+        final cachedFoto =
+            prefsEarly.getString('cached_repartidor_foto_$authId');
+        final cachedUsuarioId =
+            prefsEarly.getString('cached_repartidor_usuario_id_$authId');
+        if (mounted) {
+          setState(() {
+            _repartidorNombre = cachedNombre ?? 'Repartidor';
+            _fotoPerfilUrl = cachedFoto;
+            _esRepartidorMaster = cachedMaster ?? false;
+            _tipoRepartidor = cachedTipo ?? 'REPARTIDOR';
+            _esRecolector = cachedTipo == 'RECOLECTOR';
+            if (cachedUsuarioId != null) _repartidorId = cachedUsuarioId;
+          });
+        }
+        return;
+      }
+
       if (user != null) {
         // ✅ FIX CRÍTICO OFFLINE: Intentar cargar desde caché primero
         try {
@@ -931,14 +999,17 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             });
             await _resolverFotoPerfilLocalHeader();
             
-            // Verificar conexión para actualizar en segundo plano
-            final syncService = SyncService();
-            if (!syncService.isOnline) {
+            if (repartidorSinInternet() || !SyncService().isOnline) {
               print('📴 Sin conexión - Usando datos del caché');
-              return; // Salir si no hay conexión
+              return;
             }
             
             print('🔄 Actualizando datos en segundo plano...');
+          } else if (repartidorSinInternet() || !SyncService().isOnline) {
+            if (mounted) {
+              setState(() => _repartidorNombre ??= 'Repartidor');
+            }
+            return;
           }
         } catch (cacheError) {
           print('⚠️ Error cargando desde caché: $cacheError');
@@ -950,7 +1021,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               .select('id, nombre, foto_perfil, repartidor_master, tipo_repartidor')
               .eq('auth_id', user.id)  // USAR auth_id en lugar de id
               .limit(1)
-              .maybeSingle();
+              .maybeSingle()
+              .timeout(const Duration(seconds: 5));
           
           if (response == null) {
             print('❌ No se encontró usuario con auth_id: ${user.id}');
@@ -1146,6 +1218,19 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       // ✅ FIX CRÍTICO: Cargar INMEDIATAMENTE desde caché ANTES de mostrar loading
       // Esto asegura que si no hay internet, las tarjetas se muestren AL INSTANTE
       final syncService = SyncService();
+      // Wi‑Fi sin red real: SyncService puede decir "online". Confiar en probe.
+      var sinInternetReal = repartidorSinInternet();
+      if (!sinInternetReal) {
+        // Revalidar rápido (probe estricto): evita colgar con Wi‑Fi sin internet.
+        try {
+          final hayRed =
+              await RepartidorConnectivity.hasInternetForSplash()
+                  .timeout(const Duration(seconds: 3), onTimeout: () => false);
+          if (!hayRed) sinInternetReal = true;
+        } catch (_) {
+          sinInternetReal = true;
+        }
+      }
       final ordenesCache = await OrdenCacheService.getCachedOrders();
       ordenesRespaldoCache = List<Orden>.from(ordenesCache);
       ordenesRespaldoPantalla = List<Orden>.from(_ordenes);
@@ -1164,7 +1249,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         
         // Si hay conexión, intentar actualizar en segundo plano
         // Si NO hay conexión, simplemente usar el caché y terminar
-        if (!syncService.isOnline) {
+        if (sinInternetReal) {
           print('📴 Sin conexión - Usando caché (${ordenesCache.length} órdenes)');
           return; // ✅ Salir temprano si no hay conexión
         }
@@ -1174,7 +1259,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         // porque ya tenemos datos en pantalla
       } else {
         // No hay caché
-        if (!syncService.isOnline) {
+        if (sinInternetReal) {
           print('📴 Sin caché ni conexión — se mantienen órdenes en pantalla si existen');
           if (mounted) {
             setState(() {
@@ -1183,16 +1268,21 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           }
           return;
         }
-        setState(() {
-          _isLoading = true;
-        });
+        if (mounted) {
+          setState(() {
+            _isLoading = true;
+          });
+        }
       }
 
       final user = supabase.auth.currentUser;
       if (user == null) {
-        print('❌ Usuario no autenticado');
+        print('❌ Usuario no autenticado en Supabase — se mantiene caché local');
         if (mounted) {
           setState(() {
+            if (_ordenes.isEmpty && ordenesCache.isNotEmpty) {
+              _ordenes = ordenesCache;
+            }
             _isLoading = false;
           });
         }
@@ -1209,7 +1299,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               .select('nombre')
               .eq('auth_id', user.id)  // USAR auth_id en lugar de id
               .limit(1)
-              .maybeSingle();
+              .maybeSingle()
+              .timeout(const Duration(seconds: 6));
           repartidorNombre = repartidorResponse?['nombre'] as String?;
         } catch (e) {
           // Si no encuentra el usuario por auth_id, intentar por email
@@ -1219,10 +1310,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   .from('usuarios')
                   .select('nombre')
                   .eq('email', user.email!)
-                  .single();
+                  .single()
+                  .timeout(const Duration(seconds: 6));
               repartidorNombre = repartidorResponse['nombre'] as String?;
             } catch (e2) {
-              // Si tampoco encuentra por email, usar el email como nombre
+              // Preferir nombre en caché de pantalla / email; no colgar.
               repartidorNombre = user.email?.split('@')[0] ?? 'Repartidor';
             }
           } else {
@@ -1235,6 +1327,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       if (repartidorNombre == null) {
         if (mounted) {
           setState(() {
+            if (_ordenes.isEmpty && ordenesCache.isNotEmpty) {
+              _ordenes = ordenesCache;
+            }
             _isLoading = false;
           });
         }
@@ -1245,9 +1340,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       // Si es master: ver TODAS las órdenes del tenant
       // Si no es master: ver solo las órdenes asignadas a él
       
-      // ✅ Ya verificamos conexión arriba, solo continuar si hay conexión
-      // Si llegamos aquí y syncService.isOnline es true, actualizamos datos
-      if (syncService.isOnline) {
+      // Solo red si el probe confirmó internet (no solo Wi‑Fi de SyncService).
+      if (!sinInternetReal) {
         try {
           // 🔒 VALIDACIÓN CRÍTICA DE SEGURIDAD: Verificar que tenant_id existe
           // Si es null, NO cargar órdenes porque se mostrarían órdenes de TODOS los tenants
@@ -1259,6 +1353,12 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             if (_tenantId == null) {
               print('🚨 ERROR GRAVE: No se pudo obtener tenant_id - CANCELANDO carga de órdenes');
               if (mounted) {
+                setState(() {
+                  if (_ordenes.isEmpty && ordenesRespaldoCache.isNotEmpty) {
+                    _ordenes = List<Orden>.from(ordenesRespaldoCache);
+                  }
+                  _isLoading = false;
+                });
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text(
@@ -1356,7 +1456,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             queryAsignadas = EntregaVendedorFiltro.excluirEnConsulta(queryAsignadas);
             
             try {
-              final todasOrdenesAsignadas = await queryAsignadas.limit(100);
+              final todasOrdenesAsignadas = await queryAsignadas
+                  .limit(100)
+                  .timeout(const Duration(seconds: 15));
               // Filtrar en código: excluir solo las de RECOGIDA (incluir null y ENVIO)
               // CRÍTICO: Filtrado según interruptor para órdenes de recogida en sucursal:
               // - Si interruptor ACTIVO: Solo Master puede verlas (repartidores normales NO)
@@ -1481,7 +1583,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                       .eq('estado', 'POR ENVIAR')
                       .eq('recoger_en_sucursal', true);
                   queryPorEnviar = EntregaVendedorFiltro.excluirEnConsulta(queryPorEnviar);
-                  final todasOrdenesPorEnviar = await queryPorEnviar.limit(100);
+                  final todasOrdenesPorEnviar = await queryPorEnviar
+                      .limit(100)
+                      .timeout(const Duration(seconds: 15));
                   // Filtrar en código: excluir solo las de RECOGIDA (incluir null y ENVIO)
                   // Y solo incluir órdenes sin repartidor asignado (repartidor_nombre = null o 'Sin asignar')
                   ordenesPorEnviarRecogida = todasOrdenesPorEnviar.where((orden) {
@@ -1643,9 +1747,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           }
           
           // Para recolectores y repartidores master, continuar con la consulta original
-          final response = await query.limit(
-              _esRepartidorMaster ? 500 : 100,
-            );
+          final response = await query
+              .limit(
+                _esRepartidorMaster ? 500 : 100,
+              )
+              .timeout(const Duration(seconds: 15));
 
           // 🔍 DIAGNÓSTICO: Verificar remesas puras en la respuesta
           if (_esRepartidorMaster) {
@@ -6365,37 +6471,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   }
 
   void _mostrarDetallesOrden(Orden orden, {bool abrirModalFirma = false}) async {
-    // Marcar notificación como leída si existe una notificación no leída para esta orden
-    try {
-      if (_repartidorId != null && orden.numeroOrden != null) {
-        // Buscar notificación no leída para esta orden
-        final notificacion = await supabase
-            .from('notificaciones_repartidores')
-            .select('id')
-            .eq('repartidor_id', _repartidorId!)
-            .eq('numero_orden', orden.numeroOrden!)
-            .inFilter('tipo', RepartidorNotificacionTipos.tiposOrdenNueva)
-            .eq('leida', false)
-            .maybeSingle();
-        
-        if (notificacion != null) {
-          // Marcar como leída
-          await supabase
-              .from('notificaciones_repartidores')
-              .update({'leida': true})
-              .eq('id', notificacion['id']);
-          
-          print('✅ Notificación de orden #${orden.numeroOrden} marcada como leída desde pantalla principal');
-          
-          // Actualizar contador de notificaciones
-          await _cargarNotificacionesNoLeidas();
-        }
-      }
-    } catch (e) {
-      print('⚠️ Error marcando notificación como leída: $e');
-    }
-    
-    final resultado = await Navigator.of(context).push(
+    // Abrir detalle YA: no await de red antes del Navigator (offline = minutos de cuelgue).
+    if (!mounted) return;
+    final navFuture = Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => DetalleOrdenScreen(
           orden: orden,
@@ -6403,6 +6481,41 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         ),
       ),
     );
+
+    // Marcar notificación en segundo plano solo con internet real.
+    unawaited(() async {
+      if (repartidorSinInternet()) return;
+      try {
+        if (_repartidorId != null && orden.numeroOrden != null) {
+          final notificacion = await supabase
+              .from('notificaciones_repartidores')
+              .select('id')
+              .eq('repartidor_id', _repartidorId!)
+              .eq('numero_orden', orden.numeroOrden!)
+              .inFilter('tipo', RepartidorNotificacionTipos.tiposOrdenNueva)
+              .eq('leida', false)
+              .maybeSingle()
+              .timeout(const Duration(seconds: 4));
+
+          if (notificacion != null) {
+            await supabase
+                .from('notificaciones_repartidores')
+                .update({'leida': true})
+                .eq('id', notificacion['id'])
+                .timeout(const Duration(seconds: 4));
+
+            print(
+              '✅ Notificación de orden #${orden.numeroOrden} marcada como leída desde pantalla principal',
+            );
+            await _cargarNotificacionesNoLeidas();
+          }
+        }
+      } catch (e) {
+        print('⚠️ Error marcando notificación como leída: $e');
+      }
+    }());
+
+    final resultado = await navFuture;
 
     // Siempre reflejar caché local (p. ej. quitar/cambiar foto sin marcar entregado)
     await _aplicarOrdenDesdeCacheTrasDetalle(orden.id);
@@ -8322,52 +8435,58 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   
   Future<void> _obtenerTenantId() async {
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final authId = supabase.auth.currentUser?.id ??
+          supabase.auth.currentSession?.user.id ??
+          prefs.getString(kLastRepartidorAuthIdKey);
       final user = supabase.auth.currentUser;
-      if (user != null) {
-        // 🔒 CRÍTICO: Intentar cargar desde cached_user_data primero (es la fuente principal)
+
+      if (authId != null && authId.isNotEmpty) {
         try {
-          final prefs = await SharedPreferences.getInstance();
-          final cachedUserData = prefs.getString('cached_user_data_${user.id}');
-          
+          final cachedUserData = prefs.getString('cached_user_data_$authId');
           if (cachedUserData != null) {
-            final userData = jsonDecode(cachedUserData) as Map<String, dynamic>;
+            final userData =
+                jsonDecode(cachedUserData) as Map<String, dynamic>;
             final tenantId = userData['tenant_id'] as String?;
-            
-            if (tenantId != null) {
-              setState(() {
-                _tenantId = tenantId;
-              });
-              print('💾 Tenant ID cargado desde cached_user_data: $_tenantId');
-              
-              // También guardar en cached_tenant_id para consistencia
-              await prefs.setString('cached_tenant_id_${user.id}', tenantId);
+            if (tenantId != null && tenantId.isNotEmpty && mounted) {
+              setState(() => _tenantId = tenantId);
+              await prefs.setString('cached_tenant_id_$authId', tenantId);
               final nombreCache =
-                  await RepartidorSeguridadService.nombreEmpresaDesdeCache(user.id);
+                  await RepartidorSeguridadService.nombreEmpresaDesdeCache(
+                authId,
+              );
               if (nombreCache != null && mounted) {
                 setState(() => _nombreEmpresa = nombreCache);
               }
+              print('💾 Tenant ID cargado desde cached_user_data: $_tenantId');
             }
           } else {
-            // Si no hay cached_user_data, intentar cached_tenant_id
-            final cachedTenantId = prefs.getString('cached_tenant_id_${user.id}');
-            if (cachedTenantId != null) {
-              setState(() {
-                _tenantId = cachedTenantId;
-              });
+            final cachedTenantId = prefs.getString('cached_tenant_id_$authId');
+            if (cachedTenantId != null && mounted) {
+              setState(() => _tenantId = cachedTenantId);
               print('💾 Tenant ID cargado desde cached_tenant_id: $_tenantId');
             }
           }
         } catch (cacheError) {
           print('⚠️ Error leyendo caché de tenant_id: $cacheError');
         }
-        
+      }
+
+      if (user != null) {
+        // Sin internet real: no llamar a BD (evita colgar el home).
+        if (repartidorSinInternet() || !SyncService().isOnline) {
+          print('📴 Tenant ID: solo caché (sin internet)');
+          return;
+        }
+
         // Intentar actualizar desde BD en segundo plano
         try {
           final userData = await supabase
               .from('usuarios')
               .select('tenant_id, auth_id')
               .eq('auth_id', user.id)
-              .single();
+              .single()
+              .timeout(const Duration(seconds: 5));
           
           final tenantIdFromDB = userData['tenant_id'] as String?;
           final authIdFromDB = userData['auth_id'] as String?;
@@ -8397,7 +8516,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 _tenantId = tenantIdFromDB;
               });
               // Recargar órdenes con el tenant_id correcto
-              await _cargarOrdenes();
+              unawaited(_cargarOrdenes());
             } else {
               setState(() {
                 _tenantId = tenantIdFromDB;
@@ -8410,7 +8529,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   .from('tenants')
                   .select('nombre')
                   .eq('id', tenantIdFromDB)
-                  .maybeSingle();
+                  .maybeSingle()
+                  .timeout(const Duration(seconds: 5));
               final nombre = tenantData?['nombre']?.toString();
               if (nombre != null && nombre.isNotEmpty && mounted) {
                 setState(() => _nombreEmpresa = nombre);

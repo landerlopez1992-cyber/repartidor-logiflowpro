@@ -7,6 +7,7 @@ import '../config/app_colors.dart';
 import '../main.dart';
 import '../models/orden.dart';
 import '../utils/repartidor_master_util.dart';
+import '../utils/repartidor_requires_online.dart';
 import '../widgets/volonex_dialog.dart';
 
 /// Resultado de validar si un repartidor puede abrir/trabajar una orden.
@@ -84,13 +85,26 @@ class RepartidorSeguridadService {
     }
 
     try {
+      // Sin internet: solo caché local (no colgar detalle de orden minutos).
+      if (repartidorSinInternet()) {
+        return RepartidorSesionContext(
+          tenantId: tenantId?.trim().isEmpty == true ? null : tenantId,
+          nombreEmpresa: nombreEmpresa.trim().isEmpty
+              ? 'tu empresa'
+              : nombreEmpresa.trim(),
+          repartidorNombre: repartidorNombre,
+          esMaster: esMaster,
+        );
+      }
+
       final userData = await supabase
           .from('usuarios')
           .select(
             'tenant_id, nombre, repartidor_master',
           )
           .eq('auth_id', user.id)
-          .maybeSingle();
+          .maybeSingle()
+          .timeout(const Duration(seconds: 5));
 
       if (userData != null) {
         tenantId = userData['tenant_id']?.toString() ?? tenantId;
@@ -110,7 +124,8 @@ class RepartidorSeguridadService {
               .from('tenants')
               .select('nombre')
               .eq('id', tenantId)
-              .maybeSingle();
+              .maybeSingle()
+              .timeout(const Duration(seconds: 5));
           if (tenantData?['nombre'] != null) {
             nombreEmpresa = tenantData!['nombre'].toString();
             await guardarNombreEmpresaEnCache(user.id, nombreEmpresa);

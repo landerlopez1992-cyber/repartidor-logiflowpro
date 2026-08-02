@@ -24,7 +24,9 @@ class SyncService {
 
   final Connectivity _connectivity = Connectivity();
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
-  bool _isOnline = true;
+  /// Empieza en false hasta el primer check: evita tratar Wi‑Fi sin red
+  /// como online y colgar pantallas (órdenes, perfil, etc.).
+  bool _isOnline = false;
   bool _isSyncing = false;
   
   // Callbacks para notificar cambios de conectividad

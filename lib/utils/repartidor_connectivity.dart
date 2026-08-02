@@ -441,11 +441,15 @@ class RepartidorConnectivity {
                       ),
                       const SizedBox(height: 10),
                       const Text(
-                        'Algunos o casi todos los servicios se verán afectados '
-                        'hasta que se restablezca la conexión Wi‑Fi o de datos móviles.\n\n'
-                        'Puedes seguir trabajando con lo que ya está guardado en el '
-                        'dispositivo; al volver la red se sincronizará automáticamente. '
-                        'Tu sesión no se cierra por quedarte sin red.',
+                        'Importante: sin internet la app no funciona al 100%.\n\n'
+                        'Podrás ver órdenes y datos ya guardados en el teléfono, '
+                        'y hacer algunas acciones que quedan en cola para '
+                        'sincronizar después.\n\n'
+                        'No podrás completar todo lo que requiere red '
+                        '(por ejemplo pagos en línea, aceptar viajes nuevos o '
+                        'actualizar datos desde el servidor) hasta que vuelva '
+                        'Wi‑Fi o datos móviles.\n\n'
+                        'Tu sesión no se cierra solo por quedarte sin red.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 14,

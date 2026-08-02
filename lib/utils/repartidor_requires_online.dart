@@ -5,8 +5,11 @@ import '../services/sync_service.dart';
 import 'repartidor_connectivity.dart';
 
 /// Acciones que obligatoriamente necesitan red (pagos, aceptar viajes, guardar en BD).
+///
+/// `online == null` (aún no comprobado) se trata como sin internet para no
+/// colgar el home con llamadas a red: primero caché/UI, luego probe real.
 bool repartidorSinInternet() {
-  if (RepartidorConnectivity.online.value == false) return true;
+  if (RepartidorConnectivity.online.value != true) return true;
   if (!SyncService().isOnline) return true;
   return false;
 }

@@ -35,6 +35,7 @@ import '../services/entrega_progreso_service.dart';
 import '../widgets/entrega_progreso_panel.dart';
 import '../widgets/boton_ver_productos_orden_tienda.dart';
 import '../services/repartidor_seguridad_service.dart';
+import '../utils/repartidor_requires_online.dart';
 
 class DetalleOrdenScreen extends StatefulWidget {
   final Orden orden;
@@ -218,9 +219,8 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
   
   // Suscribirse a cambios en tiempo real de la orden actual
   void _suscribirseACambiosOrden() {
-    // ✅ OFFLINE-FIRST: Solo suscribirse si hay conexión
-    final syncService = SyncService();
-    if (!syncService.isOnline) {
+    // ✅ OFFLINE-FIRST: Solo suscribirse si hay internet real
+    if (repartidorSinInternet()) {
       print('📴 [REALTIME] Sin conexión - No se suscribirá a cambios en tiempo real (modo offline)');
       return;
     }
@@ -302,11 +302,10 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
   
   // 🔥 Cargar orden desde BD inmediatamente (para recoger en sucursal)
   Future<void> _cargarOrdenDesdeBDInmediatamente() async {
-    // ✅ OFFLINE-FIRST: Solo intentar cargar desde BD si hay conexión
-    final syncService = SyncService();
-    if (!syncService.isOnline) {
+    // ✅ OFFLINE-FIRST: Solo intentar cargar desde BD si hay internet real
+    if (repartidorSinInternet()) {
       print('📴 [INIT] Sin conexión - Cargando desde caché');
-      await _recargarOrden();
+      await _cargarDesdeCache();
       return;
     }
     
@@ -322,7 +321,9 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       if (tenantSesion != null && tenantSesion.isNotEmpty) {
         qOrden = qOrden.eq('tenant_id', tenantSesion);
       }
-      final response = await qOrden.maybeSingle();
+      final response = await qOrden
+          .maybeSingle()
+          .timeout(const Duration(seconds: 8));
       
       if (response != null) {
         final ordenActualizada = Orden.fromJson(response);
@@ -366,7 +367,8 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       if (errorString.contains('Failed host lookup') || 
           errorString.contains('SocketException') ||
           errorString.contains('WebSocketChannelException') ||
-          errorString.contains('ClientException')) {
+          errorString.contains('ClientException') ||
+          errorString.contains('TimeoutException')) {
         print('📴 [INIT] Sin conexión - Error ignorado (modo offline): $e');
         // NO mostrar error al usuario cuando está offline
       } else {
@@ -471,9 +473,8 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     
     print('🔍 Cargando información de sucursal desde BD: ${_ordenActual.sucursalId}');
     
-    // ✅ OFFLINE-FIRST: Solo intentar cargar desde BD si hay conexión
-    final syncService = SyncService();
-    if (!syncService.isOnline) {
+    // ✅ OFFLINE-FIRST: Solo intentar cargar desde BD si hay internet real
+    if (repartidorSinInternet()) {
       print('📴 Sin conexión - No se cargará información de sucursal desde BD (modo offline)');
       return;
     }
@@ -539,9 +540,9 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       print('   - direccionDestino ANTES de recargar: "${_ordenActual.direccionDestino}"');
       print('   - recogerEnSucursal ANTES: ${_ordenActual.recogerEnSucursal}');
       
-      // Verificar conexión
+      // Verificar conexión real (no solo Wi‑Fi)
       final syncService = SyncService();
-      final isOnline = syncService.isOnline;
+      final isOnline = !repartidorSinInternet() && syncService.isOnline;
       print('   - isOnline: $isOnline');
       
       if (isOnline) {
@@ -556,7 +557,9 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           if (tenantSesion != null && tenantSesion.isNotEmpty) {
             qOrden = qOrden.eq('tenant_id', tenantSesion);
           }
-          final response = await qOrden.single();
+          final response = await qOrden
+              .single()
+              .timeout(const Duration(seconds: 10));
           
           // Debug: verificar datos
           print('🔍 DEBUG - Datos recibidos:');
@@ -745,7 +748,8 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
           if (errorString.contains('Failed host lookup') || 
               errorString.contains('SocketException') ||
               errorString.contains('WebSocketChannelException') ||
-              errorString.contains('ClientException')) {
+              errorString.contains('ClientException') ||
+              errorString.contains('TimeoutException')) {
             print('📴 Sin conexión - Cargando desde caché (modo offline)');
           } else {
             print('⚠️ Error cargando desde Supabase, usando caché: $e');
@@ -861,36 +865,37 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
 
   Future<void> _cargarConfiguracionEntrega() async {
     try {
-      final syncService = SyncService();
-      final isOnline = syncService.isOnline;
+      if (repartidorSinInternet()) {
+        print('📴 Config entrega: sin internet — se usan valores locales');
+        return;
+      }
       
-      if (isOnline) {
-        try {
-          final tenantId = widget.orden.tenantId;
-          if (tenantId == null || tenantId.isEmpty) return;
-          final response = await supabase
-              .from('configuracion_envios')
-              .select(
-                'foto_entrega_obligatoria, geolocalizacion_obligatoria, radio_entrega, '
-                'confirmacion_entrega, firma_digital, tiempo_espera_entrega',
-              )
-              .eq('tenant_id', tenantId)
-              .maybeSingle();
-          if (response == null) return;
-          
-          if (mounted) {
-            setState(() {
-              _fotoEntregaObligatoria = response['foto_entrega_obligatoria'] ?? true;
-              _geolocalizacionObligatoria = response['geolocalizacion_obligatoria'] == true;
-              _radioEntrega = (response['radio_entrega'] as num?)?.toInt() ?? 100;
-              _confirmacionEntregaObligatoria = response['confirmacion_entrega'] != false;
-              _firmaDigitalObligatoria = response['firma_digital'] == true;
-              _tiempoEsperaEntrega = (response['tiempo_espera_entrega'] as num?)?.toInt() ?? 15;
-            });
-          }
-        } catch (e) {
-          print('⚠️ Error cargando configuración entrega desde Supabase: $e');
+      try {
+        final tenantId = widget.orden.tenantId;
+        if (tenantId == null || tenantId.isEmpty) return;
+        final response = await supabase
+            .from('configuracion_envios')
+            .select(
+              'foto_entrega_obligatoria, geolocalizacion_obligatoria, radio_entrega, '
+              'confirmacion_entrega, firma_digital, tiempo_espera_entrega',
+            )
+            .eq('tenant_id', tenantId)
+            .maybeSingle()
+            .timeout(const Duration(seconds: 6));
+        if (response == null) return;
+        
+        if (mounted) {
+          setState(() {
+            _fotoEntregaObligatoria = response['foto_entrega_obligatoria'] ?? true;
+            _geolocalizacionObligatoria = response['geolocalizacion_obligatoria'] == true;
+            _radioEntrega = (response['radio_entrega'] as num?)?.toInt() ?? 100;
+            _confirmacionEntregaObligatoria = response['confirmacion_entrega'] != false;
+            _firmaDigitalObligatoria = response['firma_digital'] == true;
+            _tiempoEsperaEntrega = (response['tiempo_espera_entrega'] as num?)?.toInt() ?? 15;
+          });
         }
+      } catch (e) {
+        print('⚠️ Error cargando configuración entrega desde Supabase: $e');
       }
     } catch (e) {
       print('Error al cargar configuración de entrega: $e');

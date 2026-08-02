@@ -38,11 +38,15 @@ class RepartidorOrdenesBootFetchService {
       return cached.length;
     }
 
+    final prefsBoot = await SharedPreferences.getInstance();
     final user = supabase.auth.currentUser;
-    if (user == null) return cached.length;
+    final authId = user?.id ??
+        supabase.auth.currentSession?.user.id ??
+        prefsBoot.getString('last_repartidor_auth_id');
+    if (authId == null || authId.isEmpty) return cached.length;
 
     onStatus?.call('Obteniendo perfil…');
-    final profile = await _resolveProfile(user.id, user.email);
+    final profile = await _resolveProfile(authId, user?.email);
     final tenantId = profile.tenantId;
     final nombre = profile.nombre;
     final esMaster = profile.esMaster;
