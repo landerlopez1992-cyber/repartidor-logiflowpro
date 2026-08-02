@@ -33,7 +33,7 @@ class TaxiIncomingCallDialog extends StatefulWidget {
         solicitudId: id,
         titulo: 'Viaje de taxi entrante',
         mensaje:
-            'Acepta o rechaza. La alerta sigue hasta que respondas o otro socio tome el viaje.',
+            'Tienes una solicitud de viaje. Acepta o rechaza para continuar.',
       ),
     );
 
@@ -74,6 +74,28 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
         Timer.periodic(const Duration(seconds: 4), (_) => _cargarSilencioso());
   }
 
+  Future<void> _cerrarViajePerdido(String motivo) async {
+    if (!mounted) return;
+    final msg = motivo == 'cancelado_pasajero'
+        ? 'El pasajero canceló este viaje.'
+        : motivo == 'ya_no_disponible'
+            ? 'Este viaje ya no está disponible.'
+            : 'Otro socio ya tomó este viaje.';
+    // Aviso antes de cerrar (detener hace pop del modal).
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: const Color(0xFF37474F),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+    await TaxiLlamadaPersistenteService.instance.detener(
+      motivo: motivo,
+      resultado: false,
+    );
+  }
+
   Future<void> _cargarSilencioso() async {
     if (_busy || !mounted) return;
     try {
@@ -81,24 +103,30 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
           await TaxiChoferService.instance.detalleOferta(widget.solicitudId);
       if (!mounted) return;
       if (o == null) {
-        await TaxiLlamadaPersistenteService.instance.detener(
-          motivo: 'ya_no_disponible',
-          resultado: false,
-        );
-        if (mounted) Navigator.of(context).pop(false);
+        await _cerrarViajePerdido('ya_no_disponible');
         return;
       }
       final est = o.estado.toLowerCase();
       if (est == 'aceptado' || est == 'en_camino' || est == 'en_viaje') {
-        // Ya aceptado (este u otro flujo): no cerrar como “perdido”.
+        final activo = await TaxiChoferService.instance.viajeActivo();
+        if (!mounted) return;
+        final mio = activo != null &&
+            activo.id.trim() == widget.solicitudId.trim();
+        if (mio) {
+          // Yo lo tengo: silenciar; la navegación la abre _aceptar si aplica.
+          await TaxiLlamadaPersistenteService.instance.detener(
+            motivo: 'viaje_en_curso',
+            resultado: true,
+          );
+          return;
+        }
+        await _cerrarViajePerdido('tomado_por_otro');
         return;
       }
       if (est == 'cancelado' || est != 'buscando_chofer') {
-        await TaxiLlamadaPersistenteService.instance.detener(
-          motivo: est == 'cancelado' ? 'cancelado_pasajero' : 'tomado_por_otro',
-          resultado: false,
+        await _cerrarViajePerdido(
+          est == 'cancelado' ? 'cancelado_pasajero' : 'tomado_por_otro',
         );
-        if (mounted) Navigator.of(context).pop(false);
         return;
       }
       setState(() => _oferta = o);
@@ -123,11 +151,6 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
           motivo: 'ya_no_disponible',
           resultado: false,
         );
-        // Cerrar solo: no dejar pantalla de error + vibración fantasma.
-        if (mounted) {
-          await Future<void>.delayed(const Duration(milliseconds: 600));
-          if (mounted) Navigator.of(context).pop(false);
-        }
         return;
       }
       setState(() {
@@ -138,7 +161,7 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _error = 'No se pudo cargar el detalle del viaje. Inténtalo de nuevo.';
       });
     }
   }
@@ -168,18 +191,19 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
       if (!mounted) return;
       if (!res.ok || res.oferta == null) {
         setState(() => _busy = false);
-        final msg = res.err ?? 'No se pudo aceptar';
+        final msg = TaxiChoferService.mensajeErrorUsuario(res.err);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(msg),
             backgroundColor: AppColors.error,
           ),
         );
-        final low = msg.toLowerCase();
+        final low = (res.err ?? msg).toLowerCase();
         if (low.contains('ya_tomado') ||
             low.contains('otro socio') ||
             low.contains('no está disponible') ||
-            low.contains('ya_rechazado')) {
+            low.contains('ya_rechazado') ||
+            low.contains('ya aceptó')) {
           await TaxiLlamadaPersistenteService.instance.onRechazadoDesdeUi();
           if (mounted) Navigator.of(context).pop(false);
         }
@@ -198,12 +222,12 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
           ),
         );
       }
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() => _busy = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error al aceptar: $e'),
+        const SnackBar(
+          content: Text('No se pudo aceptar el viaje. Inténtalo de nuevo.'),
           backgroundColor: AppColors.error,
         ),
       );
@@ -231,9 +255,8 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
         ),
         content: const SingleChildScrollView(
           child: Text(
-            'Puedes rechazar este viaje si no puedes tomarlo ahora.\n\n'
-            'Importante: mientras más viajes rechaces, mayor es el riesgo de '
-            'una suspensión de tu cuenta por rechazos o cancelaciones reiteradas.',
+            'Si no puedes atender este viaje ahora, puedes rechazarlo.\n\n'
+            'Recuerda: los rechazos frecuentes pueden limitar tu acceso a nuevas ofertas.',
             style: TextStyle(
               color: Color(0xFF9CA3AF),
               height: 1.4,
@@ -267,7 +290,18 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
     if (confirmar != true || !mounted) return;
 
     setState(() => _busy = true);
-    await TaxiChoferService.instance.rechazar(widget.solicitudId);
+    final res = await TaxiChoferService.instance.rechazar(widget.solicitudId);
+    if (!mounted) return;
+    if (!res.ok) {
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(TaxiChoferService.mensajeErrorUsuario(res.err)),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return;
+    }
     await TaxiLlamadaPersistenteService.instance.onRechazadoDesdeUi();
     if (!mounted) return;
     Navigator.of(context).pop(false);
@@ -378,18 +412,18 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                  'Llamada de viaje · suena hasta que respondas',
+                  'Nueva solicitud de viaje',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Color(0xFFFF9800),
-                    fontSize: 12,
+                    fontSize: 13,
                     fontWeight: FontWeight.w700,
                     height: 1.3,
                   ),
                 ),
                 const SizedBox(height: 6),
                 const Text(
-                  'Viaje de taxi entrante',
+                  'Revisa el trayecto y responde',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Color(0xFF9CA3AF),
@@ -420,7 +454,7 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                       ),
                     ),
                     child: const Text(
-                      'Pago en efectivo (cash)',
+                      'Pago en efectivo',
                       style: TextStyle(
                         color: Color(0xFF4CAF50),
                         fontSize: 12,
@@ -586,7 +620,7 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
               Icon(Icons.payments_rounded, color: Color(0xFF4CAF50), size: 16),
               SizedBox(width: 6),
               Text(
-                'Pago en cash',
+                'Pago en efectivo',
                 style: TextStyle(
                   color: Color(0xFF4CAF50),
                   fontWeight: FontWeight.w800,
@@ -597,8 +631,8 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
           ),
           const SizedBox(height: 8),
           fila('Cobrar al cliente', cobrar, const Color(0xFF4CAF50)),
-          fila('Te quedas', queda, const Color(0xFFECEFF1)),
-          fila('Dar a la empresa', empresa, const Color(0xFFFF9800)),
+          fila('Tu ganancia', queda, const Color(0xFFECEFF1)),
+          fila('Comisión de la empresa', empresa, const Color(0xFFFF9800)),
         ],
       ),
     );

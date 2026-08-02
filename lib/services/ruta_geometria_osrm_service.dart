@@ -20,7 +20,7 @@ class RutaGeometriaOsrmService {
         '$_baseUrl/route/v1/driving/$coords?overview=full&geometries=geojson',
       );
 
-      final response = await http.get(url).timeout(const Duration(seconds: 30));
+      final response = await http.get(url).timeout(const Duration(seconds: 6));
       if (response.statusCode != 200) {
         return _lineaRecta(waypoints);
       }

@@ -260,9 +260,11 @@ class TaxiLlamadaPersistenteService {
       completer.complete(resultado);
     }
 
-    // Solo cerrar el modal si otro se quedó con el viaje / ya no existe.
-    // Si yo acepté, el dialog hace pop(true) y abre el mapa.
-    if (motivo == 'tomado_por_otro' || motivo == 'ya_no_disponible') {
+    // Cerrar el modal de llamada si el viaje ya no es ofrecible a este socio.
+    // (aceptado/rechazado desde UI hacen pop ellos mismos; no duplicar).
+    if (motivo == 'tomado_por_otro' ||
+        motivo == 'ya_no_disponible' ||
+        motivo == 'cancelado_pasajero') {
       final nav = RepartidorNavigator.state;
       if (nav != null && nav.canPop()) {
         try {
@@ -272,6 +274,17 @@ class TaxiLlamadaPersistenteService {
     }
 
     print('🚕 Alerta taxi detenida ($motivo) solicitud=$id');
+  }
+
+  /// True solo si el viaje activo del chofer autenticado es esta solicitud.
+  Future<bool> _esMiViajeActivo(String solicitudId) async {
+    try {
+      final activo = await TaxiChoferService.instance.viajeActivo();
+      if (activo == null) return false;
+      return activo.id.trim() == solicitudId.trim();
+    } catch (_) {
+      return false;
+    }
   }
 
   void _iniciarPollEstado(String solicitudId) {
@@ -286,9 +299,20 @@ class TaxiLlamadaPersistenteService {
           return;
         }
         final est = o.estado.toLowerCase();
-        // Yo (u otro flujo) ya aceptó: silenciar alerta SIN tratarlo como perdido.
         if (est == 'aceptado' || est == 'en_camino' || est == 'en_viaje') {
-          await detener(motivo: 'viaje_en_curso', resultado: true);
+          // Crítico: otro socio puede haber aceptado → estado "aceptado"
+          // no significa "yo lo tomé". Confirmar con viaje activo.
+          final mio = await _esMiViajeActivo(solicitudId);
+          if (_solicitudId != solicitudId) return;
+          if (mio) {
+            await detener(motivo: 'viaje_en_curso', resultado: true);
+          } else {
+            await detener(motivo: 'tomado_por_otro', resultado: false);
+          }
+          return;
+        }
+        if (est == 'cancelado') {
+          await detener(motivo: 'cancelado_pasajero', resultado: false);
           return;
         }
         if (est != 'buscando_chofer') {

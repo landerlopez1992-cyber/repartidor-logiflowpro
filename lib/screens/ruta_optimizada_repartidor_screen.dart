@@ -5,18 +5,19 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../models/orden.dart';
 import '../services/paises_service.dart';
-import '../services/ruta_geometria_osrm_service.dart';
 import '../services/mapa_region_service.dart';
 import '../services/google_maps_ruta_service.dart';
 import '../services/direccion_navegacion_service.dart';
 import '../services/orden_estado_sync_helper.dart';
+import '../services/sync_service.dart';
+import '../services/taxi_directions_service.dart';
 import '../main.dart';
 import 'detalle_orden_screen.dart';
 import '../config/app_colors.dart';
 import '../widgets/volonex_dialog.dart';
+import '../widgets/taxi_uber_map_car.dart';
 
 /// Pantalla que muestra la ruta optimizada con todas las órdenes numeradas en el mapa
 /// Similar a Uber cuando tiene múltiples pedidos
@@ -44,6 +45,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
   int _ordenActualIndex = 0; // Índice de la orden actual en la ruta
   bool _rutaIniciada = false;
   bool _priorizarUrgentesAtrasadas = false; // Si true, las prioritarias van primero
+  bool _autoStartHecho = false;
   Timer? _timerUbicacion;
   
   // Map para almacenar coordenadas geocodificadas temporalmente
@@ -60,6 +62,22 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
   double _zoomMapaInicial = 12.0;
   List<LatLng> _geometriaRutaCarretera = [];
   bool _cargandoGeometriaRuta = false;
+  /// Evita que una respuesta de red vieja pise geometría más reciente.
+  int _geometriaRutaGen = 0;
+  /// Segundos de conducción hasta esa parada (desde la anterior / repartidor).
+  final Map<String, int> _etaSegundosHastaOrden = {};
+  /// Km de conducción hasta esa parada.
+  final Map<String, double> _kmHastaOrden = {};
+  int? _etaTotalRutaS;
+  double? _kmTotalRuta;
+
+  bool get _sinInternet {
+    try {
+      return !SyncService().isOnline;
+    } catch (_) {
+      return false;
+    }
+  }
 
   // Lista de órdenes ordenadas por orden_ruta o por índice si no tienen orden_ruta
   // Excluye órdenes entregadas y canceladas
@@ -164,50 +182,281 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
     });
   }
 
+  String _formatEtaSegundos(int? s) {
+    if (s == null || s <= 0) return '';
+    if (s < 60) return 'menos de 1 min';
+    final min = (s / 60).ceil();
+    if (min < 60) return '$min min';
+    final h = min ~/ 60;
+    final m = min % 60;
+    return m == 0 ? '$h h' : '$h h $m min';
+  }
+
+  /// Geometría + ETA solo con coordenadas en caché (sin red).
+  void _aplicarGeometriaLocal(
+    List<LatLng> waypoints,
+    List<Orden> ordenesConCoord, {
+    required bool hayRepartidor,
+  }) {
+    final etas = <String, int>{};
+    final kms = <String, double>{};
+    var totalS = 0;
+    var totalM = 0;
+    for (var i = 0; i < waypoints.length - 1; i++) {
+      final leg = TaxiDirectionsService.offlineHaversine(
+        waypoints[i],
+        waypoints[i + 1],
+      );
+      final dur = leg.durationS ?? 0;
+      final dist = leg.distanceM ?? 0;
+      totalS += dur;
+      totalM += dist;
+      final ordenIdx = hayRepartidor ? i : (i + 1);
+      if (ordenIdx >= 0 && ordenIdx < ordenesConCoord.length) {
+        final oid = ordenesConCoord[ordenIdx].id;
+        etas[oid] = dur;
+        kms[oid] = dist / 1000.0;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _geometriaRutaCarretera = List<LatLng>.from(waypoints);
+      _etaSegundosHastaOrden
+        ..clear()
+        ..addAll(etas);
+      _kmHastaOrden
+        ..clear()
+        ..addAll(kms);
+      _etaTotalRutaS = totalS > 0 ? totalS : null;
+      _kmTotalRuta = totalM > 0 ? totalM / 1000.0 : null;
+      _cargandoGeometriaRuta = false;
+    });
+  }
+
+  /// Primero dibuja desde caché (offline). Si hay red, mejora con calles
+  /// con timeout; nunca deja el spinner colgado.
   Future<void> _actualizarGeometriaRutaEnMapa() async {
+    final gen = ++_geometriaRutaGen;
     final ordenes = _ordenesOrdenadas;
+    final ordenesConCoord = <Orden>[];
     final waypoints = <LatLng>[];
     if (_ubicacionRepartidor != null) {
       waypoints.add(_ubicacionRepartidor!);
     }
     for (final orden in ordenes) {
       final c = _obtenerCoordenadas(orden);
-      if (c != null) waypoints.add(c);
+      if (c != null) {
+        ordenesConCoord.add(orden);
+        waypoints.add(c);
+      }
     }
     if (waypoints.length < 2) {
-      if (mounted) {
+      if (mounted && gen == _geometriaRutaGen) {
         setState(() {
           _geometriaRutaCarretera = waypoints;
+          _etaSegundosHastaOrden.clear();
+          _kmHastaOrden.clear();
+          _etaTotalRutaS = null;
+          _kmTotalRuta = null;
           _cargandoGeometriaRuta = false;
         });
       }
       return;
     }
 
-    if (mounted) setState(() => _cargandoGeometriaRuta = true);
-    final geometria = await RutaGeometriaOsrmService.obtenerGeometriaConduccion(waypoints);
+    final hayRepartidor = _ubicacionRepartidor != null;
+    // Siempre útil al instante (modo offline / caché).
+    _aplicarGeometriaLocal(
+      waypoints,
+      ordenesConCoord,
+      hayRepartidor: hayRepartidor,
+    );
+
+    if (_sinInternet) return;
+
+    // Mejora por calles en segundo plano (no bloquea «Ir a esta parada»).
+    unawaited(
+      _mejorarGeometriaConRed(
+        gen: gen,
+        waypoints: waypoints,
+        ordenesConCoord: ordenesConCoord,
+        hayRepartidor: hayRepartidor,
+      ),
+    );
+  }
+
+  Future<void> _mejorarGeometriaConRed({
+    required int gen,
+    required List<LatLng> waypoints,
+    required List<Orden> ordenesConCoord,
+    required bool hayRepartidor,
+  }) async {
+    if (!mounted || gen != _geometriaRutaGen) return;
+    setState(() => _cargandoGeometriaRuta = true);
+
+    final geometria = <LatLng>[];
+    final etas = <String, int>{};
+    final kms = <String, double>{};
+    var totalS = 0;
+    var totalM = 0;
+
+    try {
+      await Future(() async {
+        for (var i = 0; i < waypoints.length - 1; i++) {
+          if (gen != _geometriaRutaGen) return;
+          try {
+            final leg = await TaxiDirectionsService.instance.rutaConEta(
+              origen: waypoints[i],
+              destino: waypoints[i + 1],
+            );
+            if (leg.points.length >= 2) {
+              if (geometria.isEmpty) {
+                geometria.addAll(leg.points);
+              } else {
+                geometria.addAll(leg.points.skip(1));
+              }
+            } else {
+              if (geometria.isEmpty) geometria.add(waypoints[i]);
+              geometria.add(waypoints[i + 1]);
+            }
+            final dur = leg.durationS ?? 0;
+            final dist = leg.distanceM ?? 0;
+            totalS += dur;
+            totalM += dist;
+            final ordenIdx = hayRepartidor ? i : (i + 1);
+            if (ordenIdx >= 0 && ordenIdx < ordenesConCoord.length) {
+              final oid = ordenesConCoord[ordenIdx].id;
+              etas[oid] = dur;
+              kms[oid] = dist / 1000.0;
+            }
+          } catch (_) {
+            if (geometria.isEmpty) geometria.add(waypoints[i]);
+            geometria.add(waypoints[i + 1]);
+          }
+        }
+      }).timeout(const Duration(seconds: 12));
+    } catch (_) {
+      // Se queda la geometría local ya aplicada.
+    }
 
     if (_ubicacionRepartidor != null) {
       var zoom = _zoomMapaInicial;
       try {
         zoom = _mapController.camera.zoom;
       } catch (_) {}
-      await MapaRegionService.guardarRegion(
-        pais: _paisOperacion ?? 'Cuba',
-        centro: _ubicacionRepartidor!,
-        zoom: zoom,
-      );
+      try {
+        await MapaRegionService.guardarRegion(
+          pais: _paisOperacion ?? 'Cuba',
+          centro: _ubicacionRepartidor!,
+          zoom: zoom,
+        ).timeout(const Duration(seconds: 2));
+      } catch (_) {}
     }
 
-    if (mounted) {
+    if (!mounted || gen != _geometriaRutaGen) return;
+    if (geometria.length >= 2) {
       setState(() {
         _geometriaRutaCarretera = geometria;
+        if (etas.isNotEmpty) {
+          _etaSegundosHastaOrden
+            ..clear()
+            ..addAll(etas);
+        }
+        if (kms.isNotEmpty) {
+          _kmHastaOrden
+            ..clear()
+            ..addAll(kms);
+        }
+        if (totalS > 0) _etaTotalRutaS = totalS;
+        if (totalM > 0) _kmTotalRuta = totalM / 1000.0;
         _cargandoGeometriaRuta = false;
       });
+    } else {
+      setState(() => _cargandoGeometriaRuta = false);
     }
   }
 
-  Future<void> _abrirRutaEnGoogleMaps() async {
+  /// Encaja el mapa para ver repartidor + todas las paradas + polyline.
+  void _ajustarVistaRutaCompleta() {
+    final pts = <LatLng>[
+      if (_ubicacionRepartidor != null) _ubicacionRepartidor!,
+      ..._geometriaRutaCarretera,
+    ];
+    for (final o in _ordenesOrdenadas) {
+      final c = _obtenerCoordenadas(o);
+      if (c != null) pts.add(c);
+    }
+    if (pts.isEmpty) return;
+    try {
+      if (pts.length == 1) {
+        _mapController.move(pts.first, 15);
+        return;
+      }
+      _mapController.fitCamera(
+        CameraFit.bounds(
+          bounds: LatLngBounds.fromPoints(pts),
+          padding: const EdgeInsets.fromLTRB(48, 100, 48, 240),
+        ),
+      );
+    } catch (e) {
+      print('⚠️ ajustarVistaRutaCompleta: $e');
+    }
+  }
+
+  /// Centra en la entrega actual sin salir de la app.
+  void _enfocarEntregaActual() {
+    final orden = _ordenActual;
+    final dest = orden != null ? _obtenerCoordenadas(orden) : null;
+    if (dest == null) return;
+    final pts = <LatLng>[
+      if (_ubicacionRepartidor != null) _ubicacionRepartidor!,
+      dest,
+    ];
+    try {
+      if (pts.length == 1) {
+        _mapController.move(pts.first, 15.5);
+      } else {
+        _mapController.fitCamera(
+          CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(pts),
+            padding: const EdgeInsets.fromLTRB(56, 120, 56, 260),
+          ),
+        );
+      }
+    } catch (_) {
+      _mapController.move(dest, 15.5);
+    }
+  }
+
+  /// Opcional: Google Maps externo (no es el flujo principal).
+  Future<void> _abrirRutaEnGoogleMapsOpcional() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => VolonexDialog(
+        title: 'Abrir fuera de la app',
+        leading: const Icon(Icons.open_in_new, color: AppColors.info, size: 26),
+        child: const Text(
+          'La ruta ya está en el mapa de Repartidor. '
+          '¿Quieres abrirla también en Google Maps u otra app?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.header,
+              foregroundColor: AppColors.onAccentButton,
+            ),
+            child: const Text('Abrir externo'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+
     final ok = await GoogleMapsRutaService.abrirRutaOrdenes(
       ordenes: _ordenesOrdenadas,
       sucursalesPorOrdenId: widget.sucursalesPorOrdenId,
@@ -221,9 +470,10 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
         if (c != null) paradas.add(c);
       }
       if (paradas.isEmpty) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('No hay direcciones válidas para abrir en Google Maps'),
+            content: Text('No hay direcciones válidas para la app externa'),
           ),
         );
         return;
@@ -232,7 +482,6 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
         origen: _ubicacionRepartidor,
         paradas: paradas,
       );
-      return;
     }
   }
   
@@ -294,8 +543,23 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
     if (ordenesSinCoords.isEmpty) {
       print('✅ Todas las órdenes ya tienen coordenadas');
       if (mounted) {
-        setState(() {});
-        await _actualizarGeometriaRutaEnMapa();
+        setState(() {
+          _isLoading = false;
+        });
+        await _autoIniciarRutaSiCorresponde();
+      }
+      return;
+    }
+
+    // Sin internet no se puede geocodificar: usar solo lat/lng ya en caché/BD.
+    if (_sinInternet) {
+      print(
+        '📴 Offline: ${ordenesSinCoords.length} órdenes sin coordenadas; '
+        'se muestran las que ya tienen lat/lng en caché',
+      );
+      if (mounted) {
+        setState(() => _isLoading = false);
+        await _autoIniciarRutaSiCorresponde();
       }
       return;
     }
@@ -316,7 +580,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
         final direccionCompleta = res.direccionCompleta;
         print('   📍 Geocodificando (${res.tipoDestino}): $direccionCompleta');
         
-        final locations = await locationFromAddress(direccionCompleta);
+        final locations = await locationFromAddress(direccionCompleta)
+            .timeout(const Duration(seconds: 5));
         if (locations.isNotEmpty) {
           final location = locations.first;
           // Guardar en el Map temporal
@@ -335,8 +600,16 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
       setState(() {
         _isLoading = false;
       });
-      await _actualizarGeometriaRutaEnMapa();
+      await _autoIniciarRutaSiCorresponde();
     }
+  }
+
+  /// Un solo flujo: al abrir «Ver ruta» se inicia la ruta por distancia
+  /// sin pedir otro tap ni modales de ida y vuelta.
+  Future<void> _autoIniciarRutaSiCorresponde() async {
+    if (!mounted || _autoStartHecho || _rutaIniciada) return;
+    _autoStartHecho = true;
+    await _iniciarRutaNormal();
   }
   
   // Obtener coordenadas de una orden (de la BD o del Map temporal)
@@ -363,11 +636,9 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
           _ubicacionRepartidor = LatLng(position.latitude, position.longitude);
           _isLoading = false;
         });
-        await _actualizarGeometriaRutaEnMapa();
+        // Solo mover el marcador; la ruta completa se calcula al iniciar / avanzar.
       }
       
-      // NO mover el mapa automáticamente - solo actualizar el marcador
-      // El usuario puede presionar el botón "Rastrear Repartidor" si quiere centrar el mapa
       if (_ubicacionRepartidor != null) {
         print('📍 Ubicación del repartidor actualizada: ${_ubicacionRepartidor!.latitude}, ${_ubicacionRepartidor!.longitude}');
       }
@@ -475,48 +746,13 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
   }
 
   void _iniciarRuta() {
-    // Detectar órdenes prioritarias antes de iniciar (usando lista base)
-    final ordenesBase = _ordenesBase;
-    final ordenesUrgentes = _ordenesUrgentes;
-    final ordenesAtrasadas = _ordenesAtrasadas;
-    
-    // Debug: Imprimir información de las órdenes
-    print('🔍 [INICIAR RUTA] Total órdenes base: ${ordenesBase.length}');
-    print('🔍 [INICIAR RUTA] Órdenes urgentes: ${ordenesUrgentes.length}');
-    for (var orden in ordenesUrgentes) {
-      print('   - Urgente: #${orden.numeroOrden}, esUrgente: ${orden.esUrgente}, recogerEnSucursal: ${orden.recogerEnSucursal}');
-    }
-    print('🔍 [INICIAR RUTA] Órdenes atrasadas: ${ordenesAtrasadas.length}');
-    for (var orden in ordenesAtrasadas) {
-      print('   - Atrasada: #${orden.numeroOrden}, estado: ${orden.estado}, fechaEstimada: ${orden.fechaEstimadaEntrega}, recogerEnSucursal: ${orden.recogerEnSucursal}');
-    }
-    
-    // Debug: Mostrar todas las órdenes base
-    print('🔍 [INICIAR RUTA] Todas las órdenes base:');
-    for (var orden in ordenesBase) {
-      print('   - Orden #${orden.numeroOrden}: estado=${orden.estado}, esUrgente=${orden.esUrgente}, recogerEnSucursal=${orden.recogerEnSucursal}, fechaEstimada=${orden.fechaEstimadaEntrega}');
-    }
-    
-    // Contar total de prioritarias (evitando duplicados)
-    final idsPrioritarias = <String>{};
-    ordenesUrgentes.forEach((o) => idsPrioritarias.add(o.id));
-    ordenesAtrasadas.forEach((o) => idsPrioritarias.add(o.id));
-    final totalPrioritarias = idsPrioritarias.length;
-    
-    print('🔍 [INICIAR RUTA] Total prioritarias (sin duplicados): $totalPrioritarias');
-    
-    // Si hay órdenes prioritarias, mostrar modal de confirmación
-    if (totalPrioritarias > 0) {
-      print('✅ [INICIAR RUTA] Mostrando modal de prioridad');
-      _mostrarModalPrioridad(ordenesUrgentes, ordenesAtrasadas);
-    } else {
-      print('ℹ️ [INICIAR RUTA] No hay prioritarias, iniciando ruta normal');
-      // Si no hay prioritarias, iniciar ruta normalmente
-      _iniciarRutaNormal();
-    }
+    // Flujo directo: siempre ruta por distancia (sin modal que manda
+    // al repartidor de un lado a otro). Las urgentes se pueden priorizar
+    // con el chip en la hoja inferior.
+    unawaited(_iniciarRutaNormal());
   }
   
-  void _iniciarRutaNormal() async {
+  Future<void> _iniciarRutaNormal() async {
     print('🚀 Iniciando ruta normal (optimizada por distancia)...');
     
     // Obtener ubicación actual del repartidor
@@ -539,6 +775,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
           _priorizarUrgentesAtrasadas = false;
         });
       }
+      await _actualizarGeometriaRutaEnMapa();
+      if (mounted) _ajustarVistaRutaCompleta();
       
       // Actualizar ubicación periódicamente
       _timerUbicacion?.cancel();
@@ -627,12 +865,19 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
       // Mostrar mensaje informativo
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Ruta optimizada por distancia: ${todasLasOrdenes.length} órdenes. Se entregarán las más cercanas primero.'),
+          content: Text(
+            'Ruta en el mapa de la app: ${todasLasOrdenes.length} paradas. '
+            'Se muestran 1 → 2 → 3… con navegación real.',
+          ),
           backgroundColor: AppColors.exito,
           duration: const Duration(seconds: 4),
         ),
       );
     }
+
+    // Dibujar ruta completa en el mapa interno (sin abrir Google Maps).
+    await _actualizarGeometriaRutaEnMapa();
+    if (mounted) _ajustarVistaRutaCompleta();
     
     // Actualizar ubicación periódicamente
     _timerUbicacion?.cancel();
@@ -817,7 +1062,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
     return null;
   }
   
-  void _iniciarRutaConPrioridad() async {
+  Future<void> _iniciarRutaConPrioridad() async {
     print('🚀 Iniciando ruta con prioridad...');
     
     // Obtener ubicación actual del repartidor
@@ -869,6 +1114,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
           _ordenActualIndex = 0;
         });
       }
+      await _actualizarGeometriaRutaEnMapa();
+      if (mounted) _ajustarVistaRutaCompleta();
       return;
     }
     
@@ -950,6 +1197,9 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
         ),
       );
     }
+
+    await _actualizarGeometriaRutaEnMapa();
+    if (mounted) _ajustarVistaRutaCompleta();
     
     // Actualizar ubicación periódicamente
     _timerUbicacion?.cancel(); // Cancelar timer anterior si existe
@@ -1047,13 +1297,12 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
 
   void _siguienteOrden() {
     if (!mounted) return;
-    
+
     if (_ordenActualIndex < _ordenesOrdenadas.length - 1) {
       setState(() {
         _ordenActualIndex++;
       });
-      
-      // Centrar mapa en la siguiente orden
+
       final siguienteOrden = _ordenActual;
       if (siguienteOrden != null) {
         final coordenadas = _obtenerCoordenadas(siguienteOrden);
@@ -1061,28 +1310,19 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
           _mapController.move(coordenadas, 15.0);
         }
       }
-    } else {
-      // Si ya está en la última orden, volver al inicio
-      setState(() {
-        _ordenActualIndex = 0;
-      });
-      
-      // Centrar mapa en la primera orden
-      if (_ordenesOrdenadas.isNotEmpty) {
-        final primeraOrden = _ordenesOrdenadas.first;
-        final coordenadas = _obtenerCoordenadas(primeraOrden);
-        if (coordenadas != null) {
-          _mapController.move(coordenadas, 15.0);
-        }
-      }
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Volviendo al inicio de la ruta'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      unawaited(_actualizarGeometriaRutaEnMapa());
+      return;
     }
+
+    // Última parada: salir a home (no volver a la orden 1).
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Fin de la ruta'),
+        duration: Duration(seconds: 2),
+        backgroundColor: AppColors.exito,
+      ),
+    );
+    Navigator.of(context).pop();
   }
 
   Future<void> _marcarComoEntregado(Orden orden) async {
@@ -1173,6 +1413,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
         if (coordenadas != null) {
           _mapController.move(coordenadas, 15.0);
         }
+        unawaited(_actualizarGeometriaRutaEnMapa());
         
         // Marcar la nueva orden como "EN REPARTO" si está en "EN TRANSITO"
         if (nuevaOrdenActual.estado == 'EN TRANSITO' || nuevaOrdenActual.estado == 'ATRASADO') {
@@ -1204,8 +1445,12 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
     }
   }
   
-  // Recargar órdenes desde la base de datos
+  // Recargar órdenes desde la base de datos (solo con internet).
   Future<void> _recargarOrdenes() async {
+    if (_sinInternet) {
+      print('📴 Offline: se mantienen órdenes en memoria/caché (sin recargar BD)');
+      return;
+    }
     try {
       final ordenIds = widget.ordenes.map((o) => o.id).toList();
       
@@ -1217,7 +1462,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
               .from('ordenes')
               .select()
               .eq('id', ordenId)
-              .single();
+              .single()
+              .timeout(const Duration(seconds: 5));
           
           ordenesRecargadas.add(Orden.fromJson(response));
         } catch (e) {
@@ -1252,111 +1498,29 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
     );
   }
 
+  /// Enfoca la parada actual en el mapa. Si está en tránsito, pasa a EN REPARTO
+  /// sin diálogo intermedio (un solo paso).
   Future<void> _abrirNavegacion(Orden orden) async {
-    // Mostrar modal preguntando si va a iniciar la entrega o solo ver la ubicación
-    if (orden.estado == 'EN TRANSITO' || orden.estado == 'ATRASADO') {
-      final resultado = await showDialog<String>(
-        context: context,
-        builder: (ctx) => VolonexDialog(
-          title: '¿Iniciar entrega?',
-          leading: const Icon(Icons.navigation, color: AppColors.info, size: 26),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Orden #${orden.numeroOrden}',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 10),
-              const Text('¿Vas a iniciar la entrega de este pedido ahora?'),
-              const SizedBox(height: 8),
-              Text(
-                'Si solo deseas ver la ubicación sin iniciar la entrega, selecciona "Solo ver ubicación".',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: AppColors.darkTextMuted,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            OutlinedButton(
-              onPressed: () => Navigator.of(ctx).pop('solo_ver'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.darkTextMuted,
-                side: const BorderSide(color: AppColors.darkBorder),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.location_on, size: 18),
-                  SizedBox(width: 6),
-                  Text('Solo ver ubicación'),
-                ],
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(ctx).pop('iniciar'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.exito,
-                foregroundColor: AppColors.onAccentButton,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.play_arrow, size: 18),
-                  SizedBox(width: 6),
-                  Text('Sí, iniciar entrega'),
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-      
-      // Si el usuario canceló el diálogo, no hacer nada
-      if (resultado == null) return;
-      
-      // Si el usuario seleccionó "Sí, iniciar entrega", cambiar estado a "EN REPARTO"
-      if (resultado == 'iniciar') {
-        await _marcarOrdenComoEnReparto(orden);
-        // Recargar la orden actualizada para reflejar el cambio
-        await _recargarOrdenes();
-      }
-      // Si seleccionó "Solo ver ubicación", no cambiar el estado, solo continuar con la navegación
-    }
-    
-    final sucursal = widget.sucursalesPorOrdenId?[orden.id];
-    final coords = _obtenerCoordenadas(orden);
+    if (!mounted) return;
 
-    final ok = await DireccionNavegacionService.abrirDestinoEnGoogleMaps(
-      orden: orden,
-      sucursal: sucursal,
-      paisOperacion: _paisOperacion,
-      latitudFallback: coords?.latitude ?? orden.latitudEntrega,
-      longitudFallback: coords?.longitude ?? orden.longitudEntrega,
-    );
-
-    if (!ok && mounted) {
-      final res = await DireccionNavegacionService.resolverConPaisOrden(
-        orden,
-        sucursal: sucursal,
-      );
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            res.esValida
-                ? 'No se pudo abrir Google Maps'
-                : 'No hay dirección completa para esta orden',
-          ),
-          duration: const Duration(seconds: 3),
-        ),
-      );
+    // UI inmediata con datos en caché (sin esperar red).
+    final idx = _ordenesOrdenadas.indexWhere((o) => o.id == orden.id);
+    if (idx >= 0) {
+      setState(() {
+        _rutaIniciada = true;
+        _ordenActualIndex = idx;
+      });
     }
+    _enfocarEntregaActual();
+
+    final estado = orden.estado.toUpperCase();
+    if (estado == 'EN TRANSITO' || estado == 'ATRASADO') {
+      // Caché + cola offline; no recargar desde BD (bloquea sin internet).
+      unawaited(_marcarOrdenComoEnReparto(orden));
+    }
+
+    // Geometría: primero local; si hay red, mejora con timeout.
+    unawaited(_actualizarGeometriaRutaEnMapa());
   }
 
   @override
@@ -1422,9 +1586,19 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
         foregroundColor: AppColors.onAccentButton,
         actions: [
           IconButton(
-            icon: const Icon(Icons.map, color: AppColors.onAccentButton),
-            onPressed: _abrirRutaEnGoogleMaps,
-            tooltip: 'Abrir en Google Maps',
+            icon: const Icon(Icons.route, color: AppColors.onAccentButton),
+            onPressed: () {
+              unawaited(() async {
+                await _actualizarGeometriaRutaEnMapa();
+                if (mounted) _ajustarVistaRutaCompleta();
+              }());
+            },
+            tooltip: 'Ver ruta completa en el mapa',
+          ),
+          IconButton(
+            icon: const Icon(Icons.open_in_new, color: AppColors.onAccentButton),
+            onPressed: _abrirRutaEnGoogleMapsOpcional,
+            tooltip: 'Abrir en app externa (opcional)',
           ),
           if (_ubicacionRepartidor != null)
             IconButton(
@@ -1446,57 +1620,51 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                     ? _obtenerCoordenadas(ordenesConCoordenadas.first)!
                     : MapaRegionService.centroPorPais(_paisOperacion)),
               initialZoom: _zoomMapaInicial,
-              minZoom: 10.0,
-              maxZoom: 18.0,
+              minZoom: 3.0,
+              maxZoom: 16.0,
+              backgroundColor: const Color(0xFFE8EEF4),
+              interactionOptions: const InteractionOptions(
+                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+              ),
             ),
             children: [
+              // Mismo estilo base que el mapa moderno de taxi (Carto Voyager).
               TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.logiflowpro.app',
+                urlTemplate:
+                    'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+                subdomains: const ['a', 'b', 'c', 'd'],
+                userAgentPackageName: 'com.logiflow.repartidor',
+                maxZoom: 16,
+                maxNativeZoom: 16,
+                retinaMode: false,
               ),
-              
-              // Ruta por carretera (OSRM), no líneas rectas
+
+              // Ruta real de navegación (no líneas rectas).
               if (_geometriaRutaCarretera.length >= 2)
                 PolylineLayer(
                   polylines: [
                     Polyline(
                       points: _geometriaRutaCarretera,
-                      strokeWidth: 5.0,
-                      color: AppColors.info,
-                      borderStrokeWidth: 2.5,
-                      borderColor: AppColors.onAccentButton,
+                      strokeWidth: 5.5,
+                      color: const Color(0xFF1A73E8),
+                      borderStrokeWidth: 2.0,
+                      borderColor: Colors.white.withValues(alpha: 0.85),
                     ),
                   ],
                 ),
-              
-              // Marcador de ubicación del repartidor (camión)
+
               if (_ubicacionRepartidor != null)
                 MarkerLayer(
                   markers: [
                     Marker(
                       point: _ubicacionRepartidor!,
-                      width: 50,
-                      height: 50,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: AppColors.exito,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: AppColors.onAccentButton, width: 3),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.3),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: const Icon(Icons.local_shipping, color: AppColors.onAccentButton, size: 28),
-                      ),
+                      width: 44,
+                      height: 44,
+                      child: const TaxiUberMapCar(size: 42),
                     ),
                   ],
                 ),
-              
-              // Marcadores de órdenes numeradas
+
               MarkerLayer(
                 markers: ordenesConCoordenadas.asMap().entries
                   .where((entry) => _obtenerCoordenadas(entry.value) != null)
@@ -1505,77 +1673,44 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                     final orden = entry.value;
                     final ordenRuta = orden.ordenRuta ?? (index + 1);
                     final coordenadas = _obtenerCoordenadas(orden)!;
-                  
+                    final esActual =
+                        _ordenActualIndex == index && _rutaIniciada;
+
                   return Marker(
                     point: coordenadas,
-                    width: 60,
-                    height: 75, // Altura ajustada para incluir el icono de paquete arriba
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        // Icono de paquete arriba
-                        Positioned(
-                          top: 0,
-                          child: Container(
-                            padding: const EdgeInsets.all(5),
-                            decoration: BoxDecoration(
-                              color: AppColors.botonPrincipal,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: AppColors.onAccentButton, width: 2),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.3),
-                                  blurRadius: 6,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: const Icon(
-                              Icons.inventory_2,
-                              color: AppColors.onAccentButton,
-                              size: 20,
-                            ),
+                    width: 44,
+                    height: 44,
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: esActual
+                            ? const Color(0xFFFF9800)
+                            : const Color(0xFF1A73E8),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 3),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.28),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Center(
+                        child: Text(
+                          '$ordenRuta',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
-                        // Círculo con número de orden (más pequeño)
-                        Positioned(
-                          top: 25,
-                          child: Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: _ordenActualIndex == index && _rutaIniciada
-                                  ? AppColors.botonPrincipal
-                                  : AppColors.info,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: AppColors.onAccentButton, width: 3),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.4),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 2),
-                                  spreadRadius: 1,
-                                ),
-                              ],
-                            ),
-                            child: Center(
-                              child: Text(
-                                '$ordenRuta',
-                                style: const TextStyle(
-                                  color: AppColors.onAccentButton,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   );
                 }).toList(),
               ),
-              
             ],
           ),
 
@@ -1608,11 +1743,96 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                         ),
                         SizedBox(width: 8),
                         Text(
-                          'Calculando ruta por calles…',
+                          'Mejorando ruta (opcional)…',
                           style: TextStyle(fontSize: 12, color: AppColors.darkText),
                         ),
                       ],
                     ),
+                  ),
+                ),
+              ),
+            ),
+
+          // Resumen ETA de la ruta / próxima entrega
+          if (!_cargandoGeometriaRuta &&
+              (_etaTotalRutaS != null || _ordenActual != null))
+            Positioned(
+              top: 12,
+              left: 12,
+              right: 72,
+              child: Material(
+                color: Colors.white.withValues(alpha: 0.96),
+                borderRadius: BorderRadius.circular(12),
+                elevation: 3,
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_rutaIniciada && _ordenActual != null) ...[
+                        Text(
+                          'A la próxima entrega',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF666666),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          () {
+                            final eta = _formatEtaSegundos(
+                              _etaSegundosHastaOrden[_ordenActual!.id],
+                            );
+                            final km = _kmHastaOrden[_ordenActual!.id];
+                            final parts = <String>[];
+                            if (eta.isNotEmpty) parts.add(eta);
+                            if (km != null && km > 0) {
+                              parts.add('${km.toStringAsFixed(1)} km');
+                            }
+                            return parts.isEmpty
+                                ? 'Calculando…'
+                                : parts.join(' · ');
+                          }(),
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF2C2C2C),
+                          ),
+                        ),
+                      ] else ...[
+                        const Text(
+                          'Ruta completa',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF666666),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          () {
+                            final eta = _formatEtaSegundos(_etaTotalRutaS);
+                            final parts = <String>[];
+                            if (eta.isNotEmpty) parts.add(eta);
+                            if (_kmTotalRuta != null && _kmTotalRuta! > 0) {
+                              parts.add(
+                                '${_kmTotalRuta!.toStringAsFixed(1)} km',
+                              );
+                            }
+                            parts.add('${_ordenesOrdenadas.length} paradas');
+                            return parts.join(' · ');
+                          }(),
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF2C2C2C),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ),
@@ -1643,7 +1863,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                     child: InkWell(
                       onTap: () {
                         final currentZoom = _mapController.camera.zoom;
-                        final newZoom = (currentZoom + 1).clamp(10.0, 18.0);
+                        final newZoom = (currentZoom + 1).clamp(3.0, 16.0);
                         _mapController.move(_mapController.camera.center, newZoom);
                       },
                       borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
@@ -1668,7 +1888,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                     child: InkWell(
                       onTap: () {
                         final currentZoom = _mapController.camera.zoom;
-                        final newZoom = (currentZoom - 1).clamp(10.0, 18.0);
+                        final newZoom = (currentZoom - 1).clamp(3.0, 16.0);
                         _mapController.move(_mapController.camera.center, newZoom);
                       },
                       borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
@@ -1730,55 +1950,33 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                   ),
                   
                   if (!_rutaIniciada) ...[
-                    // Botón "Iniciar Ruta"
+                    // Mientras auto-inicia: no pedir otro tap «Iniciar Ruta».
                     Padding(
                       padding: const EdgeInsets.all(16),
                       child: Column(
                         children: [
                           Text(
-                            '${_ordenesOrdenadas.length} órdenes en la ruta optimizada',
+                            '${_ordenesOrdenadas.length} paradas en orden',
                             style: const TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
                               color: AppColors.darkText,
                             ),
                           ),
-                          // Debug: Mostrar información adicional
-                          Builder(
-                            builder: (context) {
-                              final urgentes = _ordenesUrgentes.length;
-                              final atrasadas = _ordenesAtrasadas.length;
-                              final recogerEnSucursal = _ordenesRecogerEnSucursal.length;
-                              if (urgentes > 0 || atrasadas > 0 || recogerEnSucursal > 0) {
-                                return Padding(
-                                  padding: const EdgeInsets.only(top: 8),
-                                  child: Text(
-                                    'Urgentes: $urgentes | Atrasadas: $atrasadas | Recoger en sucursal: $recogerEnSucursal',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: AppColors.darkTextMuted,
-                                    ),
-                                  ),
-                                );
-                              }
-                              return const SizedBox.shrink();
-                            },
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Preparando ruta en el mapa…',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: AppColors.darkTextMuted,
+                            ),
                           ),
                           const SizedBox(height: 16),
-                          ElevatedButton.icon(
+                          TextButton(
                             onPressed: _iniciarRuta,
-                            icon: const Icon(Icons.play_arrow, size: 24),
-                            label: const Text(
-                              'Iniciar Ruta',
-                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.exito,
-                              foregroundColor: AppColors.onAccentButton,
-                              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
+                            child: const Text(
+                              'Reintentar si tarda',
+                              style: TextStyle(color: AppColors.botonPrincipal),
                             ),
                           ),
                         ],
@@ -1791,6 +1989,51 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          if ((_ordenesUrgentes.isNotEmpty ||
+                                  _ordenesAtrasadas.isNotEmpty) &&
+                              !_priorizarUrgentesAtrasadas)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: Material(
+                                color: AppColors.botonPrincipal
+                                    .withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(10),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(10),
+                                  onTap: () => unawaited(
+                                    _iniciarRutaConPrioridad(),
+                                  ),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 10,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.priority_high,
+                                          color: AppColors.botonPrincipal,
+                                          size: 20,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            'Hay urgentes/atrasadas. '
+                                            'Toca para priorizarlas '
+                                            '(sin salir de aquí).',
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              color: AppColors.darkText,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
@@ -1803,7 +2046,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                                       borderRadius: BorderRadius.circular(20),
                                     ),
                                     child: Text(
-                                      'Orden ${_ordenActual!.ordenRuta ?? (_ordenActualIndex + 1)} de ${_ordenesOrdenadas.length}',
+                                      'Parada ${_ordenActualIndex + 1} de ${_ordenesOrdenadas.length}',
                                       style: const TextStyle(
                                         color: AppColors.onAccentButton,
                                         fontSize: 14,
@@ -1822,14 +2065,34 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                                   ),
                                 ],
                               ),
-                              if (_ordenActual!.distanciaDesdeAnterior != null)
-                                Text(
-                                  '${_ordenActual!.distanciaDesdeAnterior!.toStringAsFixed(1)} km',
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    color: AppColors.darkTextMuted,
-                                  ),
-                                ),
+                              Builder(
+                                builder: (_) {
+                                  final eta = _formatEtaSegundos(
+                                    _etaSegundosHastaOrden[_ordenActual!.id],
+                                  );
+                                  final kmNav =
+                                      _kmHastaOrden[_ordenActual!.id];
+                                  final kmFallback =
+                                      _ordenActual!.distanciaDesdeAnterior;
+                                  final km = kmNav ?? kmFallback;
+                                  final parts = <String>[];
+                                  if (eta.isNotEmpty) parts.add(eta);
+                                  if (km != null && km > 0) {
+                                    parts.add('${km.toStringAsFixed(1)} km');
+                                  }
+                                  if (parts.isEmpty) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return Text(
+                                    parts.join(' · '),
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                      color: Color(0xFF1A73E8),
+                                    ),
+                                  );
+                                },
+                              ),
                             ],
                           ),
                           const SizedBox(height: 12),
@@ -1850,98 +2113,127 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                               ),
                             ),
                           ],
-                          const SizedBox(height: 16),
-                          // Botón "Explorar Orden"
-                          SizedBox(
-                            width: double.infinity,
-                            child: OutlinedButton.icon(
-                              onPressed: () => _explorarOrden(_ordenActual!),
-                              icon: const Icon(Icons.info_outline, size: 18),
-                              label: const Text('Explorar Orden'),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: AppColors.darkText,
-                                side: const BorderSide(color: AppColors.darkBorder),
-                                padding: const EdgeInsets.symmetric(vertical: 12),
+                          const SizedBox(height: 14),
+                          // Acciones compactas (sin estirar a todo el ancho).
+                          Center(
+                            child: ElevatedButton.icon(
+                              onPressed: () =>
+                                  unawaited(_abrirNavegacion(_ordenActual!)),
+                              icon: const Icon(Icons.navigation, size: 18),
+                              label: Text(
+                                (_ordenActual!.estado == 'EN TRANSITO' ||
+                                        _ordenActual!.estado == 'ATRASADO')
+                                    ? 'Ir a parada (iniciar)'
+                                    : 'Ir a esta parada',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.info,
+                                foregroundColor: AppColors.onAccentButton,
+                                elevation: 0,
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 18, vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
                               ),
                             ),
                           ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  onPressed: () => _abrirNavegacion(_ordenActual!),
-                                  icon: const Icon(Icons.navigation, size: 18),
-                                  label: const Text('Navegar'),
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: AppColors.info,
-                                    side: const BorderSide(color: AppColors.info),
-                                    padding: const EdgeInsets.symmetric(vertical: 12),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              // Botón "Entregado" solo si la orden está en "EN REPARTO"
-                              if (_ordenActual!.estado == 'EN REPARTO')
-                                Expanded(
-                                  child: ElevatedButton.icon(
-                                    onPressed: () => _marcarComoEntregado(_ordenActual!),
-                                    icon: const Icon(Icons.check_circle, size: 18),
+                          const SizedBox(height: 10),
+                          Center(
+                            child: Wrap(
+                              alignment: WrapAlignment.center,
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                if (_ordenActual!.estado == 'EN REPARTO')
+                                  ElevatedButton.icon(
+                                    onPressed: () =>
+                                        _marcarComoEntregado(_ordenActual!),
+                                    icon: const Icon(Icons.check_circle,
+                                        size: 18),
                                     label: const Text('Entregar'),
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: AppColors.exito,
-                                      foregroundColor: AppColors.onAccentButton,
-                                      padding: const EdgeInsets.symmetric(vertical: 12),
+                                      foregroundColor:
+                                          AppColors.onAccentButton,
+                                      elevation: 0,
+                                      minimumSize: Size.zero,
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 16, vertical: 11),
+                                    ),
+                                  )
+                                else
+                                  OutlinedButton.icon(
+                                    onPressed: () =>
+                                        _explorarOrden(_ordenActual!),
+                                    icon: const Icon(Icons.info_outline,
+                                        size: 18),
+                                    label: const Text('Detalle'),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: AppColors.darkText,
+                                      side: const BorderSide(
+                                          color: AppColors.darkBorder),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 16, vertical: 11),
                                     ),
                                   ),
-                                )
-                              else
-                                Expanded(
-                                  child: ElevatedButton.icon(
-                                    onPressed: () {
-                                      // Si está en "POR ENVIAR", mostrar mensaje informativo
-                                      if (_ordenActual!.estado == 'POR ENVIAR') {
-                                        _mostrarMensajeOrdenNoDisponible();
-                                      } else {
-                                        // Para otros estados, también mostrar mensaje informativo
-                                        _mostrarMensajeOrdenNoDisponible();
-                                      }
-                                    },
-                                    icon: const Icon(Icons.check_circle, size: 18),
-                                    label: Text(
-                                      _ordenActual!.estado == 'EN TRANSITO' 
-                                        ? 'Iniciar Entrega' 
-                                        : 'No disponible',
-                                    ),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: AppColors.darkElevated,
-                                      foregroundColor: AppColors.darkTextMuted,
-                                      padding: const EdgeInsets.symmetric(vertical: 12),
-                                    ),
+                                ElevatedButton.icon(
+                                  onPressed: _siguienteOrden,
+                                  icon: Icon(
+                                    _ordenActualIndex <
+                                            _ordenesOrdenadas.length - 1
+                                        ? Icons.arrow_forward
+                                        : Icons.done_all,
+                                    size: 18,
+                                  ),
+                                  label: Text(
+                                    _ordenActualIndex <
+                                            _ordenesOrdenadas.length - 1
+                                        ? 'Siguiente'
+                                        : 'Finalizar',
+                                  ),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: AppColors.header,
+                                    foregroundColor: AppColors.onAccentButton,
+                                    elevation: 0,
+                                    minimumSize: Size.zero,
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 16, vertical: 11),
                                   ),
                                 ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          ElevatedButton.icon(
-                            onPressed: _siguienteOrden,
-                            icon: Icon(
-                              _ordenActualIndex < _ordenesOrdenadas.length - 1 
-                                ? Icons.arrow_forward 
-                                : Icons.refresh,
-                              size: 18,
-                            ),
-                            label: Text(
-                              _ordenActualIndex < _ordenesOrdenadas.length - 1 
-                                ? 'Siguiente Orden' 
-                                : 'Volver al Inicio',
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.info,
-                              foregroundColor: AppColors.onAccentButton,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              ],
                             ),
                           ),
+                          if (_ordenActual!.estado == 'EN REPARTO') ...[
+                            const SizedBox(height: 6),
+                            Align(
+                              alignment: Alignment.center,
+                              child: TextButton(
+                                onPressed: () =>
+                                    _explorarOrden(_ordenActual!),
+                                child: const Text(
+                                  'Ver detalle de la orden',
+                                  style: TextStyle(
+                                    color: AppColors.darkTextMuted,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),

@@ -14,8 +14,10 @@ import 'navigation/repartidor_navigator.dart';
 import 'screens/login_repartidor_screen.dart';
 import 'screens/repartidor_mobile_screen.dart';
 import 'screens/loading_data_screen.dart';
-import 'services/sync_service.dart';
 import 'services/repartidor_suspension_service.dart';
+import 'services/repartidor_boot_cache_service.dart';
+import 'widgets/repartidor_loading_spinner.dart';
+import 'config/app_colors.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -367,8 +369,9 @@ class _AuthWrapperState extends State<AuthWrapper> {
   Widget build(BuildContext context) {
     if (_isLoading) {
       return const Scaffold(
+        backgroundColor: AppColors.darkBg,
         body: Center(
-          child: CircularProgressIndicator(),
+          child: RepartidorLoadingSpinner.large(),
         ),
       );
     }
@@ -391,6 +394,7 @@ class _LoadingScreenWrapper extends StatefulWidget {
 class _LoadingScreenWrapperState extends State<_LoadingScreenWrapper> {
   String? _empresaNombre;
   String? _empresaLogoUrl;
+  String? _empresaLogoLocalPath;
 
   @override
   void initState() {
@@ -403,27 +407,24 @@ class _LoadingScreenWrapperState extends State<_LoadingScreenWrapper> {
       final user = supabase.auth.currentUser;
       if (user == null) return;
 
-      // Obtener datos del usuario
-      final usuarioData = await supabase
-          .from('usuarios')
-          .select('tenant_id')
-          .eq('auth_id', user.id)
-          .maybeSingle();
-
-      final tenantId = usuarioData?['tenant_id'] as String?;
-      if (tenantId == null) return;
-
-      // Obtener datos del tenant
-      final tenantData = await supabase
-          .from('tenants')
-          .select('nombre, logo_url')
-          .eq('id', tenantId)
-          .maybeSingle();
-
-      if (tenantData != null && mounted) {
+      // Offline-first: branding desde disco al instante.
+      final boot = RepartidorBootCacheService.instance;
+      final cached = await boot.loadEmpresaCached(user.id);
+      if (cached != null && mounted) {
         setState(() {
-          _empresaNombre = tenantData['nombre'] as String?;
-          _empresaLogoUrl = tenantData['logo_url'] as String?;
+          _empresaNombre = cached.nombre;
+          _empresaLogoUrl = cached.logoUrl;
+          _empresaLogoLocalPath = cached.logoLocalPath;
+        });
+      }
+
+      final resolved = await boot.resolveEmpresa(authUserId: user.id);
+      if (mounted) {
+        setState(() {
+          _empresaNombre = resolved.nombre ?? _empresaNombre;
+          _empresaLogoUrl = resolved.logoUrl ?? _empresaLogoUrl;
+          _empresaLogoLocalPath =
+              resolved.logoLocalPath ?? _empresaLogoLocalPath;
         });
       }
     } catch (e) {
@@ -451,64 +452,11 @@ class _LoadingScreenWrapperState extends State<_LoadingScreenWrapper> {
     return LoadingDataScreen(
       empresaNombre: _empresaNombre,
       empresaLogoUrl: _empresaLogoUrl,
+      empresaLogoLocalPath: _empresaLogoLocalPath,
       onLoadData: (updateProgress) async {
-        try {
-          // PASO 1: Inicializar SyncService (5%)
-          updateProgress(0.05, 'Inicializando sistema...');
-          final syncService = SyncService();
-          await syncService.initialize();
-          await Future.delayed(const Duration(milliseconds: 300));
-
-          // PASO 2: Verificar usuario (15%)
-          updateProgress(0.15, 'Verificando permisos...');
-          final user = supabase.auth.currentUser;
-          if (user == null) throw Exception('Usuario no autenticado');
-          await Future.delayed(const Duration(milliseconds: 400));
-
-          // PASO 3: Cargar configuraciones (30%)
-          updateProgress(0.30, 'Cargando configuración...');
-          await Future.delayed(const Duration(milliseconds: 400));
-
-          // PASO 4: Precargar órdenes (50%)
-          updateProgress(0.50, 'Cargando órdenes...');
-          // Nota: Las órdenes se cargarán automáticamente cuando se abra RepartidorMobileScreen
-          // Este paso simplemente simula la carga para dar feedback visual al usuario
-          await Future.delayed(const Duration(milliseconds: 800));
-
-          // PASO 5: Preparando datos (70%)
-          updateProgress(0.70, 'Preparando datos...');
-          await Future.delayed(const Duration(milliseconds: 400));
-
-          // PASO 6: Verificando notificaciones (85%)
-          updateProgress(0.85, 'Verificando notificaciones...');
-          await Future.delayed(const Duration(milliseconds: 400));
-
-          // PASO 7: Sincronizar operaciones pendientes si hay conexión (95%)
-          updateProgress(0.95, 'Sincronizando datos...');
-          if (syncService.isOnline) {
-            try {
-              // Sincronizar en segundo plano sin bloquear
-              syncService.syncPendingOperations().then((_) {
-                print('✅ Sincronización completada');
-              }).catchError((e) {
-                print('⚠️ Error en sincronización (no crítico): $e');
-              });
-            } catch (e) {
-              print('⚠️ Error iniciando sincronización: $e');
-            }
-          }
-          await Future.delayed(const Duration(milliseconds: 400));
-
-          // PASO 8: Completado (100%)
-          updateProgress(1.0, 'Completado');
-          await Future.delayed(const Duration(milliseconds: 200));
-
-          print('✅ Precarga de datos completada exitosamente');
-        } catch (e) {
-          print('❌ Error en precarga de datos: $e');
-          // Continuar de todas formas, los datos se cargarán en la pantalla principal
-          updateProgress(1.0, 'Error en carga, continuando...');
-        }
+        await RepartidorBootCacheService.instance.runBootLoad(
+          updateProgress: updateProgress,
+        );
       },
       onComplete: _navegarAPantallaPrincipal,
     );

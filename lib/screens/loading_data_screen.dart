@@ -1,14 +1,21 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import '../config/app_colors.dart';
+import '../widgets/repartidor_loading_spinner.dart';
 import '../widgets/volonex_dialog.dart';
 
 /// Pantalla de carga que muestra progreso mientras se cargan datos reales
-/// Esta pantalla ejecuta tareas en segundo plano y muestra el progreso
+/// (mismo icono sync_rounded que la app móvil + soporte logo offline).
 class LoadingDataScreen extends StatefulWidget {
   final String? userName;
   final String? empresaNombre;
   final String? empresaLogoUrl;
-  final Future<void> Function(Function(double progress, String message) updateProgress)? onLoadData;
+  /// Ruta local del logo (caché disco) para modo offline.
+  final String? empresaLogoLocalPath;
+  final Future<void> Function(
+      Function(double progress, String message) updateProgress)? onLoadData;
   final VoidCallback? onComplete;
 
   const LoadingDataScreen({
@@ -16,6 +23,7 @@ class LoadingDataScreen extends StatefulWidget {
     this.userName,
     this.empresaNombre,
     this.empresaLogoUrl,
+    this.empresaLogoLocalPath,
     this.onLoadData,
     this.onComplete,
   });
@@ -37,7 +45,6 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
   Future<void> _startLoadingProcess() async {
     try {
       if (widget.onLoadData != null) {
-        // Ejecutar la función de carga de datos proporcionada
         await widget.onLoadData!((progress, message) {
           if (mounted) {
             setState(() {
@@ -47,21 +54,17 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
           }
         });
       } else {
-        // Si no hay función de carga, simplemente simular carga
         await _simulateLoading();
       }
 
-      // Asegurar que llegue al 100%
       if (mounted) {
         setState(() {
           _progress = 1.0;
           _currentMessage = 'Completado';
         });
-        
-        // Pequeño delay antes de llamar onComplete
+
         await Future.delayed(const Duration(milliseconds: 300));
-        
-        // Llamar al callback de completado
+
         if (widget.onComplete != null) {
           widget.onComplete!();
         }
@@ -72,8 +75,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
         setState(() {
           _currentMessage = 'Error: $e';
         });
-        
-        // Aún así completar para no dejar al usuario bloqueado
+
         await Future.delayed(const Duration(seconds: 2));
         if (widget.onComplete != null) {
           widget.onComplete!();
@@ -82,11 +84,33 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
     }
   }
 
-  /// Logo sin caja de fondo (solo imagen sobre el degradado oscuro).
+  /// Logo sin caja de fondo (local → red → letra → asset).
   Widget _buildLogoSinFondo() {
     const size = 140.0;
     const margin = EdgeInsets.only(bottom: 32);
 
+    final local = widget.empresaLogoLocalPath;
+    if (!kIsWeb &&
+        local != null &&
+        local.isNotEmpty &&
+        File(local).existsSync()) {
+      return Padding(
+        padding: margin,
+        child: Image.file(
+          File(local),
+          width: size,
+          height: size,
+          fit: BoxFit.contain,
+          filterQuality: FilterQuality.high,
+          errorBuilder: (_, __, ___) => _logoFromNetworkOrFallback(size, margin),
+        ),
+      );
+    }
+
+    return _logoFromNetworkOrFallback(size, margin);
+  }
+
+  Widget _logoFromNetworkOrFallback(double size, EdgeInsets margin) {
     if (widget.empresaLogoUrl != null && widget.empresaLogoUrl!.isNotEmpty) {
       return Padding(
         padding: margin,
@@ -158,12 +182,13 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
       {'text': 'Finalizando', 'duration': 1.0},
     ];
 
-    double totalDuration = stages.fold(0.0, (sum, stage) => sum + (stage['duration'] as double));
+    double totalDuration =
+        stages.fold(0.0, (sum, stage) => sum + (stage['duration'] as double));
     double accumulatedProgress = 0.0;
 
     for (var stage in stages) {
       if (!mounted) return;
-      
+
       setState(() {
         _currentMessage = stage['text'] as String;
       });
@@ -176,7 +201,8 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
       double stepDuration = stageDuration / steps;
 
       for (int j = 0; j < steps; j++) {
-        await Future.delayed(Duration(milliseconds: (stepDuration * 1000).round()));
+        await Future.delayed(
+            Duration(milliseconds: (stepDuration * 1000).round()));
         if (mounted) {
           setState(() {
             accumulatedProgress += stepProgress;
@@ -244,7 +270,11 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
                                 textAlign: TextAlign.center,
                               ),
                             ),
-                          SizedBox(height: landscape ? 20 : 48),
+                          SizedBox(height: landscape ? 16 : 28),
+                          const RepartidorLoadingSpinner.large(
+                            color: AppColors.botonPrincipal,
+                          ),
+                          SizedBox(height: landscape ? 16 : 24),
                           Text(
                             _currentMessage,
                             style: TextStyle(

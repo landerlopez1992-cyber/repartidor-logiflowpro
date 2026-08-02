@@ -32,6 +32,7 @@ class ProductoOrdenTiendaLinea {
     required this.imagenUrl,
     required this.origen,
     this.detalle,
+    this.imagenLocalPath,
   });
 
   final String nombre;
@@ -39,6 +40,8 @@ class ProductoOrdenTiendaLinea {
   final String? imagenUrl;
   final OrigenProductoTienda origen;
   final String? detalle;
+  /// Ruta en disco (caché offline); tiene prioridad sobre [imagenUrl].
+  final String? imagenLocalPath;
 }
 
 class ProductosOrdenTiendaUtil {

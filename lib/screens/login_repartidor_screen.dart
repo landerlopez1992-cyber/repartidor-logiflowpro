@@ -12,10 +12,10 @@ import 'aviso_ubicacion_destacado_screen.dart';
 import 'loading_data_screen.dart';
 import '../services/sesion_offline_cleanup.dart';
 import '../services/auth_error_handler.dart';
-import '../services/sync_service.dart';
-import '../services/repartidor_seguridad_service.dart';
+import '../services/repartidor_boot_cache_service.dart';
 import '../config/app_colors.dart';
 import '../widgets/volonex_dialog.dart';
+import '../widgets/repartidor_loading_spinner.dart';
 
 class LoginRepartidorScreen extends StatefulWidget {
   const LoginRepartidorScreen({super.key});
@@ -393,10 +393,9 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
               ),
               const SizedBox(height: 24),
 
-              // Icono de carga
-              const CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1976D2)),
-                strokeWidth: 3,
+              // Icono de carga (mismo que app móvil)
+              const RepartidorLoadingSpinner.large(
+                color: AppColors.botonPrincipal,
               ),
             ],
           ),
@@ -746,16 +745,8 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
                                 ),
                               ),
                               child: _isLoading
-                                  ? const SizedBox(
-                                      width: 22,
-                                      height: 22,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.5,
-                                        valueColor:
-                                            AlwaysStoppedAnimation<Color>(
-                                              Colors.white,
-                                            ),
-                                      ),
+                                  ? const RepartidorLoadingSpinner.small(
+                                      color: Colors.white,
                                     )
                                   : const Text(
                                       'INICIAR SESIÓN',
@@ -828,9 +819,11 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
     );
   }
 
-  /// Navega a la pantalla de carga que precarga datos antes de mostrar pantalla principal
+  /// Navega a la pantalla de carga que precarga datos (caché offline-first).
   void _navegarAPantallaCarga(String? empresaNombre, String? empresaLogoUrl) {
     if (!mounted) return;
+
+    final user = supabase.auth.currentUser;
 
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
@@ -838,67 +831,29 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
           empresaNombre: empresaNombre,
           empresaLogoUrl: empresaLogoUrl,
           onLoadData: (updateProgress) async {
-            try {
-              // PASO 1: Inicializar SyncService (5%)
-              updateProgress(0.05, 'Inicializando sistema...');
-              final syncService = SyncService();
-              await syncService.initialize();
-              await Future.delayed(const Duration(milliseconds: 300));
-
-              // PASO 2: Verificar usuario (15%)
-              updateProgress(0.15, 'Verificando permisos...');
-              final user = supabase.auth.currentUser;
-              if (user == null) throw Exception('Usuario no autenticado');
-              await Future.delayed(const Duration(milliseconds: 400));
-
-              // PASO 3: Cargar configuraciones (30%)
-              updateProgress(0.30, 'Cargando configuración...');
-              await Future.delayed(const Duration(milliseconds: 400));
-
-              // PASO 4: Precargar órdenes (50%)
-              updateProgress(0.50, 'Cargando órdenes...');
-              
-              // Nota: Las órdenes se cargarán automáticamente cuando se abra RepartidorMobileScreen
-              // Este paso simplemente simula la carga para dar feedback visual al usuario
-              await Future.delayed(const Duration(milliseconds: 800));
-
-              // PASO 5: Preparando datos (70%)
-              updateProgress(0.70, 'Preparando datos...');
-              await Future.delayed(const Duration(milliseconds: 400));
-
-              // PASO 6: Verificando notificaciones (85%)
-              updateProgress(0.85, 'Verificando notificaciones...');
-              await Future.delayed(const Duration(milliseconds: 400));
-
-              // PASO 7: Sincronizar operaciones pendientes si hay conexión (95%)
-              updateProgress(0.95, 'Sincronizando datos...');
-              if (syncService.isOnline) {
-                try {
-                  // Sincronizar en segundo plano sin bloquear
-                  syncService.syncPendingOperations().then((_) {
-                    print('✅ Sincronización completada');
-                  }).catchError((e) {
-                    print('⚠️ Error en sincronización (no crítico): $e');
-                  });
-                } catch (e) {
-                  print('⚠️ Error iniciando sincronización: $e');
+            final boot = RepartidorBootCacheService.instance;
+            if (user != null) {
+              await boot.saveEmpresa(
+                authUserId: user.id,
+                nombre: empresaNombre,
+                logoUrl: empresaLogoUrl,
+              );
+              if (empresaLogoUrl != null && empresaLogoUrl.isNotEmpty) {
+                final local =
+                    await boot.cacheLogoToDisk(empresaLogoUrl, user.id);
+                if (local != null) {
+                  await boot.saveEmpresa(
+                    authUserId: user.id,
+                    nombre: empresaNombre,
+                    logoUrl: empresaLogoUrl,
+                    logoLocalPath: local,
+                  );
                 }
               }
-              await Future.delayed(const Duration(milliseconds: 400));
-
-              // PASO 8: Completado (100%)
-              updateProgress(1.0, 'Completado');
-              await Future.delayed(const Duration(milliseconds: 200));
-
-              print('✅ Precarga de datos completada exitosamente');
-            } catch (e) {
-              print('❌ Error en precarga de datos: $e');
-              // Continuar de todas formas, los datos se cargarán en la pantalla principal
-              updateProgress(1.0, 'Error en carga, continuando...');
             }
+            await boot.runBootLoad(updateProgress: updateProgress);
           },
           onComplete: () {
-            // Navegar a pantalla principal cuando la carga esté completa
             if (mounted) {
               Navigator.of(context).pushReplacement(
                 MaterialPageRoute(

@@ -1,0 +1,240 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../main.dart';
+import 'offline_storage_service.dart';
+import 'repartidor_ordenes_boot_fetch_service.dart';
+import 'repartidor_pantallas_offline_service.dart';
+import 'sync_service.dart';
+
+/// Resultado de branding de empresa para splash / loading.
+class RepartidorEmpresaBootInfo {
+  final String? nombre;
+  final String? logoUrl;
+  final String? logoLocalPath;
+
+  const RepartidorEmpresaBootInfo({
+    this.nombre,
+    this.logoUrl,
+    this.logoLocalPath,
+  });
+}
+
+/// Precarga y caché offline al arrancar (estilo app móvil):
+/// empresa, logo en disco, órdenes cacheadas, storage offline y sync.
+class RepartidorBootCacheService {
+  RepartidorBootCacheService._();
+  static final RepartidorBootCacheService instance =
+      RepartidorBootCacheService._();
+
+  static const _empresaKeyPrefix = 'cached_empresa_boot_';
+
+  /// Lee branding guardado (funciona sin internet).
+  Future<RepartidorEmpresaBootInfo?> loadEmpresaCached(String authUserId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('$_empresaKeyPrefix$authUserId');
+      if (raw == null || raw.isEmpty) return null;
+      final m = jsonDecode(raw) as Map<String, dynamic>;
+      final local = m['logoLocalPath']?.toString();
+      final localOk = local != null &&
+          local.isNotEmpty &&
+          !kIsWeb &&
+          File(local).existsSync();
+      return RepartidorEmpresaBootInfo(
+        nombre: m['nombre']?.toString(),
+        logoUrl: m['logoUrl']?.toString(),
+        logoLocalPath: localOk ? local : null,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> saveEmpresa({
+    required String authUserId,
+    String? nombre,
+    String? logoUrl,
+    String? logoLocalPath,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        '$_empresaKeyPrefix$authUserId',
+        jsonEncode({
+          'nombre': nombre,
+          'logoUrl': logoUrl,
+          'logoLocalPath': logoLocalPath,
+          'saved_at': DateTime.now().toIso8601String(),
+        }),
+      );
+    } catch (e) {
+      print('⚠️ saveEmpresa boot: $e');
+    }
+  }
+
+  /// Descarga el logo a disco para mostrarlo offline en la pantalla de carga.
+  Future<String?> cacheLogoToDisk(String logoUrl, String authUserId) async {
+    if (kIsWeb || logoUrl.trim().isEmpty) return null;
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File('${dir.path}/empresa_logo_$authUserId.bin');
+      final res = await http.get(Uri.parse(logoUrl)).timeout(
+            const Duration(seconds: 12),
+          );
+      if (res.statusCode >= 200 && res.statusCode < 300 && res.bodyBytes.isNotEmpty) {
+        await file.writeAsBytes(res.bodyBytes, flush: true);
+        return file.path;
+      }
+    } catch (e) {
+      print('⚠️ cacheLogoToDisk: $e');
+    }
+    return null;
+  }
+
+  /// Hidrata empresa: disco → red (si hay) → guarda.
+  Future<RepartidorEmpresaBootInfo> resolveEmpresa({
+    required String authUserId,
+  }) async {
+    final cached = await loadEmpresaCached(authUserId);
+    final sync = SyncService();
+
+    if (!sync.isOnline) {
+      return cached ?? const RepartidorEmpresaBootInfo();
+    }
+
+    try {
+      final usuarioData = await supabase
+          .from('usuarios')
+          .select('tenant_id')
+          .eq('auth_id', authUserId)
+          .maybeSingle();
+      final tenantId = usuarioData?['tenant_id'] as String?;
+      if (tenantId == null || tenantId.isEmpty) {
+        return cached ?? const RepartidorEmpresaBootInfo();
+      }
+
+      final tenantData = await supabase
+          .from('tenants')
+          .select('nombre, logo_url')
+          .eq('id', tenantId)
+          .maybeSingle();
+
+      final nombre = tenantData?['nombre']?.toString();
+      final logoUrl = tenantData?['logo_url']?.toString();
+      String? localPath = cached?.logoLocalPath;
+      if (logoUrl != null && logoUrl.isNotEmpty) {
+        if (localPath == null || cached?.logoUrl != logoUrl) {
+          localPath = await cacheLogoToDisk(logoUrl, authUserId) ?? localPath;
+        }
+      }
+
+      await saveEmpresa(
+        authUserId: authUserId,
+        nombre: nombre,
+        logoUrl: logoUrl,
+        logoLocalPath: localPath,
+      );
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('cached_tenant_id_$authUserId', tenantId);
+      if (nombre != null && nombre.isNotEmpty) {
+        await prefs.setString('cached_tenant_nombre_$authUserId', nombre);
+      }
+
+      return RepartidorEmpresaBootInfo(
+        nombre: nombre ?? cached?.nombre,
+        logoUrl: logoUrl ?? cached?.logoUrl,
+        logoLocalPath: localPath,
+      );
+    } catch (e) {
+      print('⚠️ resolveEmpresa online falló, usando caché: $e');
+      return cached ?? const RepartidorEmpresaBootInfo();
+    }
+  }
+
+  /// Pipeline de carga al entrar (login o sesión restaurada).
+  Future<void> runBootLoad({
+    required void Function(double progress, String message) updateProgress,
+  }) async {
+    final syncService = SyncService();
+
+    updateProgress(0.05, 'Inicializando sistema...');
+    await syncService.initialize();
+    await OfflineStorageService().initialize();
+
+    updateProgress(0.15, 'Verificando sesión...');
+    final user = supabase.auth.currentUser;
+    if (user == null) {
+      updateProgress(1.0, 'Sin sesión');
+      return;
+    }
+
+    updateProgress(0.28, 'Cargando empresa...');
+    final empresa = await resolveEmpresa(authUserId: user.id);
+    if (empresa.nombre != null || empresa.logoUrl != null) {
+      print(
+        '🏢 Boot empresa: ${empresa.nombre} '
+        '(logo local: ${empresa.logoLocalPath != null})',
+      );
+    }
+
+    updateProgress(0.40, 'Cargando órdenes…');
+    final nOrdenes =
+        await RepartidorOrdenesBootFetchService.instance.fetchAndCacheForBoot(
+      onStatus: (msg) {
+        // Mantener progreso en zona de órdenes mientras descarga.
+        updateProgress(0.55, msg);
+      },
+    );
+    updateProgress(
+      0.65,
+      nOrdenes > 0
+          ? '$nOrdenes órdenes en caché'
+          : (syncService.isOnline
+              ? 'Sin órdenes asignadas'
+              : 'Sin internet · sin órdenes en caché'),
+    );
+
+    updateProgress(0.75, 'Preparando notificaciones...');
+    try {
+      final notif =
+          await RepartidorPantallasOfflineService.cargarNotificaciones(user.id);
+      if (notif != null) {
+        print(
+          '🔔 Notificaciones en caché: '
+          '${notif.ordenes.length + notif.pagos.length + notif.generales.length}',
+        );
+      }
+    } catch (_) {}
+
+    updateProgress(0.88, 'Sincronizando pendientes…');
+    if (syncService.isOnline) {
+      try {
+        unawaited(() async {
+          try {
+            await syncService.syncPendingOperations();
+            print('✅ Sync boot completada');
+          } catch (e) {
+            print('⚠️ Sync boot (no crítico): $e');
+          }
+        }());
+      } catch (e) {
+        print('⚠️ Error iniciando sync boot: $e');
+      }
+    } else {
+      updateProgress(0.92, 'Sin internet · datos locales listos');
+    }
+
+    updateProgress(
+      1.0,
+      nOrdenes > 0 ? 'Listo · $nOrdenes órdenes en caché' : 'Listo',
+    );
+  }
+}

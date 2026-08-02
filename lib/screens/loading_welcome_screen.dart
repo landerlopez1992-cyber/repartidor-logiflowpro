@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../config/app_colors.dart';
+import '../widgets/repartidor_loading_spinner.dart';
 import '../widgets/volonex_dialog.dart';
 
 class LoadingWelcomeScreen extends StatefulWidget {
@@ -218,6 +219,10 @@ class _LoadingWelcomeScreenState extends State<LoadingWelcomeScreen> {
                               ),
                             ),
                           SizedBox(height: landscape ? 20 : 48),
+                          const RepartidorLoadingSpinner.large(
+                            color: AppColors.botonPrincipal,
+                          ),
+                          SizedBox(height: landscape ? 16 : 24),
                           Text(
                             _currentMessage,
                             style: TextStyle(

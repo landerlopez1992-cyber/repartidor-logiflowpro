@@ -165,6 +165,35 @@ class TaxiChoferService {
 
   SupabaseClient get _db => Supabase.instance.client;
 
+  /// Mensajes claros al chofer (sin códigos internos ni dumps técnicos).
+  static String mensajeErrorUsuario(String? raw) {
+    final s = (raw ?? '').trim();
+    final low = s.toLowerCase();
+    if (low.contains('ya_tomado') ||
+        low.contains('otro socio ya') ||
+        low.contains('ya aceptó')) {
+      return 'Otro socio ya tomó este viaje.';
+    }
+    if (low.contains('ya_rechazado') || low.contains('ya rechazaste')) {
+      return 'Ya rechazaste este viaje.';
+    }
+    if (low.contains('no está disponible') || low.contains('no_disponible')) {
+      return 'Este viaje ya no está disponible.';
+    }
+    if (low.contains('tarifa') || low.contains('precio')) {
+      return s.length > 8 && !low.contains('exception')
+          ? s
+          : 'Revisa tu tarifa en Ajustes de taxis e inténtalo de nuevo.';
+    }
+    if (s.isEmpty ||
+        low.contains('exception') ||
+        low.contains('postgrest') ||
+        low.contains('socket')) {
+      return 'No se pudo completar la acción. Inténtalo de nuevo.';
+    }
+    return s;
+  }
+
   Future<TaxiOfertaChofer?> detalleOferta(String solicitudId) async {
     final res = await _db.rpc(
       'taxi_oferta_detalle_chofer',

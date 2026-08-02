@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../config/app_colors.dart';
@@ -6,6 +8,7 @@ import '../services/productos_orden_tienda_service.dart';
 import '../utils/productos_orden_tienda_util.dart';
 
 /// Lista centrada de productos de una compra de tienda (solo órdenes de compra).
+/// Offline-first: pinta caché al instante y refresca en red si hay conexión.
 class ProductosOrdenTiendaScreen extends StatefulWidget {
   const ProductosOrdenTiendaScreen({super.key, required this.orden});
 
@@ -19,6 +22,9 @@ class ProductosOrdenTiendaScreen extends StatefulWidget {
 class _ProductosOrdenTiendaScreenState extends State<ProductosOrdenTiendaScreen> {
   final _svc = ProductosOrdenTiendaService();
   bool _loading = true;
+  bool _refrescando = false;
+  /// Solo true tras fallar la red y usar datos guardados.
+  bool _modoOffline = false;
   String? _error;
   List<ProductoOrdenTiendaLinea> _lineas = [];
   int _total = 0;
@@ -34,33 +40,66 @@ class _ProductosOrdenTiendaScreenState extends State<ProductosOrdenTiendaScreen>
     _cargar();
   }
 
-  Future<void> _cargar() async {
+  void _aplicar(
+    ProductosOrdenTiendaResultado r, {
+    required bool loading,
+    bool marcarOffline = false,
+  }) {
+    if (!r.ok && _lineas.isNotEmpty) {
+      setState(() {
+        _loading = false;
+        _refrescando = false;
+        _modoOffline = true;
+      });
+      return;
+    }
     setState(() {
-      _loading = true;
-      _error = null;
-    });
-    final r = await _svc.cargar(widget.orden.id);
-    if (!mounted) return;
-    setState(() {
-      _loading = false;
+      _loading = loading && r.lineas.isEmpty;
+      _refrescando = false;
       if (!r.ok) {
         _error = r.error ?? 'No se pudieron cargar los productos.';
-        _lineas = [];
-        _total = 0;
+        if (_lineas.isEmpty) {
+          _lineas = [];
+          _total = 0;
+        }
       } else {
+        _error = null;
         _lineas = r.lineas;
         _total = r.totalArticulos;
         _numero = r.numeroOrden ?? widget.orden.numeroOrden;
         _compradorNombre = (r.compradorNombre ?? '').trim().isNotEmpty
             ? r.compradorNombre!.trim()
             : widget.orden.emisor;
-        _compradorAvatar = r.compradorAvatarUrl;
+        _compradorAvatar = r.compradorAvatarUrl ?? _compradorAvatar;
         _destinatarioNombre = (r.destinatarioNombre ?? '').trim().isNotEmpty
             ? r.destinatarioNombre!.trim()
             : widget.orden.receptor;
-        _destinatarioAvatar = r.destinatarioAvatarUrl;
+        _destinatarioAvatar = r.destinatarioAvatarUrl ?? _destinatarioAvatar;
+        _modoOffline = marcarOffline && r.desdeCache;
       }
     });
+  }
+
+  Future<void> _cargar() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+      _modoOffline = false;
+    });
+
+    final cached = await _svc.cargarSoloCache(
+      widget.orden.id,
+      orden: widget.orden,
+    );
+    if (!mounted) return;
+    if (cached != null && cached.ok && cached.lineas.isNotEmpty) {
+      _aplicar(cached, loading: false, marcarOffline: false);
+      setState(() => _refrescando = true);
+    }
+
+    final r = await _svc.cargar(widget.orden.id, orden: widget.orden);
+    if (!mounted) return;
+    _aplicar(r, loading: false, marcarOffline: r.desdeCache);
   }
 
   @override
@@ -75,6 +114,22 @@ class _ProductosOrdenTiendaScreenState extends State<ProductosOrdenTiendaScreen>
           'Productos de la orden',
           style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
         ),
+        actions: [
+          if (_refrescando)
+            const Padding(
+              padding: EdgeInsets.only(right: 12),
+              child: Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.botonPrincipal,
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
       body: SafeArea(
         child: Center(
@@ -82,9 +137,11 @@ class _ProductosOrdenTiendaScreenState extends State<ProductosOrdenTiendaScreen>
             constraints: const BoxConstraints(maxWidth: 420),
             child: _loading
                 ? const Center(
-                    child: CircularProgressIndicator(color: AppColors.botonPrincipal),
+                    child: CircularProgressIndicator(
+                      color: AppColors.botonPrincipal,
+                    ),
                   )
-                : _error != null
+                : _error != null && _lineas.isEmpty
                     ? _errorView()
                     : _contenido(numOrden),
           ),
@@ -123,6 +180,37 @@ class _ProductosOrdenTiendaScreenState extends State<ProductosOrdenTiendaScreen>
   Widget _contenido(String numOrden) {
     return Column(
       children: [
+        if (_modoOffline)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: Container(
+              width: 400,
+              constraints: const BoxConstraints(maxWidth: 400),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.darkElevated,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.offline_pin_outlined,
+                      size: 16, color: AppColors.darkTextMuted),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Sin conexión · datos guardados en el dispositivo',
+                      style: TextStyle(
+                        color: AppColors.darkTextMuted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
           child: Container(
@@ -359,6 +447,41 @@ class _ProductosOrdenTiendaScreenState extends State<ProductosOrdenTiendaScreen>
     return ('${parts[0][0]}${parts[1][0]}').toUpperCase();
   }
 
+  Widget _fotoProducto(ProductoOrdenTiendaLinea p) {
+    final local = (p.imagenLocalPath ?? '').trim();
+    if (local.isNotEmpty) {
+      final f = File(local);
+      if (f.existsSync()) {
+        return Image.file(
+          f,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _fotoRedOPlaceholder(p),
+        );
+      }
+    }
+    return _fotoRedOPlaceholder(p);
+  }
+
+  Widget _fotoRedOPlaceholder(ProductoOrdenTiendaLinea p) {
+    final url = (p.imagenUrl ?? '').trim();
+    if (url.isEmpty || !url.startsWith('http')) {
+      return const Icon(
+        Icons.image_not_supported_outlined,
+        color: AppColors.darkTextMuted,
+        size: 28,
+      );
+    }
+    return Image.network(
+      url,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => const Icon(
+        Icons.broken_image_outlined,
+        color: AppColors.darkTextMuted,
+        size: 28,
+      ),
+    );
+  }
+
   Widget _productoCard(ProductoOrdenTiendaLinea p) {
     final origen = ProductosOrdenTiendaUtil.infoOrigen(p.origen);
     return Center(
@@ -380,18 +503,7 @@ class _ProductosOrdenTiendaScreenState extends State<ProductosOrdenTiendaScreen>
                 width: 72,
                 height: 72,
                 color: AppColors.darkElevated,
-                child: p.imagenUrl == null
-                    ? const Icon(Icons.image_not_supported_outlined,
-                        color: AppColors.darkTextMuted, size: 28)
-                    : Image.network(
-                        p.imagenUrl!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => const Icon(
-                          Icons.broken_image_outlined,
-                          color: AppColors.darkTextMuted,
-                          size: 28,
-                        ),
-                      ),
+                child: _fotoProducto(p),
               ),
             ),
             const SizedBox(width: 12),
@@ -426,11 +538,16 @@ class _ProductosOrdenTiendaScreenState extends State<ProductosOrdenTiendaScreen>
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
                           color: origen.color.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: origen.color.withValues(alpha: 0.5)),
+                          border: Border.all(
+                            color: origen.color.withValues(alpha: 0.5),
+                          ),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,

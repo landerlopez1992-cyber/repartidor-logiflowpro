@@ -4,6 +4,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'ruta_geometria_osrm_service.dart';
+import 'sync_service.dart';
 
 /// Resultado de ruta + ETA (Google Directions con tráfico vía Edge, o OSRM).
 class TaxiDirectionsResult {
@@ -36,12 +37,17 @@ class TaxiDirectionsService {
     if (_tenantId != null && _tenantId!.isNotEmpty) return _tenantId;
     final authId = _db.auth.currentUser?.id;
     if (authId == null) return null;
-    final row = await _db
-        .from('usuarios')
-        .select('tenant_id')
-        .eq('auth_id', authId)
-        .maybeSingle();
-    _tenantId = row?['tenant_id']?.toString();
+    try {
+      final row = await _db
+          .from('usuarios')
+          .select('tenant_id')
+          .eq('auth_id', authId)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 3));
+      _tenantId = row?['tenant_id']?.toString();
+    } catch (_) {
+      return null;
+    }
     return _tenantId;
   }
 
@@ -56,25 +62,52 @@ class TaxiDirectionsService {
     return 2 * r * math.atan2(math.sqrt(h), math.sqrt(1 - h));
   }
 
-  /// Ruta + duración (preferencia: Google con tráfico; fallback OSRM).
+  /// ETA + geometría sin red (línea recta + Haversine).
+  static TaxiDirectionsResult offlineHaversine(LatLng origen, LatLng destino) {
+    final distM = _haversineM(origen, destino);
+    final etaS = (distM / 1000.0 / 32.0 * 3600.0).round().clamp(60, 7200);
+    return TaxiDirectionsResult(
+      points: [origen, destino],
+      durationS: etaS,
+      distanceM: distM.round(),
+      traffic: false,
+      provider: 'offline_haversine',
+    );
+  }
+
+  bool get _pareceOffline {
+    try {
+      return !SyncService().isOnline;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Ruta + duración (preferencia: Google Directions con tráfico vía Edge, o OSRM).
+  /// Sin red o con timeout → geometría local inmediata (nunca cuelga).
   Future<TaxiDirectionsResult> rutaConEta({
     required LatLng origen,
     required LatLng destino,
   }) async {
+    final local = offlineHaversine(origen, destino);
+    if (_pareceOffline) return local;
+
     final tid = await _resolveTenantId();
     if (tid != null && tid.isNotEmpty) {
       try {
-        final res = await _db.functions.invoke(
-          'fetch-product-page-html',
-          body: {
-            'action': 'places_directions',
-            'tenant_id': tid,
-            'origin_lat': origen.latitude,
-            'origin_lng': origen.longitude,
-            'dest_lat': destino.latitude,
-            'dest_lng': destino.longitude,
-          },
-        );
+        final res = await _db.functions
+            .invoke(
+              'fetch-product-page-html',
+              body: {
+                'action': 'places_directions',
+                'tenant_id': tid,
+                'origin_lat': origen.latitude,
+                'origin_lng': origen.longitude,
+                'dest_lat': destino.latitude,
+                'dest_lng': destino.longitude,
+              },
+            )
+            .timeout(const Duration(seconds: 5));
         final data = res.data;
         if (res.status == 200 && data is Map && data['ok'] == true) {
           final pts = <LatLng>[];
@@ -104,20 +137,22 @@ class TaxiDirectionsService {
       } catch (_) {}
     }
 
-    // Fallback local OSRM (sin tráfico en vivo).
-    final geom = await RutaGeometriaOsrmService.obtenerGeometriaConduccion([
-      origen,
-      destino,
-    ]);
-    final distM = _haversineM(origen, destino);
-    final etaS = (distM / 1000.0 / 32.0 * 3600.0).round().clamp(60, 7200);
-    return TaxiDirectionsResult(
-      points: geom.length >= 2 ? geom : [origen, destino],
-      durationS: etaS,
-      distanceM: distM.round(),
-      traffic: false,
-      provider: 'osrm_local',
-    );
+    // Fallback OSRM (timeout corto; si falla → local).
+    try {
+      final geom = await RutaGeometriaOsrmService.obtenerGeometriaConduccion([
+        origen,
+        destino,
+      ]).timeout(const Duration(seconds: 6), onTimeout: () => [origen, destino]);
+      return TaxiDirectionsResult(
+        points: geom.length >= 2 ? geom : local.points,
+        durationS: local.durationS,
+        distanceM: local.distanceM,
+        traffic: false,
+        provider: geom.length >= 2 ? 'osrm_local' : 'offline_haversine',
+      );
+    } catch (_) {
+      return local;
+    }
   }
 
   /// Texto ETA para UI del chofer.

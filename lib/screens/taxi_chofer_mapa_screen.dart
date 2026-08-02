@@ -208,16 +208,8 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
 
   Future<void> _toggleBuscando() async {
     final next = !_buscando;
-    try {
-      if (next) {
-        await TaxiBuscandoSonidoService.alActivar();
-      } else {
-        await TaxiBuscandoSonidoService.alDesactivar();
-      }
-    } catch (e) {
-      debugPrint('⚠️ Sonido buscando viajes: $e');
-    }
     if (next) {
+      // Primero GPS + disponibilidad; el sonido solo si quedó activo de verdad.
       final gps = await _iniciarGpsMatching();
       if (!gps.ok) {
         if (!mounted) return;
@@ -247,7 +239,17 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
         );
         return;
       }
+      try {
+        await TaxiBuscandoSonidoService.alActivar();
+      } catch (e) {
+        debugPrint('⚠️ Sonido buscando viajes: $e');
+      }
     } else {
+      try {
+        await TaxiBuscandoSonidoService.alDesactivar();
+      } catch (e) {
+        debugPrint('⚠️ Sonido buscando viajes: $e');
+      }
       await TaxiBuscandoPrefs.setActivo(false);
       await TaxiTarifasChoferService.instance.setDisponible(false);
       _pararPublicacionGps();

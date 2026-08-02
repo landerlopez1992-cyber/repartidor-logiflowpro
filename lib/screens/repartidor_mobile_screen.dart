@@ -57,6 +57,7 @@ import '../services/firebase_messaging_service.dart';
 import '../utils/entrega_vendedor_filtro.dart';
 import '../utils/orden_tipo_tarjeta_repartidor.dart';
 import '../widgets/boton_ver_productos_orden_tienda.dart';
+import '../services/productos_orden_tienda_service.dart';
 import '../utils/orden_recogida_colaborador_ui.dart';
 import '../utils/remesa_pura_entrega_ui.dart';
 import '../widgets/volonex_dialog.dart';
@@ -1574,6 +1575,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                     serverCount: ordenesCargadas.length,
                   );
             final listaFinal = _aplicarFiltroProvincias(listaFinalRaw);
+            if (syncService.isOnline) {
+              // ignore: unawaited_futures
+              ProductosOrdenTiendaPrecarga.desdeOrdenes(listaFinal);
+            }
             
             if (mounted) {
             setState(() {
@@ -1785,6 +1790,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   serverCount: ordenesCargadas.length,
                 );
           final listaFinal = _aplicarFiltroProvincias(listaFinalRaw);
+          if (syncService.isOnline) {
+            // ignore: unawaited_futures
+            ProductosOrdenTiendaPrecarga.desdeOrdenes(listaFinal);
+          }
 
           if (mounted) {
             setState(() {
@@ -4580,71 +4589,82 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header con número de remesa y estado
+              // Header con número de remesa y estado (sin overflow)
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      _buildBadgeSecuenciaCercania(orden),
-                      if (_modoOrdenCercania &&
-                          _secuenciaCercania.containsKey(orden.id))
-                        const SizedBox(width: 8),
-                      // Badge de REMESA
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFFFFD700), Color(0xFFFFA500)],
+                  Expanded(
+                    child: Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        _buildBadgeSecuenciaCercania(orden),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
                           ),
-                          borderRadius: BorderRadius.circular(6),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFFFFD700).withOpacity(0.5),
-                              blurRadius: 4,
-                              offset: const Offset(0, 2),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFFFFD700), Color(0xFFFFA500)],
                             ),
-                          ],
+                            borderRadius: BorderRadius.circular(6),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFFFFD700).withOpacity(0.5),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.attach_money,
+                                  color: Colors.white, size: 14),
+                              SizedBox(width: 4),
+                              Text(
+                                'REMESA',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.attach_money, color: Colors.white, size: 14),
-                            const SizedBox(width: 4),
-                            Text(
-                              'REMESA',
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 160),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: RemesaPuraUiTheme.fondoDestacado,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                color: RemesaPuraUiTheme.borde.withOpacity(0.5),
+                              ),
+                            ),
+                            child: Text(
+                              '#${numeroRemesa ?? (orden.id.length > 8 ? orden.id.substring(0, 8) : orden.id)}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
+                                color: RemesaPuraUiTheme.acento,
+                                fontSize: 12,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      // Número de remesa
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: RemesaPuraUiTheme.fondoDestacado,
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(
-                            color: RemesaPuraUiTheme.borde.withOpacity(0.5),
                           ),
                         ),
-                        child: Text(
-                          '#${numeroRemesa ?? (orden.id.length > 8 ? orden.id.substring(0, 8) : orden.id)}',
-                          style: const TextStyle(
-                            color: RemesaPuraUiTheme.acento,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                  // Chip de estado (solo POR ENVIAR o ENTREGADO)
+                  const SizedBox(width: 8),
                   _buildRemesaStatusChip(estado),
                 ],
               ),
@@ -4899,38 +4919,47 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header: número a la izquierda; estado + foto a la derecha (foto debajo del estado)
+              // Header: número (flexible) + estado; evita overflow con #ORD-… largos.
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: Row(
+                    child: Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 6,
+                      runSpacing: 6,
                       children: [
                         _buildBadgeSecuenciaCercania(orden),
-                        if (_modoOrdenCercania &&
-                            _secuenciaCercania.containsKey(orden.id))
-                          const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: tipoInfo.colorAcento,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            '#${orden.numeroOrden.isNotEmpty ? orden.numeroOrden : (orden.id.length > 8 ? orden.id.substring(0, 8) : orden.id)}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 168),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: tipoInfo.colorAcento,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '#${orden.numeroOrden.isNotEmpty ? orden.numeroOrden : (orden.id.length > 8 ? orden.id.substring(0, 8) : orden.id)}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
                         ),
-                        const SizedBox(width: 6),
                         _buildChipTipoOrden(tipoInfo),
-                        if (esUrgente) ...[
-                          const SizedBox(width: 6),
+                        if (esUrgente)
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 1,
+                            ),
                             decoration: BoxDecoration(
                               color: const Color(0xFFDC2626),
                               borderRadius: BorderRadius.circular(3),
@@ -4951,7 +4980,6 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                               ],
                             ),
                           ),
-                        ],
                       ],
                     ),
                   ),
@@ -4960,69 +4988,80 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                     crossAxisAlignment: CrossAxisAlignment.end,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (orden.requiereFirma)
-                            Container(
-                              margin: const EdgeInsets.only(right: 4),
-                              padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF9C27B0).withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: const Color(0xFF9C27B0),
-                                  width: 1.5,
-                                ),
-                              ),
-                              child: const Icon(
-                                Icons.edit,
-                                color: Color(0xFF9C27B0),
-                                size: 14,
-                              ),
-                            ),
-                          if (orden.tieneRemesa)
-                            Container(
-                              margin: const EdgeInsets.only(right: 4),
-                              padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF2196F3).withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: const Color(0xFF2196F3),
-                                  width: 1.5,
-                                ),
-                              ),
-                              child: const Icon(
-                                Icons.attach_money,
-                                color: Color(0xFF2196F3),
-                                size: 14,
-                              ),
-                            ),
-                          if (orden.requierePago && !orden.pagado)
-                            Container(
-                              margin: const EdgeInsets.only(right: 4),
-                              padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFFF9800).withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: const Color(0xFFFF9800),
-                                  width: 1.5,
-                                ),
-                              ),
-                              child: const Icon(
-                                Icons.payment,
-                                color: Color(0xFFFF9800),
-                                size: 14,
-                              ),
-                            ),
-                          _buildStatusChip(
-                            OrdenRecogidaColaboradorUi.estadoVisibleRepartidor(orden),
-                            esAtrasada,
-                          ),
-                        ],
+                      _buildStatusChip(
+                        OrdenRecogidaColaboradorUi.estadoVisibleRepartidor(
+                          orden,
+                        ),
+                        esAtrasada,
                       ),
+                      if (orden.requiereFirma ||
+                          orden.tieneRemesa ||
+                          (orden.requierePago && !orden.pagado))
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (orden.requiereFirma)
+                                Container(
+                                  margin: const EdgeInsets.only(left: 4),
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF9C27B0)
+                                        .withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: const Color(0xFF9C27B0),
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  child: const Icon(
+                                    Icons.edit,
+                                    color: Color(0xFF9C27B0),
+                                    size: 14,
+                                  ),
+                                ),
+                              if (orden.tieneRemesa)
+                                Container(
+                                  margin: const EdgeInsets.only(left: 4),
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF2196F3)
+                                        .withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: const Color(0xFF2196F3),
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  child: const Icon(
+                                    Icons.attach_money,
+                                    color: Color(0xFF2196F3),
+                                    size: 14,
+                                  ),
+                                ),
+                              if (orden.requierePago && !orden.pagado)
+                                Container(
+                                  margin: const EdgeInsets.only(left: 4),
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFF9800)
+                                        .withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: const Color(0xFFFF9800),
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  child: const Icon(
+                                    Icons.payment,
+                                    color: Color(0xFFFF9800),
+                                    size: 14,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
                       FutureBuilder<String?>(
                         future: EntregaFotoUtil.resolverUrlFoto(orden),
                         builder: (context, snap) {
@@ -5445,24 +5484,16 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 ),
               ],
 
-              // Mostrar botón de acción si no está en estado final
+              // Botón de acción compacto (centrado, sin estirar).
               if (_esRecolector) ...[
-                // Para recolectores: mostrar botón si no está RECOGIDO o CANCELADA
                 if (orden.estado != 'RECOGIDO' && orden.estado != 'CANCELADA') ...[
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: _buildBotonAccion(orden),
-                  ),
+                  const SizedBox(height: 10),
+                  Center(child: _buildBotonAccion(orden)),
                 ],
               ] else ...[
-                // Para repartidores: mostrar botón si no está ENTREGADO o CANCELADA
                 if (orden.estado != 'ENTREGADO' && orden.estado != 'CANCELADA') ...[
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: _buildBotonAccion(orden),
-                  ),
+                  const SizedBox(height: 10),
+                  Center(child: _buildBotonAccion(orden)),
                 ],
               ],
               
@@ -5470,28 +5501,34 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   orden.tipoOrden != 'RECOGIDA' &&
                   !OrdenRecogidaColaboradorUi.esRecogidaColaborador(orden)) ...[
                 const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFF3E0),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFFFF9800), width: 1.5),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.lock_outline, color: const Color(0xFFFF9800), size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _obtenerMensajeOrdenBloqueada(),
-                          style: TextStyle(
-                            color: const Color(0xFFE65100),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 340),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF3E0),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFFF9800), width: 1.5),
                       ),
-                    ],
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.lock_outline, color: Color(0xFFFF9800), size: 20),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              _obtenerMensajeOrdenBloqueada(),
+                              style: const TextStyle(
+                                color: Color(0xFFE65100),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -6231,210 +6268,179 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     }
   }
 
+  /// Estilo compacto para botones de acción en tarjetas (sin estirar).
+  ButtonStyle _estiloBotonTarjetaOrden(Color bg) {
+    return ElevatedButton.styleFrom(
+      backgroundColor: bg,
+      foregroundColor: Colors.white,
+      elevation: 0,
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+      minimumSize: Size.zero,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+      ),
+    );
+  }
+
+  Widget _botonTarjetaOrden({
+    required VoidCallback onPressed,
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return ElevatedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 18),
+      label: Text(
+        label,
+        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+      ),
+      style: _estiloBotonTarjetaOrden(color),
+    );
+  }
+
   Widget _buildBotonAccion(Orden orden) {
     // Botones específicos para recolectores
     if (_esRecolector) {
       switch (orden.estado) {
         case 'POR RECOGER':
-          // El recolector puede cambiar de "POR RECOGER" a "EN CAMINO"
-          return ElevatedButton.icon(
+          return _botonTarjetaOrden(
             onPressed: () => _marcarComoEnCamino(orden),
-            icon: const Icon(Icons.directions_car, size: 18),
-            label: const Text('En Camino'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFF9800),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
+            icon: Icons.directions_car,
+            label: 'En Camino',
+            color: const Color(0xFFFF9800),
           );
-        
+
         case 'EN CAMINO':
-          // El recolector puede cambiar de "EN CAMINO" a "RECOGIDO"
-          return ElevatedButton.icon(
+          return _botonTarjetaOrden(
             onPressed: () => _marcarComoRecogido(orden),
-            icon: const Icon(Icons.check_circle, size: 18),
-            label: const Text('Marcar Recogido'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4CAF50),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
+            icon: Icons.check_circle,
+            label: 'Marcar Recogido',
+            color: const Color(0xFF4CAF50),
           );
-        
+
         case 'RECOGIDO':
-          // Ya recogido, no hay acción disponible
-          return Container();
-        
+          return const SizedBox.shrink();
+
         default:
-          return Container();
+          return const SizedBox.shrink();
       }
     }
-    
-    // Botones para repartidores (estados normales de envío)
+
+    // Botones para repartidores
     switch (orden.estado) {
       case 'POR ENVIAR':
         if (OrdenRecogidaColaboradorUi.puedeIniciarRecolecta(orden)) {
-          return ElevatedButton.icon(
+          return _botonTarjetaOrden(
             onPressed: () => _iniciarRecolectaColaborador(orden),
-            icon: const Icon(Icons.directions_car, size: 18),
-            label: const Text('Iniciar recolecta'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1976D2),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
+            icon: Icons.directions_car,
+            label: 'Iniciar recolecta',
+            color: const Color(0xFF1976D2),
           );
         }
         if (OrdenRecogidaColaboradorUi.puedeConfirmarRecogida(orden)) {
-          return ElevatedButton.icon(
+          return _botonTarjetaOrden(
             onPressed: () => _confirmarRecogidaEnColaborador(orden),
-            icon: const Icon(Icons.check_circle_outline, size: 18),
-            label: const Text('Confirmar recogida en colaborador'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2E7D32),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
+            icon: Icons.check_circle_outline,
+            label: 'Confirmar recogida',
+            color: const Color(0xFF2E7D32),
           );
         }
         if (OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(orden)) {
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFE3F2FD),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFF1976D2)),
-            ),
-            child: Text(
-              OrdenRecogidaColaboradorUi.mensajeInfoTarjeta(orden),
-              style: const TextStyle(color: Color(0xFF1565C0), fontSize: 12),
-              textAlign: TextAlign.center,
-            ),
-          );
-        }
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF5F5F5),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFFE0E0E0)),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.lock, color: AppColors.textMutedOnLight, size: 16),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  _obtenerMensajeOrdenEsperandoRecoleccion(orden.repartidor),
-                  style: const TextStyle(
-                    color: AppColors.textMutedOnLight,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ],
-          ),
-        );
-      
-      case 'EN TRANSITO':
-        // El repartidor puede cambiar de "EN TRANSITO" a "EN REPARTO"
-        return ElevatedButton.icon(
-          onPressed: () => _marcarComoEnReparto(orden),
-          icon: const Icon(Icons.local_shipping, size: 18),
-          label: const Text('Iniciar Reparto'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFFFF9800),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-        );
-      
-      case 'EN REPARTO':
-        // Si es recogida en sucursal, mostrar "Listo para recoger" en lugar de "Marcar Entregado"
-        if (orden.recogerEnSucursal) {
-          return ElevatedButton.icon(
-            onPressed: () => _marcarComoListoParaRecoger(orden),
-            icon: const Icon(Icons.store, size: 18),
-            label: const Text('Listo para recoger'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFF9800), // Naranja para "Listo para recoger"
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(
+          return ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 320),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE3F2FD),
                 borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFF1976D2)),
+              ),
+              child: Text(
+                OrdenRecogidaColaboradorUi.mensajeInfoTarjeta(orden),
+                style: const TextStyle(color: Color(0xFF1565C0), fontSize: 12),
+                textAlign: TextAlign.center,
               ),
             ),
           );
         }
-        // El repartidor puede cambiar de "EN REPARTO" a "ENTREGADO" (orden normal)
-        return ElevatedButton.icon(
-          onPressed: () => _marcarComoEntregado(orden),
-          icon: const Icon(Icons.check_circle, size: 18),
-          label: const Text('Marcar Entregado'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF4CAF50),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            shape: RoundedRectangleBorder(
+        return ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF5F5F5),
               borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFE0E0E0)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.lock, color: AppColors.textMutedOnLight, size: 16),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    _obtenerMensajeOrdenEsperandoRecoleccion(orden.repartidor),
+                    style: const TextStyle(
+                      color: AppColors.textMutedOnLight,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
             ),
           ),
         );
-      
-      case 'LISTO PARA RECOGER':
-        // Después de "LISTO PARA RECOGER", se puede marcar como "ENTREGADO"
-        return ElevatedButton.icon(
-          onPressed: () => _marcarComoEntregado(orden),
-          icon: const Icon(Icons.check_circle, size: 18),
-          label: const Text('Marcar Entregado'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF4CAF50),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-        );
-      
-      case 'ATRASADO':
-        // Si está atrasado pero está en "EN TRANSITO", puede iniciar reparto
-        return ElevatedButton.icon(
+
+      case 'EN TRANSITO':
+        return _botonTarjetaOrden(
           onPressed: () => _marcarComoEnReparto(orden),
-          icon: const Icon(Icons.local_shipping, size: 18),
-          label: const Text('Iniciar Reparto'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFFFF9800),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
+          icon: Icons.local_shipping,
+          label: 'Iniciar Reparto',
+          color: const Color(0xFFFF9800),
         );
-      
+
+      case 'EN REPARTO':
+        if (orden.recogerEnSucursal) {
+          return _botonTarjetaOrden(
+            onPressed: () => _marcarComoListoParaRecoger(orden),
+            icon: Icons.store,
+            label: 'Listo para recoger',
+            color: const Color(0xFFFF9800),
+          );
+        }
+        return _botonTarjetaOrden(
+          onPressed: () => _marcarComoEntregado(orden),
+          icon: Icons.check_circle,
+          label: 'Marcar Entregado',
+          color: const Color(0xFF4CAF50),
+        );
+
+      case 'LISTO PARA RECOGER':
+        return _botonTarjetaOrden(
+          onPressed: () => _marcarComoEntregado(orden),
+          icon: Icons.check_circle,
+          label: 'Marcar Entregado',
+          color: const Color(0xFF4CAF50),
+        );
+
+      case 'ATRASADO':
+        return _botonTarjetaOrden(
+          onPressed: () => _marcarComoEnReparto(orden),
+          icon: Icons.local_shipping,
+          label: 'Iniciar Reparto',
+          color: const Color(0xFFFF9800),
+        );
+
       default:
-        return Container();
+        return const SizedBox.shrink();
     }
   }
+
 
   void _actualizarOrdenEnLista(Orden orden) {
     if (!mounted) return;
