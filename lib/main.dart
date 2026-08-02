@@ -78,6 +78,7 @@ final supabase = Supabase.instance.client;
 
 /// Último auth_id de repartidor con sesión válida en caché (arranque offline).
 const kLastRepartidorAuthIdKey = 'last_repartidor_auth_id';
+const kRepartidorOfflineSessionKey = 'repartidor_offline_session_v1';
 
 class RepartidorApp extends StatelessWidget {
   const RepartidorApp({super.key});
@@ -166,25 +167,73 @@ class _AuthWrapperState extends State<AuthWrapper> {
     }
   }
 
+  /// Wi‑Fi/datos activos no bastan: hace falta internet real.
+  /// Ante duda → offline (prioridad caché / no pedir login).
   Future<bool> _hayRed() async {
     try {
       final r = await Connectivity()
           .checkConnectivity()
           .timeout(const Duration(seconds: 2));
-      if (r.isEmpty) return false;
-      return !r.every((e) => e == ConnectivityResult.none);
+      if (r.isEmpty || r.every((e) => e == ConnectivityResult.none)) {
+        return false;
+      }
     } catch (_) {
-      // Ante duda en arranque: asumir offline (prioridad caché).
+      return false;
+    }
+    try {
+      return await RepartidorConnectivity.hasInternetForSplash()
+          .timeout(const Duration(seconds: 3), onTimeout: () => false);
+    } catch (_) {
       return false;
     }
   }
 
-  /// Busca cualquier `cached_user_data_*` de repartidor (instala viejas sin last_id).
+  Future<void> _guardarSesionOfflineValidada(
+    SharedPreferences prefs,
+    String userId, {
+    Map<String, dynamic>? userData,
+  }) async {
+    await prefs.setString(kLastRepartidorAuthIdKey, userId);
+    await prefs.setString(
+      kRepartidorOfflineSessionKey,
+      jsonEncode({
+        'auth_id': userId,
+        'rol': 'REPARTIDOR',
+        'user_data': userData,
+        'validated_at': DateTime.now().toIso8601String(),
+      }),
+    );
+  }
+
+  String? _authIdSesionOfflineValidada(SharedPreferences prefs) {
+    try {
+      final raw = prefs.getString(kRepartidorOfflineSessionKey);
+      if (raw == null || raw.isEmpty) return null;
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      if (data['rol']?.toString().toUpperCase() != 'REPARTIDOR') return null;
+      final id = data['auth_id']?.toString();
+      return id == null || id.isEmpty ? null : id;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Busca la última sesión que ya fue validada como REPARTIDOR.
   Future<String?> _buscarAuthIdEnCache(SharedPreferences prefs) async {
+    final validated = _authIdSesionOfflineValidada(prefs);
+    if (validated != null) return validated;
+
     final last = prefs.getString(kLastRepartidorAuthIdKey);
     if (last != null && last.isNotEmpty) {
       final raw = prefs.getString('cached_user_data_$last');
-      if (raw != null && raw.isNotEmpty) return last;
+      if (raw != null && raw.isNotEmpty) {
+        await _guardarSesionOfflineValidada(prefs, last);
+        return last;
+      }
+      // Compatibilidad con instalaciones anteriores: este ID únicamente se
+      // guardaba después de verificar el rol REPARTIDOR y se borra al logout.
+      await _guardarSesionOfflineValidada(prefs, last);
+      return last;
     }
     for (final key in prefs.getKeys()) {
       if (!key.startsWith('cached_user_data_')) continue;
@@ -195,7 +244,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         if (raw == null || raw.isEmpty) continue;
         final m = jsonDecode(raw) as Map<String, dynamic>;
         if (m['rol']?.toString().toUpperCase() == 'REPARTIDOR') {
-          await prefs.setString(kLastRepartidorAuthIdKey, id);
+          await _guardarSesionOfflineValidada(prefs, id, userData: m);
           return id;
         }
       } catch (_) {}
@@ -203,17 +252,63 @@ class _AuthWrapperState extends State<AuthWrapper> {
     return null;
   }
 
+  bool _rolExplicitoNoRepartidor(String? rol) {
+    final r = (rol ?? '').toUpperCase().trim();
+    if (r.isEmpty) return false;
+    return r != 'REPARTIDOR';
+  }
+
+  /// Entra a la app con un auth_id ya conocido. Solo rechaza si el caché
+  /// dice explícitamente otro rol (admin/empleado/etc.).
   Future<bool> _entrarDesdeCache(String userId) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final cachedUserData = prefs.getString('cached_user_data_$userId');
-      if (cachedUserData == null || cachedUserData.isEmpty) return false;
+      Map<String, dynamic>? userData;
+      if (cachedUserData != null && cachedUserData.isNotEmpty) {
+        try {
+          userData = jsonDecode(cachedUserData) as Map<String, dynamic>;
+        } catch (_) {}
+      }
+      if (userData == null) {
+        final rawSession = prefs.getString(kRepartidorOfflineSessionKey);
+        if (rawSession != null && rawSession.isNotEmpty) {
+          try {
+            final sessionData =
+                jsonDecode(rawSession) as Map<String, dynamic>;
+            final embedded = sessionData['user_data'];
+            if (embedded is Map) {
+              userData = Map<String, dynamic>.from(embedded);
+            }
+          } catch (_) {}
+        }
+      }
+      userData ??= <String, dynamic>{
+        'auth_id': userId,
+        'rol': 'REPARTIDOR',
+      };
+      // Si falta rol en JSON viejo, asumir REPARTIDOR (esta app solo es para socios).
+      final rolRaw = userData['rol']?.toString();
+      if (_rolExplicitoNoRepartidor(rolRaw)) {
+        print('⛔ Caché indica rol no repartidor ($rolRaw) → no restaurar');
+        return false;
+      }
+      userData['rol'] = 'REPARTIDOR';
+      userData['auth_id'] ??= userId;
 
-      final userData = jsonDecode(cachedUserData) as Map<String, dynamic>;
-      final rol = userData['rol']?.toString().toUpperCase();
-      if (rol != 'REPARTIDOR') return false;
-
-      await prefs.setString(kLastRepartidorAuthIdKey, userId);
+      await _guardarSesionOfflineValidada(
+        prefs,
+        userId,
+        userData: userData,
+      );
+      // Asegurar fila de perfil aunque el JSON viniera incompleto.
+      if (prefs.getString('cached_user_data_$userId') == null ||
+          (prefs.getString('cached_user_data_$userId') ?? '').isEmpty) {
+        await prefs.setString(
+          'cached_user_data_$userId',
+          jsonEncode(userData),
+        );
+      }
       final suspendidoCache = RepartidorSuspensionService.esSuspendidoFlag(
         userData['cuenta_suspendida'],
       );
@@ -287,28 +382,37 @@ class _AuthWrapperState extends State<AuthWrapper> {
         setState(() => _splashMessage = 'Comprobando sesión…');
       }
 
-      final online = await _hayRed();
       final prefs = await SharedPreferences.getInstance();
       final cachedId = await _buscarAuthIdEnCache(prefs);
       final session = supabase.auth.currentSession;
       final sessionUserId =
           session?.user.id ?? supabase.auth.currentUser?.id;
 
-      // ——— SIN INTERNET: solo caché, nunca refresh ni login forzado ———
-      if (!online) {
-        print('📴 Arranque sin red → sesión desde caché');
-        if (mounted) {
-          setState(() => _splashMessage = 'Sin internet · cargando caché…');
-        }
-        if (cachedId != null && await _entrarDesdeCache(cachedId)) {
-          return;
-        }
-        if (sessionUserId != null &&
-            await _entrarDesdeCache(sessionUserId)) {
-          return;
-        }
-        if (await _entrarDesdeCualquierCache()) return;
+      // Candidatos de sesión local (orden de preferencia).
+      final candidatos = <String>[
+        if (cachedId != null && cachedId.isNotEmpty) cachedId,
+        if (sessionUserId != null && sessionUserId.isNotEmpty) sessionUserId,
+      ];
+      // Deduplicar.
+      final ids = <String>{...candidatos}.toList();
 
+      // REGLA ABSOLUTA: si hay cualquier auth_id local, abrir la app YA.
+      // Nunca pedir login por falta de internet / token caducado.
+      for (final id in ids) {
+        if (await _entrarDesdeCache(id)) {
+          unawaited(_verifyAndUpdateCache(id));
+          return;
+        }
+      }
+      if (await _entrarDesdeCualquierCache()) {
+        return;
+      }
+
+      final online = await _hayRed();
+
+      // ——— SIN INTERNET y sin rastro local → solo entonces login ———
+      if (!online) {
+        print('📴 Arranque sin red y sin sesión local → login');
         if (mounted) {
           setState(() {
             _isAuthenticated = false;
@@ -319,7 +423,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         return;
       }
 
-      // ——— CON INTERNET ———
+      // ——— CON INTERNET y sin caché usable ———
       var activeSession = session;
 
       if (activeSession != null && activeSession.expiresAt != null) {
@@ -328,7 +432,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
         );
         if (DateTime.now().isAfter(expiresAt)) {
           final userId = activeSession.user.id;
-          // Preferir caché inmediata; refresh en segundo plano.
           if (await _entrarDesdeCache(userId)) {
             unawaited(() async {
               try {
@@ -359,9 +462,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
         return;
       }
 
-      if (cachedId != null && await _entrarDesdeCache(cachedId)) return;
-      if (await _entrarDesdeCualquierCache()) return;
-
       if (mounted) {
         setState(() {
           _isAuthenticated = false;
@@ -380,13 +480,18 @@ class _AuthWrapperState extends State<AuthWrapper> {
     try {
       print('🔍 Verificando rol de repartidor para usuario: $userId');
 
+      // Siempre intentar entrar con el auth_id conocido (offline-first).
       if (await _entrarDesdeCache(userId)) {
         unawaited(_verifyAndUpdateCache(userId));
         return;
       }
 
       if (!await _hayRed()) {
-        if (await _entrarDesdeCualquierCache()) return;
+        // Sin red: si el auth_id existe, entrar igual (mínimo REPARTIDOR).
+        if (await _entrarDesdeCache(userId) ||
+            await _entrarDesdeCualquierCache()) {
+          return;
+        }
         if (mounted) {
           setState(() {
             _isAuthenticated = false;
@@ -423,11 +528,14 @@ class _AuthWrapperState extends State<AuthWrapper> {
         }
       } catch (e) {
         print('⚠️ Verificación online falló: $e');
+        // Cualquier fallo de red → mantener / restaurar sesión local.
         if (await _entrarDesdeCache(userId) ||
             await _entrarDesdeCualquierCache()) {
           return;
         }
         if (_pareceErrorRed(e)) {
+          // Último recurso: entrar con el auth_id de la sesión Supabase.
+          if (await _entrarDesdeCache(userId)) return;
           if (mounted) {
             setState(() {
               _isAuthenticated = false;
@@ -450,7 +558,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
             'cached_user_data_$userId',
             jsonEncode(userData),
           );
-          await prefs.setString(kLastRepartidorAuthIdKey, userId);
+          await _guardarSesionOfflineValidada(
+            prefs,
+            userId,
+            userData: userData,
+          );
           print('💾 Datos de usuario guardados en caché');
 
           final suspendido = RepartidorSuspensionService.esSuspendidoFlag(
@@ -474,6 +586,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
           await prefs.remove('cached_tenant_id_$userId');
           if (prefs.getString(kLastRepartidorAuthIdKey) == userId) {
             await prefs.remove(kLastRepartidorAuthIdKey);
+            await prefs.remove(kRepartidorOfflineSessionKey);
           }
           print('🧹 Caché del usuario limpiado (no es repartidor)');
           await supabase.auth.signOut();
@@ -539,7 +652,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
             'cached_user_data_$userId',
             jsonEncode(userData),
           );
-          await prefs.setString(kLastRepartidorAuthIdKey, userId);
+          await _guardarSesionOfflineValidada(
+            prefs,
+            userId,
+            userData: userData,
+          );
           print('🔄 Caché actualizado en segundo plano');
           final suspendido = RepartidorSuspensionService.esSuspendidoFlag(
             userData['cuenta_suspendida'],
@@ -547,7 +664,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
           if (mounted && (_isSuspended != suspendido)) {
             setState(() => _isSuspended = suspendido);
           }
-        } else if (rol != null) {
+        } else if (rol != null && _rolExplicitoNoRepartidor(rol)) {
+          // Solo demotar si el servidor confirma otro rol (con internet real).
           await prefs.remove('cached_user_data_$userId');
           await prefs.remove('cached_repartidor_nombre_$userId');
           await prefs.remove('cached_repartidor_master_$userId');
@@ -556,8 +674,9 @@ class _AuthWrapperState extends State<AuthWrapper> {
           await prefs.remove('cached_tenant_id_$userId');
           if (prefs.getString(kLastRepartidorAuthIdKey) == userId) {
             await prefs.remove(kLastRepartidorAuthIdKey);
+            await prefs.remove(kRepartidorOfflineSessionKey);
           }
-          print('🧹 Todos los cachés limpiados (rol cambió)');
+          print('🧹 Caché limpiado: rol en servidor ya no es REPARTIDOR');
           await supabase.auth.signOut();
           if (mounted) {
             setState(() {
@@ -784,6 +903,43 @@ class _LoadingScreenWrapperState extends State<_LoadingScreenWrapper> {
       empresaLogoUrl: _empresaLogoUrl,
       empresaLogoLocalPath: _empresaLogoLocalPath,
       onLoadData: (updateProgress) async {
+        // Reforzar marca de sesión offline antes de precargar datos.
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          final authId = await _resolverAuthUserId();
+          if (authId != null && authId.isNotEmpty) {
+            await prefs.setString(kLastRepartidorAuthIdKey, authId);
+            final raw = prefs.getString('cached_user_data_$authId');
+            Map<String, dynamic> userData = {
+              'auth_id': authId,
+              'rol': 'REPARTIDOR',
+            };
+            if (raw != null && raw.isNotEmpty) {
+              try {
+                userData =
+                    Map<String, dynamic>.from(jsonDecode(raw) as Map);
+                userData['rol'] = 'REPARTIDOR';
+                userData['auth_id'] = authId;
+              } catch (_) {}
+            } else {
+              await prefs.setString(
+                'cached_user_data_$authId',
+                jsonEncode(userData),
+              );
+            }
+            await prefs.setString(
+              kRepartidorOfflineSessionKey,
+              jsonEncode({
+                'auth_id': authId,
+                'rol': 'REPARTIDOR',
+                'user_data': userData,
+                'validated_at': DateTime.now().toIso8601String(),
+              }),
+            );
+          }
+        } catch (e) {
+          print('⚠️ Persist sesión en boot: $e');
+        }
         await RepartidorBootCacheService.instance.runBootLoad(
           updateProgress: updateProgress,
         );

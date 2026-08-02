@@ -2,6 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/orden.dart';
 import '../utils/productos_orden_tienda_util.dart';
+import '../utils/repartidor_requires_online.dart';
 import 'productos_orden_tienda_cache.dart';
 
 class ProductosOrdenTiendaResultado {
@@ -28,6 +29,33 @@ class ProductosOrdenTiendaResultado {
   final String? destinatarioNombre;
   final String? destinatarioAvatarUrl;
   final bool desdeCache;
+
+  ProductosOrdenTiendaResultado copyWith({
+    bool? ok,
+    List<ProductoOrdenTiendaLinea>? lineas,
+    int? totalArticulos,
+    String? numeroOrden,
+    String? error,
+    String? compradorNombre,
+    String? compradorAvatarUrl,
+    String? destinatarioNombre,
+    String? destinatarioAvatarUrl,
+    bool? desdeCache,
+  }) {
+    return ProductosOrdenTiendaResultado(
+      ok: ok ?? this.ok,
+      lineas: lineas ?? this.lineas,
+      totalArticulos: totalArticulos ?? this.totalArticulos,
+      numeroOrden: numeroOrden ?? this.numeroOrden,
+      error: error ?? this.error,
+      compradorNombre: compradorNombre ?? this.compradorNombre,
+      compradorAvatarUrl: compradorAvatarUrl ?? this.compradorAvatarUrl,
+      destinatarioNombre: destinatarioNombre ?? this.destinatarioNombre,
+      destinatarioAvatarUrl:
+          destinatarioAvatarUrl ?? this.destinatarioAvatarUrl,
+      desdeCache: desdeCache ?? this.desdeCache,
+    );
+  }
 }
 
 class ProductosOrdenTiendaService {
@@ -56,9 +84,22 @@ class ProductosOrdenTiendaService {
     if (!forzarRed) {
       cached = await ProductosOrdenTiendaCache.load(id);
       if (cached != null && cached.ok && cached.lineas.isNotEmpty) {
-        // Refresco en segundo plano; el caller ya puede pintar caché.
-        // Aquí devolvemos caché si pedimos solo lectura rápida vía [cargarSoloCache].
+        if (repartidorSinInternet()) {
+          return await ProductosOrdenTiendaCache.enrichWithLocalImages(
+            id,
+            cached.copyWith(desdeCache: true),
+          );
+        }
       }
+    }
+
+    if (repartidorSinInternet()) {
+      return await _fallbackOffline(
+        id,
+        orden: orden,
+        cached: cached,
+        error: 'Sin conexión. Mostrando datos guardados.',
+      );
     }
 
     try {
@@ -67,7 +108,7 @@ class ProductosOrdenTiendaService {
             'repartidor_productos_orden_tienda',
             params: {'p_orden_id': id},
           )
-          .timeout(const Duration(seconds: 18));
+          .timeout(const Duration(seconds: 8));
       if (res is! Map) {
         return await _fallbackOffline(
           id,

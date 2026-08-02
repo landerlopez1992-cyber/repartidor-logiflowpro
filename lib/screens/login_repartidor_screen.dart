@@ -125,25 +125,8 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
     });
 
     try {
-      // 🔒 CRÍTICO: Limpiar TODOS los cachés de cualquier sesión anterior ANTES de iniciar sesión
-      // Esto previene que el nuevo usuario vea datos del anterior
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        final keys = prefs.getKeys();
-        for (final key in keys) {
-          if (key.startsWith('cached_')) {
-            await prefs.remove(key);
-          }
-        }
-
-        await SesionOfflineCleanup.limpiarTodo();
-
-        print('🧹 TODOS los cachés de sesiones anteriores limpiados');
-      } catch (cacheError) {
-        print('⚠️ Error limpiando cachés: $cacheError');
-      }
-
-      // Autenticar con Supabase
+      // Autenticar primero. NO borrar caché offline antes: si falla el login
+      // (o no hay internet), el socio debe poder seguir abriendo con su sesión.
       final response = await supabase.auth.signInWithPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text,
@@ -172,16 +155,37 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
         final rol = userResponse['rol']?.toString().toUpperCase();
 
         if (rol == 'REPARTIDOR') {
-          // 💾 Guardar datos de usuario en caché para uso offline
+          // Tras login OK: limpiar datos de OTRO usuario, luego guardar el actual.
           try {
             final prefs = await SharedPreferences.getInstance();
+            final nuevoId = response.user!.id;
+            final anterior = prefs.getString(kLastRepartidorAuthIdKey);
+            if (anterior != null &&
+                anterior.isNotEmpty &&
+                anterior != nuevoId) {
+              final keys = prefs.getKeys().toList();
+              for (final key in keys) {
+                if (key.startsWith('cached_') && key.contains(anterior)) {
+                  await prefs.remove(key);
+                }
+              }
+              await SesionOfflineCleanup.limpiarTodo();
+              print('🧹 Caché del usuario anterior ($anterior) limpiado');
+            }
+
             await prefs.setString(
-              'cached_user_data_${response.user!.id}',
+              'cached_user_data_$nuevoId',
               jsonEncode(userResponse),
             );
+            await prefs.setString(kLastRepartidorAuthIdKey, nuevoId);
             await prefs.setString(
-              'last_repartidor_auth_id',
-              response.user!.id,
+              kRepartidorOfflineSessionKey,
+              jsonEncode({
+                'auth_id': nuevoId,
+                'rol': 'REPARTIDOR',
+                'user_data': userResponse,
+                'validated_at': DateTime.now().toIso8601String(),
+              }),
             );
             final tid = userResponse['tenant_id']?.toString();
             if (tid != null && tid.isNotEmpty) {

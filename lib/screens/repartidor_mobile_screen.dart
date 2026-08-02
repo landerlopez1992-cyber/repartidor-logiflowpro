@@ -303,6 +303,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     _searchController.addListener(_onSearchChanged);
     // Cargar datos de forma asíncrona sin bloquear el hilo principal
     Future.microtask(() async {
+      // Persistir sesión offline apenas entra al home (cierre app + sin red).
+      await _persistirSesionOfflineParaReabrir();
       await _obtenerNombreRepartidor();
       await _obtenerTenantId();
       await _cargarPaisOperacion(); // Cargar país de operación desde BD
@@ -857,6 +859,50 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     return Center(
       child: Text(inicial, style: TextStyle(color: Colors.white, fontSize: size * 0.4)),
     );
+  }
+
+  /// Guarda auth_id + marca de sesión para reabrir sin internet aunque
+  /// Supabase no restaure el token.
+  Future<void> _persistirSesionOfflineParaReabrir() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final authId = supabase.auth.currentUser?.id ??
+          supabase.auth.currentSession?.user.id ??
+          prefs.getString(kLastRepartidorAuthIdKey);
+      if (authId == null || authId.isEmpty) return;
+
+      Map<String, dynamic> userData = {
+        'auth_id': authId,
+        'rol': 'REPARTIDOR',
+      };
+      final raw = prefs.getString('cached_user_data_$authId');
+      if (raw != null && raw.isNotEmpty) {
+        try {
+          userData = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+          userData['auth_id'] = authId;
+          userData['rol'] = 'REPARTIDOR';
+        } catch (_) {}
+      } else {
+        await prefs.setString(
+          'cached_user_data_$authId',
+          jsonEncode(userData),
+        );
+      }
+
+      await prefs.setString(kLastRepartidorAuthIdKey, authId);
+      await prefs.setString(
+        kRepartidorOfflineSessionKey,
+        jsonEncode({
+          'auth_id': authId,
+          'rol': 'REPARTIDOR',
+          'user_data': userData,
+          'validated_at': DateTime.now().toIso8601String(),
+        }),
+      );
+      print('💾 Sesión offline persistida para reabrir: $authId');
+    } catch (e) {
+      print('⚠️ _persistirSesionOfflineParaReabrir: $e');
+    }
   }
 
   Future<void> _obtenerNombreRepartidor() async {

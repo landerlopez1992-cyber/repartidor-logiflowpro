@@ -123,6 +123,7 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
     final buscandoLocal = await TaxiBuscandoPrefs.esActivo();
     TaxiTarifaChofer? tarifa;
     try {
+      // Caché primero (nunca cuelga). Red con timeout dentro de get().
       tarifa = await TaxiTarifasChoferService.instance.get();
     } catch (_) {}
 
@@ -130,10 +131,9 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
     final buscando = buscandoLocal || buscandoServidor;
 
     if (buscando) {
-      // Reafirmar en dispositivo y servidor tras reinicio.
       await TaxiBuscandoPrefs.setActivo(true);
       if (tarifa?.configurado == true && !buscandoServidor) {
-        await TaxiTarifasChoferService.instance.setDisponible(true);
+        unawaited(TaxiTarifasChoferService.instance.setDisponible(true));
       }
     }
 

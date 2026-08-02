@@ -16,6 +16,7 @@ import 'orden_cache_service.dart';
 import 'repartidor_ordenes_boot_fetch_service.dart';
 import 'repartidor_pantallas_offline_service.dart';
 import 'sync_service.dart';
+import 'taxi_tarifas_chofer_service.dart';
 import 'tenant_mapa_offline_service.dart';
 
 /// Resultado de branding de empresa para splash / loading.
@@ -235,6 +236,18 @@ class RepartidorBootCacheService {
         );
       } catch (e) {
         print('⚠️ Boot comisión (no crítico): $e');
+      }
+      try {
+        await TaxiTarifasChoferService.instance.prefetchAlAbrirApp();
+      } catch (e) {
+        print('⚠️ Boot tarifa taxi (no crítico): $e');
+      }
+      try {
+        await RepartidorPantallasOfflineService.prefetchMetodoCobroAlAbrirApp(
+          user.id,
+        );
+      } catch (e) {
+        print('⚠️ Boot método cobro (no crítico): $e');
       }
     } else {
       try {

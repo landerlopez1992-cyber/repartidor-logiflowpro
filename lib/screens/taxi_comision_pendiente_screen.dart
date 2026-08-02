@@ -8,6 +8,7 @@ import '../services/repartidor_saldo_service.dart';
 import '../services/repartidor_seguridad_service.dart';
 import '../services/repartidor_pantallas_offline_service.dart';
 import '../services/sync_service.dart';
+import '../utils/repartidor_requires_online.dart';
 import '../widgets/taxi_fianza_confirm_flow.dart';
 import '../widgets/taxi_zelle_enviar_recibo_flow.dart';
 import '../widgets/taxi_zelle_pago_explicacion_modal.dart';
@@ -166,6 +167,12 @@ class _TaxiComisionPendienteScreenState
       return;
     }
     if (_busy) return;
+    if (!await repartidorRequiereInternet(
+      context,
+      accion: 'transferir a fianza',
+    )) {
+      return;
+    }
 
     final ok = await TaxiFianzaConfirmFlow.run(
       context,
@@ -223,6 +230,12 @@ class _TaxiComisionPendienteScreenState
       return;
     }
     if (_busy) return;
+    if (!await repartidorRequiereInternet(
+      context,
+      accion: 'pagar con fianza',
+    )) {
+      return;
+    }
 
     final ok = await TaxiFianzaConfirmFlow.run(
       context,
@@ -269,6 +282,12 @@ class _TaxiComisionPendienteScreenState
       _toast('Indica el monto', error: true);
       return;
     }
+    if (!await repartidorRequiereInternet(
+      context,
+      accion: 'registrar pago en oficina',
+    )) {
+      return;
+    }
     setState(() => _busy = true);
     try {
       final res = await supabase.rpc(
@@ -300,6 +319,12 @@ class _TaxiComisionPendienteScreenState
     final monto = double.tryParse(_pagoCtrl.text.replaceAll(',', '.'));
     if (monto == null || monto < 0.01) {
       _toast('Indica el monto', error: true);
+      return;
+    }
+    if (!await repartidorRequiereInternet(
+      context,
+      accion: 'pagar con Zelle',
+    )) {
       return;
     }
 

@@ -3,6 +3,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../config/app_colors.dart';
 import '../main.dart' show supabase;
+import '../services/repartidor_pantallas_offline_service.dart';
+import '../utils/repartidor_requires_online.dart';
 
 /// Métodos de cobro de nómina (cómo la empresa te paga).
 class RepartidorMetodoCobroScreen extends StatefulWidget {
@@ -88,49 +90,54 @@ class _RepartidorMetodoCobroScreenState
     setState(() => _loading = true);
     try {
       final authId = supabase.auth.currentUser?.id;
-      if (authId == null) return;
+      if (authId == null) {
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
+
+      final cached =
+          await RepartidorPantallasOfflineService.cargarMetodoCobro(authId);
+      if (cached != null && mounted) {
+        _aplicarDatos(preferido: cached.preferido, map: cached.datos);
+        setState(() => _loading = false);
+      }
+
+      if (repartidorSinInternet()) {
+        if (mounted && cached == null) {
+          setState(() => _loading = false);
+        }
+        return;
+      }
+
       final row = await supabase
           .from('usuarios')
           .select(
             'repartidor_metodo_cobro_preferido, repartidor_metodo_cobro_datos',
           )
           .eq('auth_id', authId)
-          .maybeSingle();
+          .maybeSingle()
+          .timeout(const Duration(seconds: 6));
       if (!mounted) return;
       final datos = row?['repartidor_metodo_cobro_datos'];
       final map = datos is Map
           ? Map<String, dynamic>.from(datos)
           : <String, dynamic>{};
-      _activos
-        ..clear()
-        ..addAll(
-          _metodos.map((m) => m.id).where((id) => map[id] != null),
-        );
-      _preferido = row?['repartidor_metodo_cobro_preferido']?.toString();
-
-      final t = _asMap(map['transferencia_bancaria']);
-      _titular.text = t['nombre_titular']?.toString() ?? '';
-      _banco.text = t['banco']?.toString() ?? '';
-      _routing.text = t['routing']?.toString() ?? '';
-      _cuenta.text = t['cuenta']?.toString() ?? '';
-
-      final z = _asMap(map['zelle']);
-      _zelleTel.text = z['telefono']?.toString() ?? '';
-      _zelleNombre.text = z['nombre_registro']?.toString() ?? '';
-
-      final w = _asMap(map['western_union']);
-      _wuNombre.text = w['nombre']?.toString() ?? '';
-      _wuApellidos.text = w['apellidos']?.toString() ?? '';
-      _wuDireccion.text = w['direccion']?.toString() ?? '';
-      _wuCiudad.text = w['ciudad']?.toString() ?? '';
-      _wuPais.text = w['pais']?.toString() ?? '';
-      _wuTel.text = w['telefono']?.toString() ?? '';
-      _wuDoc.text = w['documento_identidad']?.toString() ?? '';
+      final preferido = row?['repartidor_metodo_cobro_preferido']?.toString();
+      _aplicarDatos(preferido: preferido, map: map);
+      await RepartidorPantallasOfflineService.guardarMetodoCobro(
+        authId,
+        preferido: preferido,
+        datos: map,
+      );
     } catch (e) {
-      if (mounted) {
+      if (mounted && _activos.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('No se pudo cargar: $e'),
+            content: Text(
+              repartidorSinInternet()
+                  ? 'Sin internet. Abre esta pantalla con red una vez para guardarla.'
+                  : 'No se pudo cargar: $e',
+            ),
             backgroundColor: AppColors.error,
           ),
         );
@@ -138,6 +145,37 @@ class _RepartidorMetodoCobroScreenState
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _aplicarDatos({
+    required String? preferido,
+    required Map<String, dynamic> map,
+  }) {
+    _activos
+      ..clear()
+      ..addAll(
+        _metodos.map((m) => m.id).where((id) => map[id] != null),
+      );
+    _preferido = preferido;
+
+    final t = _asMap(map['transferencia_bancaria']);
+    _titular.text = t['nombre_titular']?.toString() ?? '';
+    _banco.text = t['banco']?.toString() ?? '';
+    _routing.text = t['routing']?.toString() ?? '';
+    _cuenta.text = t['cuenta']?.toString() ?? '';
+
+    final z = _asMap(map['zelle']);
+    _zelleTel.text = z['telefono']?.toString() ?? '';
+    _zelleNombre.text = z['nombre_registro']?.toString() ?? '';
+
+    final w = _asMap(map['western_union']);
+    _wuNombre.text = w['nombre']?.toString() ?? '';
+    _wuApellidos.text = w['apellidos']?.toString() ?? '';
+    _wuDireccion.text = w['direccion']?.toString() ?? '';
+    _wuCiudad.text = w['ciudad']?.toString() ?? '';
+    _wuPais.text = w['pais']?.toString() ?? '';
+    _wuTel.text = w['telefono']?.toString() ?? '';
+    _wuDoc.text = w['documento_identidad']?.toString() ?? '';
   }
 
   Map<String, dynamic> _asMap(dynamic v) {
@@ -194,13 +232,23 @@ class _RepartidorMetodoCobroScreenState
     }
     setState(() => _saving = true);
     try {
-      final res = await supabase.rpc(
-        'guardar_repartidor_metodos_cobro',
-        params: {
-          'p_preferido': preferido,
-          'p_metodos': _payload(),
-        },
-      );
+      if (!await repartidorRequiereInternet(
+        context,
+        accion: 'guardar métodos de cobro',
+      )) {
+        return;
+      }
+      final authId = supabase.auth.currentUser?.id;
+      final payload = _payload();
+      final res = await supabase
+          .rpc(
+            'guardar_repartidor_metodos_cobro',
+            params: {
+              'p_preferido': preferido,
+              'p_metodos': payload,
+            },
+          )
+          .timeout(const Duration(seconds: 8));
       if (!mounted) return;
       if (res is! Map || res['ok'] != true) {
         final err = res is Map ? res['error']?.toString() : 'error';
@@ -215,6 +263,13 @@ class _RepartidorMetodoCobroScreenState
       setState(() {
         _preferido = res['preferido']?.toString() ?? preferido;
       });
+      if (authId != null) {
+        await RepartidorPantallasOfflineService.guardarMetodoCobro(
+          authId,
+          preferido: _preferido,
+          datos: payload,
+        );
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Métodos de cobro guardados'),

@@ -546,7 +546,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           .select('*')
           .eq('repartidor_id', _repartidorId!)
           .gte('inicio_semana', inicioSemanaFormatted.toIso8601String())
-          .maybeSingle();
+          .maybeSingle()
+          .timeout(const Duration(seconds: 6));
 
       if (estadisticasResponse != null) {
         // Usar estadísticas existentes
@@ -585,7 +586,9 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   Future<void> _cargarContadorViajes() async {
     try {
       if (_repartidorId == null) return;
-      final res = await supabase.rpc('taxi_chofer_contador_viajes');
+      final res = await supabase
+          .rpc('taxi_chofer_contador_viajes')
+          .timeout(const Duration(seconds: 6));
       if (res is! Map || res['ok'] != true) return;
       final total = (res['viajes_completados'] as num?)?.toInt() ?? 0;
       final semana = (res['viajes_semana'] as num?)?.toInt() ?? 0;
@@ -2045,16 +2048,15 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         // 🔒 CRÍTICO: Limpiar TODOS los cachés del usuario antes de cerrar sesión
         // Esto previene que el próximo usuario vea datos del anterior
         final user = supabase.auth.currentUser;
+        final prefs = await SharedPreferences.getInstance();
         if (user != null) {
           try {
-            final prefs = await SharedPreferences.getInstance();
             await prefs.remove('cached_repartidor_nombre_${user.id}');
             await prefs.remove('cached_repartidor_master_${user.id}');
             await prefs.remove('cached_repartidor_tipo_${user.id}');
             await prefs.remove('cached_repartidor_foto_${user.id}');
             await prefs.remove('cached_tenant_id_${user.id}'); // 🔒 CRÍTICO: Limpiar tenant_id
             await prefs.remove('cached_user_data_${user.id}');
-            await prefs.remove('last_repartidor_auth_id');
             
             // 🔒 Cola de sync, medios pendientes y órdenes en caché
             await SesionOfflineCleanup.limpiarTodo();
@@ -2064,6 +2066,9 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             print('⚠️ Error limpiando caché: $cacheError');
           }
         }
+        // También limpiar si Supabase no pudo restaurar currentUser offline.
+        await prefs.remove(kLastRepartidorAuthIdKey);
+        await prefs.remove(kRepartidorOfflineSessionKey);
 
         await RepartidorNotificacionesPushService.instance.limpiarAlCerrarSesion();
         
