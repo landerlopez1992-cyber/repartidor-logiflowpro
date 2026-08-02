@@ -1,15 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:mbtiles/mbtiles.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-import '../services/tenant_mapa_offline_service.dart';
+import 'repartidor_map_tile_layer.dart';
 import 'taxi_uber_map_car.dart';
 
 /// Mapa de navegación taxi: MapLibre online, o MBTiles offline del tenant.
@@ -39,9 +38,7 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
   WebViewController? _web;
   bool _webReady = false;
   bool _useFallback = false;
-  bool _useOfflineMbtiles = false;
   bool _resolviendoOffline = true;
-  MbTiles? _mbtiles;
   Timer? _bootTimeout;
   final MapController _map = MapController();
 
@@ -60,53 +57,24 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
   }
 
   Future<void> _bootstrap() async {
-    await _tryOffline();
+    // FlutterMap + Carto/MBTiles (offline-first). Evita WebView en blanco sin red.
     if (!mounted) return;
-    if (_useOfflineMbtiles) {
-      setState(() => _resolviendoOffline = false);
-      return;
-    }
-    setState(() => _resolviendoOffline = false);
-    _bootTimeout = Timer(const Duration(seconds: 8), () {
-      if (!mounted || _webReady) return;
-      setState(() => _useFallback = true);
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      unawaited(_initWeb());
-    });
-  }
-
-  Future<void> _tryOffline() async {
-    try {
-      var tid = widget.tenantId?.trim();
-      tid ??= await TenantMapaOfflineService.instance.tenantIdChofer();
-      final path =
-          await TenantMapaOfflineService.instance.ensureLocalMbtiles(tid);
-      if (path == null || !mounted) return;
-      final db = MbTiles(path: path, gzip: false);
-      _mbtiles = db;
-      _useOfflineMbtiles = true;
+    setState(() {
       _useFallback = true;
-    } catch (_) {
-      _mbtiles = null;
-      _useOfflineMbtiles = false;
-    }
+      _resolviendoOffline = false;
+    });
   }
 
   @override
   void dispose() {
     _bootTimeout?.cancel();
-    try {
-      _mbtiles?.close();
-    } catch (_) {}
     super.dispose();
   }
 
   @override
   void didUpdateWidget(covariant TaxiChoferMapLibre oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_useOfflineMbtiles || _useFallback) {
+    if (_useFallback) {
       _fitFallback();
     } else if (_webReady) {
       unawaited(_syncWeb());
@@ -227,7 +195,7 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
         ),
       );
     }
-    if (_useOfflineMbtiles || _useFallback || (!_preferMapLibre && _web == null)) {
+    if (_useFallback || (!_preferMapLibre && _web == null)) {
       return _buildFallback();
     }
     final w = _web;
@@ -293,23 +261,7 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
         onMapReady: _fitFallback,
       ),
       children: [
-        if (_useOfflineMbtiles && _mbtiles != null)
-          TileLayer(
-            tileProvider: _MbtilesTileProvider(_mbtiles!),
-            userAgentPackageName: 'com.logiflow.repartidor',
-            maxZoom: 16,
-            maxNativeZoom: 16,
-          )
-        else
-          TileLayer(
-            urlTemplate:
-                'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-            subdomains: const ['a', 'b', 'c', 'd'],
-            userAgentPackageName: 'com.logiflow.repartidor',
-            maxZoom: 16,
-            maxNativeZoom: 16,
-            retinaMode: false,
-          ),
+        RepartidorMapTileLayer(tenantId: widget.tenantId),
         if (polylines.isNotEmpty) PolylineLayer(polylines: polylines),
         MarkerLayer(markers: markers),
       ],
@@ -461,31 +413,4 @@ map.on('load', function() {
 ''';
   }
 
-}
-
-class _MbtilesTileProvider extends TileProvider {
-  _MbtilesTileProvider(this.db);
-  final MbTiles db;
-
-  static final Uint8List _emptyPng = Uint8List.fromList(<int>[
-    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
-    0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-    0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
-    0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
-    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
-    0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
-  ]);
-
-  @override
-  ImageProvider getImage(TileCoordinates coordinates, TileLayer options) {
-    try {
-      final raw = db.getTile(
-        z: coordinates.z,
-        x: coordinates.x,
-        y: coordinates.y,
-      );
-      if (raw != null && raw.isNotEmpty) return MemoryImage(raw);
-    } catch (_) {}
-    return MemoryImage(_emptyPng);
-  }
 }

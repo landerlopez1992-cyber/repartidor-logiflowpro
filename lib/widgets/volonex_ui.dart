@@ -20,20 +20,26 @@ class VolonexUi {
     required VoidCallback onTap,
     IconData? icon,
     Color? selectedColor,
+    bool compact = false,
   }) {
     final accent = selectedColor ?? AppColors.botonPrincipal;
+    final radius = compact ? 14.0 : 20.0;
+    final iconSize = compact ? 11.0 : 14.0;
     return Padding(
-      padding: const EdgeInsets.only(right: 8),
+      padding: EdgeInsets.only(right: compact ? 0 : 8),
       child: Material(
         color: selected ? accent : AppColors.darkElevated,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(radius),
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(radius),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            padding: EdgeInsets.symmetric(
+              horizontal: compact ? 8 : 14,
+              vertical: compact ? 5 : 8,
+            ),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(radius),
               border: Border.all(
                 color: selected ? accent : AppColors.darkBorder,
                 width: selected ? 1.5 : 1,
@@ -43,18 +49,18 @@ class VolonexUi {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (selected) ...[
-                  const Icon(Icons.check, size: 14, color: Colors.white),
-                  const SizedBox(width: 4),
+                  Icon(Icons.check, size: iconSize, color: Colors.white),
+                  SizedBox(width: compact ? 3 : 4),
                 ],
                 if (icon != null && !selected) ...[
-                  Icon(icon, size: 14, color: AppColors.darkTextMuted),
-                  const SizedBox(width: 4),
+                  Icon(icon, size: iconSize, color: AppColors.darkTextMuted),
+                  SizedBox(width: compact ? 3 : 4),
                 ],
                 Text(
                   label,
                   style: TextStyle(
                     color: selected ? Colors.white : AppColors.darkTextMuted,
-                    fontSize: 12,
+                    fontSize: compact ? 10 : 12,
                     fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                   ),
                 ),

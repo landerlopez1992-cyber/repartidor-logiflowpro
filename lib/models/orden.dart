@@ -178,6 +178,8 @@ class Orden {
 
   /// Pedido de tienda web: `pagada` en BD a veces significa cobro del cliente, no pago al repartidor.
   bool get esOrdenTiendaOnline {
+    final tid = (tiendaOrdenId ?? '').trim();
+    if (tid.isNotEmpty) return true;
     final d = descripcion.toLowerCase();
     final n = (notas ?? '').toLowerCase();
     final np = (notasPago ?? '').toLowerCase();

@@ -19,10 +19,13 @@ import '../services/repartidor_saldo_offline_service.dart';
 import '../services/repartidor_perfil_foto_cache_service.dart';
 import '../services/repartidor_solicitud_pago_offline_service.dart';
 import '../services/repartidor_solicitud_pago_service.dart';
+import '../services/repartidor_transfer_wallet_cliente_service.dart';
 import '../widgets/repartidor_solicitud_pago_dialogs.dart';
 import '../services/repartidor_historial_pago_service.dart';
 import '../widgets/historial_pago_detalle_card.dart';
 import '../widgets/repartidor_saldo_desglose_modal.dart';
+import '../widgets/repartidor_transfer_wallet_cliente_flow.dart';
+import '../widgets/repartidor_loading_spinner.dart';
 import '../utils/repartidor_master_util.dart';
 import '../widgets/repartidor_master_badge.dart';
 import '../services/paises_service.dart';
@@ -75,6 +78,10 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   String _metodoPago = 'por_orden';
   RepartidorSolicitudPreview? _previewPago;
   RealtimeChannel? _channelPagos;
+
+  /// Destino billetera cliente (mismo email + tenant). Null mientras detecta / sin red.
+  RepartidorWalletClienteDestino? _walletClienteDestino;
+  bool _detectandoWalletCliente = false;
   
   // Estado de conexión
   bool _isOnline = true;
@@ -268,6 +275,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           await _cargarHistorialPagos();
           await _cargarSaldo();
           await _cargarPreviewPago();
+          await _detectarWalletClienteDestino();
           _suscribirseACambiosPagos();
         } catch (e) {
           // Si no encuentra por auth_id, intentar por email
@@ -335,6 +343,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
               await _cargarHistorialPagos();
               await _cargarSaldo();
               await _cargarPreviewPago();
+              await _detectarWalletClienteDestino();
               _suscribirseACambiosPagos();
             } catch (e2) {
               print('⚠️ Error cargando desde Supabase, usando caché: $e2');
@@ -909,6 +918,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                           const SizedBox(height: 24),
                         ],
                         _buildBotonSolicitarPago(),
+                        const SizedBox(height: 12),
+                        _buildBotonTransferirWalletCliente(),
                         const SizedBox(height: 24),
                         _buildAjustesMetodoCobro(),
                         const SizedBox(height: 16),
@@ -1070,100 +1081,77 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           _buildInsigniaMasterChip(),
         ],
         const SizedBox(height: 12),
-        _buildContadorViajesChip(),
-        const SizedBox(height: 12),
         _buildResumenPagoChip(),
       ],
     );
   }
 
-  Widget _buildContadorViajesChip() {
-    final semanaTxt = _viajesSemana > 0 ? ' · $_viajesSemana esta semana' : '';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: AppColors.darkSurface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.darkBorder),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.local_taxi_rounded, color: Color(0xFFFF9800), size: 22),
-          const SizedBox(width: 10),
-          Text(
-            'Viajes: $_viajesCompletados$semanaTxt',
-            style: const TextStyle(
-              color: AppColors.darkText,
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Foto del auto: misma guía del formulario de solicitud + botón cambiar.
+  /// Foto del auto alineada en altura con el avatar (120).
   Widget _buildBloqueFotoVehiculo() {
     final tieneFoto = _fotoVehiculoUrl != null && _fotoVehiculoUrl!.isNotEmpty;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 132,
-          height: 96,
-          decoration: BoxDecoration(
-            color: AppColors.darkSurface,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.darkBorder),
+    const boxW = 132.0;
+    const boxH = 120.0;
+    return SizedBox(
+      width: boxW,
+      height: boxH,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                color: AppColors.darkSurface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.darkBorder),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: tieneFoto
+                  ? Image.network(
+                      _fotoVehiculoUrl!,
+                      width: boxW,
+                      height: boxH,
+                      fit: BoxFit.cover,
+                      alignment: Alignment.center,
+                      errorBuilder: (_, __, ___) => const Center(
+                        child: Icon(
+                          Icons.directions_car_outlined,
+                          color: Color(0xFF9CA3AF),
+                          size: 40,
+                        ),
+                      ),
+                    )
+                  : const Center(
+                      child: Icon(
+                        Icons.directions_car_outlined,
+                        color: Color(0xFF9CA3AF),
+                        size: 40,
+                      ),
+                    ),
+            ),
           ),
-          clipBehavior: Clip.antiAlias,
-          child: tieneFoto
-              ? Image.network(
-                  _fotoVehiculoUrl!,
-                  width: 132,
-                  height: 96,
-                  fit: BoxFit.cover,
-                  alignment: Alignment.center,
-                  errorBuilder: (_, __, ___) => const Icon(
-                    Icons.directions_car_outlined,
-                    color: Color(0xFF9CA3AF),
-                    size: 40,
+          if (_isEditing)
+            Positioned(
+              bottom: 0,
+              right: 0,
+              child: GestureDetector(
+                onTap: _mostrarDialogoCambiarFotoVehiculo,
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFFF9800),
+                    shape: BoxShape.circle,
                   ),
-                )
-              : const Icon(
-                  Icons.directions_car_outlined,
-                  color: Color(0xFF9CA3AF),
-                  size: 40,
+                  child: const Icon(
+                    Icons.camera_alt,
+                    color: Colors.white,
+                    size: 20,
+                  ),
                 ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          _esRecolector ? 'Vehículo de recolección' : 'Mi vehículo',
-          style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 12),
-        ),
-        if (_isEditing) ...[
-          const SizedBox(height: 6),
-          TextButton.icon(
-            onPressed: _mostrarDialogoCambiarFotoVehiculo,
-            icon: const Icon(Icons.photo_camera, size: 16, color: Color(0xFFFF9800)),
-            label: Text(
-              tieneFoto ? 'Cambiar foto' : 'Subir foto',
-              style: const TextStyle(
-                color: Color(0xFFFF9800),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
               ),
             ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-          ),
         ],
-      ],
+      ),
     );
   }
 
@@ -2377,6 +2365,114 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _detectarWalletClienteDestino() async {
+    if (!_isOnline) {
+      if (mounted) {
+        setState(() {
+          _walletClienteDestino = null;
+          _detectandoWalletCliente = false;
+        });
+      }
+      return;
+    }
+    if (mounted) setState(() => _detectandoWalletCliente = true);
+    try {
+      final d = await RepartidorTransferWalletClienteService.detectarDestino();
+      if (!mounted) return;
+      setState(() {
+        _walletClienteDestino = d;
+        _detectandoWalletCliente = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _walletClienteDestino = null;
+        _detectandoWalletCliente = false;
+      });
+    }
+  }
+
+  Widget _buildBotonTransferirWalletCliente() {
+    if (_detectandoWalletCliente) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 8),
+          child: RepartidorLoadingSpinner.small(),
+        ),
+      );
+    }
+
+    final destino = _walletClienteDestino;
+    if (destino == null || !destino.tieneCuentaCliente) {
+      return const SizedBox.shrink();
+    }
+
+    return Center(
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 280),
+        child: OutlinedButton(
+          onPressed: () => _iniciarTransferWalletCliente(destino),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.darkText,
+            side: const BorderSide(color: AppColors.darkBorder),
+            backgroundColor: AppColors.darkElevated,
+            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.account_balance_wallet_outlined, size: 20),
+              SizedBox(width: 8),
+              Text(
+                'Transferir saldo a billetera',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _iniciarTransferWalletCliente(
+    RepartidorWalletClienteDestino destino,
+  ) async {
+    if (!_isOnline) {
+      _mostrarMensaje('Necesitas conexión para transferir.', Colors.orange);
+      return;
+    }
+    if (_solicitudPendiente || destino.solicitudPagoPendiente) {
+      _mostrarMensaje(
+        'Tienes una solicitud de cobro pendiente. Cancélala o espera la respuesta antes de transferir.',
+        Colors.orange,
+      );
+      return;
+    }
+    final disponible = _saldoServidor > 0 ? _saldoServidor : _saldo;
+    if (disponible < 0.01) {
+      _mostrarMensaje('No tienes saldo disponible para transferir.', Colors.orange);
+      return;
+    }
+
+    final ok = await RepartidorTransferWalletClienteFlow.run(
+      context,
+      destino: destino,
+      saldoDisponible: disponible,
+    );
+    if (!ok || !mounted) return;
+    await _cargarSaldo();
+    await _cargarPreviewPago();
+    await _detectarWalletClienteDestino();
   }
 
   Future<List<String>> _obtenerOrdenesIdsParaSolicitud() async {

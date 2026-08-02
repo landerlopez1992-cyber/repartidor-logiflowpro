@@ -7,6 +7,24 @@ class PaisMapaCentro {
   final LatLng center;
   final double zoom;
 
+  /// Tenant Cubalink23 (producción).
+  static const String cubalink23TenantId =
+      '76b6a1e1-71fd-400f-ac17-4a62ceed325d';
+
+  /// Zoom calle (demo Viajes Cubalink23): idle Habana o GPS al buscar.
+  static const double cubalink23StreetZoom = 15.3;
+
+  /// Vista calle Habana (10 de Octubre) — idle Cubalink23.
+  static const PaisMapaCentro cubalink23HabanaViajes = PaisMapaCentro(
+    center: LatLng(23.1092, -82.3680),
+    zoom: cubalink23StreetZoom,
+  );
+
+  static bool esTenantCubalink23(String? tenantId) {
+    final t = (tenantId ?? '').trim().toLowerCase();
+    return t == cubalink23TenantId;
+  }
+
   static PaisMapaCentro forPais(String? paisNombre) {
     final n = (paisNombre ?? 'Cuba').toLowerCase().trim();
 

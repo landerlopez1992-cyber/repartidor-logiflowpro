@@ -59,6 +59,8 @@ dependencies:
   flutter_local_notifications: ^17.2.2
   vibration: ^3.1.4
   audioplayers: ^6.1.0
+  # 6.x: alinea record_linux con record_platform_interface (evita error de build macOS).
+  record: ^6.1.2
 
   # Push FCM (app cerrada)
   firebase_core: ^3.6.0

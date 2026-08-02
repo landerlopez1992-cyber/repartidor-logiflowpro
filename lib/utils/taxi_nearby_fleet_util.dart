@@ -9,12 +9,26 @@ class TaxiFleetCar {
     required this.headingDeg,
     required this.speedMps,
     required this.turnDegPerSec,
+    this.roadPath,
+    this.roadCumDist,
+    this.distAlongM = 0,
   });
 
   LatLng point;
   double headingDeg;
   double speedMps;
   double turnDegPerSec;
+
+  /// Si no es null, el auto se anima por esta polilínea de calle.
+  List<LatLng>? roadPath;
+  List<double>? roadCumDist;
+  double distAlongM;
+
+  bool get onRoad =>
+      roadPath != null &&
+      roadCumDist != null &&
+      roadPath!.length >= 2 &&
+      roadCumDist!.isNotEmpty;
 }
 
 /// Flota decorativa estilo Uber: dispersa + movimiento continuo suave.

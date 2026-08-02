@@ -293,7 +293,7 @@ class _LoadingDataScreenState extends State<LoadingDataScreen> {
                               backgroundColor:
                                   Colors.white.withValues(alpha: 0.2),
                               valueColor: const AlwaysStoppedAnimation<Color>(
-                                AppColors.exito,
+                                AppColors.botonPrincipal,
                               ),
                             ),
                           ),

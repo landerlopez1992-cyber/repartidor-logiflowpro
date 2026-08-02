@@ -1,15 +1,22 @@
-import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:image_picker/image_picker.dart';
+import 'dart:async';
 import 'dart:io';
-import '../main.dart';
+
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:record/record.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../config/app_colors.dart';
-import '../services/repartidor_pantallas_offline_service.dart';
-import '../services/sync_service.dart';
+import '../main.dart';
 import '../services/network_timeout.dart';
 import '../services/repartidor_chat_mensaje_sonido_service.dart';
+import '../services/repartidor_pantallas_offline_service.dart';
+import '../services/sync_service.dart';
 import '../utils/entrega_foto_util.dart';
 import '../utils/mensaje_error_operacion.dart';
+import '../widgets/chat_nota_voz_player.dart';
 
 /// Pantalla de chat filtrado que muestra solo mensajes de un remitente específico
 /// o, en [modoConversacionCompleta], todo el hilo con la empresa.
@@ -47,12 +54,21 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
   XFile? _fotoSeleccionada; // Foto seleccionada pero no enviada aún
   bool _enviandoFoto = false; // Flag para evitar envíos dobles
   bool _enviandoMensaje = false; // Evita doble envío (botón + Enter)
+  final AudioRecorder _recorder = AudioRecorder();
+  bool _grabandoVoz = false;
+  bool _enviandoVoz = false;
+  DateTime? _grabacionInicio;
+  Timer? _timerGrabacion;
+  int _segundosGrabacion = 0;
 
   @override
   void initState() {
     super.initState();
     RepartidorChatMensajeSonidoService.conversacionActivaId =
         widget.conversacionId;
+    _mensajeController.addListener(() {
+      if (mounted) setState(() {});
+    });
     _inicializarChat();
   }
 
@@ -62,6 +78,8 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
         widget.conversacionId) {
       RepartidorChatMensajeSonidoService.conversacionActivaId = null;
     }
+    _timerGrabacion?.cancel();
+    unawaited(_recorder.dispose());
     _mensajeController.dispose();
     _scrollController.dispose();
     _channel?.unsubscribe();
@@ -176,6 +194,28 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     });
   }
 
+  bool _listaContiene(List<Map<String, dynamic>> lista, Map<String, dynamic> m) {
+    final clave = _claveMensaje(m);
+    if (clave != null) {
+      return lista.any((x) => _claveMensaje(x) == clave);
+    }
+    final rem = m['remitente_auth_id']?.toString() ?? '';
+    final foto = m['foto_url']?.toString() ?? '';
+    final texto = m['mensaje']?.toString() ?? '';
+    final created = m['created_at']?.toString() ?? '';
+    if (rem.isEmpty) return false;
+    return lista.any((x) {
+      if (x['remitente_auth_id']?.toString() != rem) return false;
+      if ((x['foto_url']?.toString() ?? '') != foto) return false;
+      if ((x['mensaje']?.toString() ?? '') != texto) return false;
+      if (created.isNotEmpty &&
+          (x['created_at']?.toString() ?? '') == created) {
+        return true;
+      }
+      return false;
+    });
+  }
+
   Future<void> _fusionarMensajesLocales() async {
     final user = supabase.auth.currentUser;
     var lista = <Map<String, dynamic>>[];
@@ -183,7 +223,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     final cached =
         await RepartidorPantallasOfflineService.cargarMensajesChat(widget.conversacionId);
     if (cached != null) {
-      lista = List<Map<String, dynamic>>.from(cached);
+      lista = cached.map(_enriquecerMensaje).toList();
     }
 
     if (user != null) {
@@ -194,8 +234,9 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
         nombreRepartidor: _nombreRepartidor,
       );
       for (final p in pendientes) {
-        if (!_listaYaTieneMensaje(p)) {
-          lista.add(_enriquecerMensaje(p));
+        final enriq = _enriquecerMensaje(p);
+        if (!_listaContiene(lista, enriq)) {
+          lista.add(enriq);
         }
       }
     }
@@ -387,6 +428,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
 
             if (mounted) {
               _agregarMensajeSiNoExiste(nuevoMensaje);
+              unawaited(_persistirMensajesEnCache());
               Future.delayed(const Duration(milliseconds: 100), () {
                 _scrollToBottom();
               });
@@ -674,11 +716,214 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     }
   }
 
+  Future<void> _toggleGrabacionVoz() async {
+    if (_enviandoVoz || _enviandoFoto || _enviandoMensaje) return;
+    if (_grabandoVoz) {
+      await _detenerYEnviarVoz();
+      return;
+    }
+    await _iniciarGrabacionVoz();
+  }
+
+  Future<void> _iniciarGrabacionVoz() async {
+    try {
+      final mic = await Permission.microphone.request();
+      if (!mic.isGranted) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Necesitas permiso de micrófono para notas de voz.'),
+            backgroundColor: Color(0xFFDC2626),
+          ),
+        );
+        return;
+      }
+      if (!await _recorder.hasPermission()) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No se pudo acceder al micrófono.'),
+            backgroundColor: Color(0xFFDC2626),
+          ),
+        );
+        return;
+      }
+
+      final dir = await getTemporaryDirectory();
+      final path =
+          '${dir.path}/chat_voz_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await _recorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          bitRate: 64000,
+          sampleRate: 44100,
+        ),
+        path: path,
+      );
+      _grabacionInicio = DateTime.now();
+      _segundosGrabacion = 0;
+      _timerGrabacion?.cancel();
+      _timerGrabacion = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted || !_grabandoVoz) return;
+        setState(() => _segundosGrabacion++);
+      });
+      if (mounted) setState(() => _grabandoVoz = true);
+    } catch (e) {
+      print('❌ Iniciar grabación voz: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(mensajeErrorOperacion(e, contexto: 'chat')),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _cancelarGrabacionVoz() async {
+    try {
+      if (await _recorder.isRecording()) {
+        final path = await _recorder.stop();
+        if (path != null) {
+          try {
+            await File(path).delete();
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+    _timerGrabacion?.cancel();
+    _timerGrabacion = null;
+    _grabacionInicio = null;
+    if (mounted) {
+      setState(() {
+        _grabandoVoz = false;
+        _segundosGrabacion = 0;
+      });
+    }
+  }
+
+  Future<void> _detenerYEnviarVoz() async {
+    if (!_grabandoVoz) return;
+    _timerGrabacion?.cancel();
+    _timerGrabacion = null;
+    String? path;
+    try {
+      path = await _recorder.stop();
+    } catch (e) {
+      print('❌ Stop grabación: $e');
+    }
+    if (mounted) {
+      setState(() {
+        _grabandoVoz = false;
+        _enviandoVoz = true;
+      });
+    }
+    final dur = _grabacionInicio == null
+        ? _segundosGrabacion
+        : DateTime.now().difference(_grabacionInicio!).inSeconds;
+    _grabacionInicio = null;
+    _segundosGrabacion = 0;
+
+    if (path == null || path.isEmpty || !File(path).existsSync()) {
+      if (mounted) setState(() => _enviandoVoz = false);
+      return;
+    }
+    if (dur < 1) {
+      try {
+        await File(path).delete();
+      } catch (_) {}
+      if (mounted) {
+        setState(() => _enviandoVoz = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('La nota de voz es demasiado corta.'),
+            backgroundColor: Color(0xFFFF9800),
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      await _enviarAudioArchivo(path);
+    } finally {
+      try {
+        await File(path).delete();
+      } catch (_) {}
+      if (mounted) setState(() => _enviandoVoz = false);
+    }
+  }
+
+  Future<void> _enviarAudioArchivo(String pathLocal) async {
+    final user = supabase.auth.currentUser;
+    if (user == null) return;
+    if (!SyncService().isOnline) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Necesitas conexión para enviar notas de voz.'),
+            backgroundColor: Color(0xFFFF9800),
+          ),
+        );
+      }
+      return;
+    }
+
+    String? tenantId =
+        await RepartidorPantallasOfflineService.cargarTenantIdRepartidor(user.id);
+    if (tenantId == null) {
+      try {
+        final conversacion = await ejecutarConTimeout(
+          supabase
+              .from('conversaciones_soporte')
+              .select('tenant_id')
+              .eq('id', widget.conversacionId)
+              .maybeSingle(),
+          timeout: const Duration(seconds: 6),
+        );
+        tenantId = conversacion?['tenant_id']?.toString();
+      } catch (_) {}
+    }
+
+    final file = File(pathLocal);
+    final fileName =
+        'chat_audio/${tenantId ?? 'sin_tenant'}/${user.id}_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    const bucket = 'fotos-perfil';
+    await ejecutarConTimeout(
+      supabase.storage.from(bucket).upload(
+            fileName,
+            file,
+            fileOptions: const FileOptions(
+              contentType: 'audio/mp4',
+              upsert: false,
+            ),
+          ),
+      timeout: const Duration(seconds: 45),
+    );
+    final publicUrl = supabase.storage.from(bucket).getPublicUrl(fileName);
+
+    final datosMensaje = <String, dynamic>{
+      'conversacion_id': widget.conversacionId,
+      'remitente_auth_id': user.id,
+      'mensaje': '🎤 Nota de voz',
+      'audio_url': publicUrl,
+      'leido': false,
+    };
+    if (tenantId != null) datosMensaje['tenant_id'] = tenantId;
+
+    await supabase.from('mensajes_soporte').insert(datosMensaje);
+    await _cargarMensajes();
+    _scrollToBottom();
+  }
+
   Future<void> _enviarMensaje() async {
     final user = supabase.auth.currentUser;
     if (user == null) return;
 
-    if (_enviandoFoto || _enviandoMensaje) return;
+    if (_enviandoFoto || _enviandoMensaje || _enviandoVoz || _grabandoVoz) {
+      return;
+    }
 
     // Si hay foto seleccionada, enviarla primero
     if (_fotoSeleccionada != null) {
@@ -1030,87 +1275,159 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                             ),
                           ),
                         ],
-                        Row(
-                          children: [
-                            // Botón para tomar/subir foto
-                            Material(
-                              color: const Color(0xFF4CAF50),
-                              borderRadius: BorderRadius.circular(24),
-                              child: InkWell(
-                                onTap: _seleccionarFoto,
-                                borderRadius: BorderRadius.circular(24),
-                                child: Container(
-                                  width: 48,
-                                  height: 48,
-                                  alignment: Alignment.center,
-                                  child: const Icon(
-                                    Icons.camera_alt,
-                                    color: Colors.white,
-                                    size: 22,
-                                  ),
-                                ),
+                        if (_grabandoVoz)
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFDC2626).withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: const Color(0xFFDC2626).withValues(alpha: 0.35),
                               ),
                             ),
-                            const SizedBox(width: 12),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.fiber_manual_record,
+                                  color: Color(0xFFDC2626),
+                                  size: 14,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Grabando… ${_segundosGrabacion}s  ·  toca ✓ para enviar',
+                                    style: const TextStyle(
+                                      color: AppColors.darkText,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: _cancelarGrabacionVoz,
+                                  child: const Text(
+                                    'Cancelar',
+                                    style: TextStyle(
+                                      color: Color(0xFF9CA3AF),
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            _ChatBarIconButton(
+                              icon: Icons.photo_camera_outlined,
+                              tooltip: 'Foto',
+                              color: const Color(0xFF4CAF50),
+                              onTap: (_enviandoFoto ||
+                                      _enviandoMensaje ||
+                                      _grabandoVoz ||
+                                      _enviandoVoz)
+                                  ? null
+                                  : _seleccionarFoto,
+                            ),
+                            const SizedBox(width: 8),
                             Expanded(
                               child: TextField(
                                 controller: _mensajeController,
+                                enabled: !_grabandoVoz && !_enviandoVoz,
+                                style: const TextStyle(
+                                  color: AppColors.darkText,
+                                  fontSize: 14,
+                                ),
                                 decoration: InputDecoration(
-                                  hintText: _fotoSeleccionada != null 
-                                      ? 'Agregar mensaje (opcional)...'
-                                      : 'Escribe un mensaje...',
+                                  hintText: _fotoSeleccionada != null
+                                      ? 'Mensaje (opcional)…'
+                                      : 'Escribe un mensaje…',
                                   hintStyle: const TextStyle(
                                     color: AppColors.darkTextMuted,
-                                    fontSize: 14,
+                                    fontSize: 13,
                                   ),
                                   filled: true,
                                   fillColor: AppColors.darkElevated,
+                                  isDense: true,
                                   border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(24),
-                                    borderSide: BorderSide.none,
+                                    borderRadius: BorderRadius.circular(20),
+                                    borderSide: BorderSide(
+                                      color: AppColors.darkBorder,
+                                    ),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(20),
+                                    borderSide: BorderSide(
+                                      color: AppColors.darkBorder,
+                                    ),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(20),
+                                    borderSide: const BorderSide(
+                                      color: Color(0xFF37474F),
+                                    ),
                                   ),
                                   contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 20,
-                                    vertical: 12,
+                                    horizontal: 14,
+                                    vertical: 10,
                                   ),
                                 ),
-                                maxLines: null,
-                                textCapitalization: TextCapitalization.sentences,
-                                onSubmitted: (_enviandoFoto || _enviandoMensaje)
+                                maxLines: 4,
+                                minLines: 1,
+                                textCapitalization:
+                                    TextCapitalization.sentences,
+                                onSubmitted: (_enviandoFoto ||
+                                        _enviandoMensaje ||
+                                        _grabandoVoz)
                                     ? null
                                     : (_) => _enviarMensaje(),
                               ),
                             ),
-                            const SizedBox(width: 12),
-                            Material(
-                              color: AppColors.primary,
-                              borderRadius: BorderRadius.circular(24),
-                              child: InkWell(
-                                onTap: (_enviandoFoto || _enviandoMensaje)
+                            const SizedBox(width: 8),
+                            if (_enviandoFoto || _enviandoVoz)
+                              const Padding(
+                                padding: EdgeInsets.only(bottom: 4),
+                                child: SizedBox(
+                                  width: 34,
+                                  height: 34,
+                                  child: Padding(
+                                    padding: EdgeInsets.all(7),
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Color(0xFFFF9800),
+                                    ),
+                                  ),
+                                ),
+                              )
+                            else if (_grabandoVoz)
+                              _ChatBarIconButton(
+                                icon: Icons.check_rounded,
+                                tooltip: 'Enviar nota de voz',
+                                color: const Color(0xFF4CAF50),
+                                onTap: _detenerYEnviarVoz,
+                              )
+                            else if (_mensajeController.text.trim().isEmpty &&
+                                _fotoSeleccionada == null)
+                              _ChatBarIconButton(
+                                icon: Icons.mic_none_rounded,
+                                tooltip: 'Nota de voz',
+                                color: const Color(0xFF37474F),
+                                onTap: _toggleGrabacionVoz,
+                              )
+                            else
+                              _ChatBarIconButton(
+                                icon: Icons.send_rounded,
+                                tooltip: 'Enviar',
+                                color: AppColors.primary,
+                                onTap: (_enviandoMensaje || _enviandoFoto)
                                     ? null
                                     : _enviarMensaje,
-                                borderRadius: BorderRadius.circular(24),
-                                child: Container(
-                                  width: 48,
-                                  height: 48,
-                                  alignment: Alignment.center,
-                                  child: _enviandoFoto
-                                      ? const SizedBox(
-                                          width: 20,
-                                          height: 20,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                                          ),
-                                        )
-                                      : const Icon(
-                                          Icons.send,
-                                          color: Colors.white,
-                                          size: 22,
-                                        ),
-                                ),
                               ),
-                            ),
                           ],
                         ),
                       ],
@@ -1190,6 +1507,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     String? fotoRemitente,
     DateTime fecha,
     String? fotoUrl, {
+    String? audioUrl,
     bool pendienteEnvio = false,
   }) {
     Color colorAvatar;
@@ -1213,6 +1531,15 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
       iconoAvatar = Icons.person;
       etiquetaRemitente = nombreRemitente;
     }
+
+    final tieneFoto = fotoUrl != null && fotoUrl.isNotEmpty;
+    final captionOculto = tieneFoto &&
+        (mensaje.isEmpty ||
+            mensaje == '📷 Foto' ||
+            mensaje == '📷 foto');
+    final soloImagen = tieneFoto &&
+        captionOculto &&
+        (audioUrl == null || audioUrl.isEmpty);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -1271,10 +1598,15 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                     ),
                   ),
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
+                  // Foto sola: marco fino (2px). Texto/mezcla: padding normal.
+                  padding: soloImagen
+                      ? const EdgeInsets.all(2)
+                      : tieneFoto
+                          ? const EdgeInsets.fromLTRB(4, 4, 4, 8)
+                          : const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 10,
+                            ),
                   decoration: BoxDecoration(
                     color: esMio
                         ? AppColors.primary
@@ -1308,21 +1640,34 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (fotoUrl != null && fotoUrl.isNotEmpty) ...[
+                      if (tieneFoto) ...[
                         ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(
+                            soloImagen ? 14 : 8,
+                          ),
                           child: _imagenMensajeChat(
-                            fotoUrl,
+                            fotoUrl!,
                             pendienteEnvio: pendienteEnvio,
                           ),
                         ),
-                        const SizedBox(height: 8),
+                        if (!captionOculto ||
+                            (audioUrl != null && audioUrl.isNotEmpty))
+                          const SizedBox(height: 8),
                       ],
-                      // Texto: omitir placeholder si ya hay imagen
+                      if (audioUrl != null && audioUrl.isNotEmpty) ...[
+                        ChatNotaVozPlayer(
+                          url: audioUrl,
+                          onDarkBubble: esMio,
+                        ),
+                        const SizedBox(height: 4),
+                      ],
+                      // Texto: omitir placeholder si ya hay imagen o audio
                       if (mensaje.isNotEmpty &&
-                          !(fotoUrl != null &&
-                              fotoUrl.isNotEmpty &&
-                              (mensaje == '📷 Foto' || mensaje == '📷 foto')))
+                          !captionOculto &&
+                          !(audioUrl != null &&
+                              audioUrl.isNotEmpty &&
+                              (mensaje == '🎤 Nota de voz' ||
+                                  mensaje == 'Nota de voz')))
                         Text(
                           mensaje,
                           style: TextStyle(
@@ -1385,6 +1730,40 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     } else {
       return '${fecha.day}/${fecha.month}/${fecha.year}';
     }
+  }
+}
+
+/// Botón compacto de la barra de chat (cámara / mic / enviar).
+class _ChatBarIconButton extends StatelessWidget {
+  const _ChatBarIconButton({
+    required this.icon,
+    required this.color,
+    required this.onTap,
+    this.tooltip,
+  });
+
+  final IconData icon;
+  final Color color;
+  final VoidCallback? onTap;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final btn = Material(
+      color: onTap == null ? color.withValues(alpha: 0.45) : color,
+      shape: const CircleBorder(),
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: SizedBox(
+          width: 34,
+          height: 34,
+          child: Icon(icon, color: Colors.white, size: 18),
+        ),
+      ),
+    );
+    if (tooltip == null || tooltip!.isEmpty) return btn;
+    return Tooltip(message: tooltip!, child: btn);
   }
 }
 

@@ -11,9 +11,13 @@ import '../services/taxi_buscando_prefs.dart';
 import '../services/taxi_buscando_sonido_service.dart';
 import '../services/taxi_tarifas_chofer_service.dart';
 import '../services/taxi_ubicacion_matching_service.dart';
+import '../services/tenant_mapa_offline_service.dart';
 import '../utils/pais_mapa_centro.dart';
 import '../utils/taxi_nearby_fleet_util.dart';
+import '../utils/taxi_road_fleet_util.dart';
+import '../widgets/repartidor_map_tile_layer.dart';
 import '../widgets/taxi_uber_map_car.dart';
+import '../widgets/volonex_dialog.dart';
 
 /// Pantalla Taxis del socio: mapa del país de operación + modo «Buscando viajes».
 class TaxiChoferMapaScreen extends StatefulWidget {
@@ -22,6 +26,7 @@ class TaxiChoferMapaScreen extends StatefulWidget {
     this.paisOperacion,
     this.embedded = false,
     this.onBuscandoChanged,
+    this.mapVisible = true,
   });
 
   final String? paisOperacion;
@@ -30,6 +35,10 @@ class TaxiChoferMapaScreen extends StatefulWidget {
   final bool embedded;
 
   final ValueChanged<bool>? onBuscandoChanged;
+
+  /// Visible en IndexedStack (pestaña Viajes). Al volver a true, Cubalink23
+  /// recentra la zona Habana con taxis caminando.
+  final bool mapVisible;
 
   @override
   State<TaxiChoferMapaScreen> createState() => _TaxiChoferMapaScreenState();
@@ -44,6 +53,8 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
   LatLng? _yo;
   bool _buscando = false;
   bool _cargando = true;
+  bool _toggleBusy = false;
+  bool _esCubalink23 = false;
   StreamSubscription<Position>? _posSub;
   Timer? _fleetTimer;
   Timer? _pubGpsTimer;
@@ -61,10 +72,51 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
     _iniciar();
   }
 
+  @override
+  void didUpdateWidget(covariant TaxiChoferMapaScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Cada vez que se abre la pestaña Viajes (Cubalink23): misma zona + taxis.
+    if (!oldWidget.mapVisible &&
+        widget.mapVisible &&
+        _esCubalink23 &&
+        !_buscando &&
+        !_cargando) {
+      unawaited(_aplicarVistaCubalink23Habana(recentrarMapa: true));
+    }
+  }
+
+  /// Cubalink23: mapa Habana + taxis del mismo tamaño circulando por calles.
+  Future<void> _aplicarVistaCubalink23Habana({required bool recentrarMapa}) async {
+    final vista = PaisMapaCentro.cubalink23HabanaViajes;
+    final routes = await TaxiRoadFleetUtil.loadHabanaRoadRoutes();
+    if (!mounted) return;
+    final cars = TaxiRoadFleetUtil.spawnOnRoutes(
+      routes: routes,
+      count: 8,
+      seed: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+    );
+    setState(() {
+      _vista = vista;
+      _yo = vista.center;
+      _nearbyCars = cars;
+    });
+    if (recentrarMapa) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        try {
+          _map.move(vista.center, vista.zoom);
+        } catch (_) {}
+      });
+    }
+  }
+
   Future<void> _iniciar() async {
     final pais = (widget.paisOperacion?.trim().isNotEmpty == true)
         ? widget.paisOperacion!.trim()
         : (await PaisesService.obtenerPaisOperacionActual()) ?? 'Cuba';
+
+    final tenantId = await TenantMapaOfflineService.instance.tenantIdChofer();
+    final esCubalink = PaisMapaCentro.esTenantCubalink23(tenantId);
 
     // Persistencia: local + servidor. Solo se apaga si el usuario lo desactiva.
     final buscandoLocal = await TaxiBuscandoPrefs.esActivo();
@@ -84,22 +136,39 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
       }
     }
 
-    final vista = PaisMapaCentro.forPais(pais);
-    if (!mounted) return;
-    setState(() {
-      _pais = pais;
-      _vista = vista;
-      // Por ahora el auto principal siempre en el centro del mapa (tierra).
-      _yo = vista.center;
-      _buscando = buscando;
-      _cargando = false;
-      _nearbyCars = TaxiNearbyFleetUtil.around(
+    // Cubalink23 (sin buscar): Habana + flota por calles reales.
+    // Otros tenants: vista país como hasta ahora.
+    final vista = esCubalink && !buscando
+        ? PaisMapaCentro.cubalink23HabanaViajes
+        : PaisMapaCentro.forPais(pais);
+
+    List<TaxiFleetCar> fleet;
+    if (esCubalink && !buscando) {
+      final routes = await TaxiRoadFleetUtil.loadHabanaRoadRoutes();
+      fleet = TaxiRoadFleetUtil.spawnOnRoutes(
+        routes: routes,
+        count: 8,
+        seed: pais.hashCode ^ 23,
+      );
+    } else {
+      fleet = TaxiNearbyFleetUtil.around(
         center: vista.center,
         count: 10,
         seed: pais.hashCode,
         minDistM: 8000,
         maxDistM: 65000,
       );
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _pais = pais;
+      _esCubalink23 = esCubalink;
+      _vista = vista;
+      _yo = vista.center;
+      _buscando = buscando;
+      _cargando = false;
+      _nearbyCars = fleet;
     });
     widget.onBuscandoChanged?.call(buscando);
     _startFleetAnim();
@@ -127,15 +196,23 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
       var dt = now.difference(last).inMilliseconds / 1000.0;
       if (dt <= 0 || dt > 0.25) dt = 0.048;
       _fleetSeed++;
-      final anchor = _yo ?? _vista.center;
-      final maxR = _buscando ? 5200.0 : 70000.0;
-      TaxiNearbyFleetUtil.tick(
-        _nearbyCars,
-        dt: dt,
-        anchor: anchor,
-        maxRadiusM: maxR,
-        seed: _fleetSeed,
-      );
+      // Cubalink23: siempre por calles (idle Habana o GPS al buscar).
+      final onRoads = _esCubalink23 &&
+          _nearbyCars.isNotEmpty &&
+          _nearbyCars.every((c) => c.onRoad);
+      if (onRoads) {
+        TaxiRoadFleetUtil.tickOnRoads(_nearbyCars, dt: dt);
+      } else {
+        final anchor = _yo ?? _vista.center;
+        final maxR = _buscando ? 5200.0 : 70000.0;
+        TaxiNearbyFleetUtil.tick(
+          _nearbyCars,
+          dt: dt,
+          anchor: anchor,
+          maxRadiusM: maxR,
+          seed: _fleetSeed,
+        );
+      }
       setState(() {});
     });
   }
@@ -164,25 +241,51 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
   }
 
   /// GPS real → BD (matching). El pin del mapa sigue tu ubicación al buscar.
-  Future<({bool ok, String? err})> _iniciarGpsMatching() async {
+  Future<({bool ok, String? err, String? accionAjustes})> _iniciarGpsMatching()
+      async {
     try {
       final pub = await TaxiUbicacionMatchingService.instance.publicarAhora();
-      if (!pub.ok) return (ok: false, err: pub.err);
+      if (!pub.ok) {
+        return (
+          ok: false,
+          err: pub.err,
+          accionAjustes: pub.accionAjustes,
+        );
+      }
       final pos = pub.pos!;
-      if (!mounted) return (ok: true, err: null);
+      if (!mounted) return (ok: true, err: null, accionAjustes: null);
       final yo = LatLng(pos.latitude, pos.longitude);
-      setState(() {
-        _yo = yo;
-        _nearbyCars = TaxiNearbyFleetUtil.around(
+
+      List<TaxiFleetCar> fleet;
+      if (_esCubalink23) {
+        // Mismo zoom calle + taxis por rutas reales alrededor del GPS.
+        final routes = await TaxiRoadFleetUtil.loadRoadRoutesAround(yo);
+        fleet = TaxiRoadFleetUtil.spawnOnRoutes(
+          routes: routes,
+          count: 8,
+          seed: (pos.latitude * 1000).round() ^ (pos.longitude * 100).round(),
+        );
+      } else {
+        fleet = TaxiNearbyFleetUtil.around(
           center: yo,
           count: 9,
           seed: (pos.latitude * 1000).round() ^ (pos.longitude * 100).round(),
           minDistM: 350,
           maxDistM: 4800,
         );
+      }
+
+      if (!mounted) return (ok: true, err: null, accionAjustes: null);
+      final zoom = _esCubalink23
+          ? PaisMapaCentro.cubalink23StreetZoom
+          : 14.0;
+      setState(() {
+        _yo = yo;
+        _vista = PaisMapaCentro(center: yo, zoom: zoom);
+        _nearbyCars = fleet;
       });
       try {
-        _map.move(yo, 14);
+        _map.move(yo, zoom);
       } catch (_) {}
       _iniciarPublicacionGpsPeriodica();
       _posSub?.cancel();
@@ -193,68 +296,250 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
         ),
       ).listen((p) {
         if (!mounted) return;
-        setState(() => _yo = LatLng(p.latitude, p.longitude));
+        final ll = LatLng(p.latitude, p.longitude);
+        setState(() => _yo = ll);
         if (_buscando) {
           unawaited(
             TaxiUbicacionMatchingService.instance.publicarPosicion(p),
           );
+          // Cubalink23: mantener zoom calle centrado en el GPS del chofer.
+          if (_esCubalink23) {
+            try {
+              _map.move(ll, PaisMapaCentro.cubalink23StreetZoom);
+            } catch (_) {}
+          }
         }
       });
-      return (ok: true, err: null);
+      return (ok: true, err: null, accionAjustes: null);
     } catch (_) {
-      return (ok: false, err: 'No se pudo activar la ubicación.');
+      return (
+        ok: false,
+        err: 'No se pudo activar la ubicación.',
+        accionAjustes: 'app_settings',
+      );
+    }
+  }
+
+  Future<void> _mostrarDialogoUbicacionRequerida({
+    required String mensaje,
+    String? accionAjustes,
+  }) async {
+    if (!mounted) return;
+    final esPermiso = accionAjustes == 'app_settings';
+    final esGps = accionAjustes == 'location_service';
+    final mostrarBoton = accionAjustes != null && accionAjustes.isNotEmpty;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => VolonexDialog(
+        title: 'Ubicación necesaria',
+        leading: const Icon(
+          Icons.location_off_outlined,
+          color: Color(0xFFECEFF1),
+          size: 22,
+        ),
+        maxWidth: 400,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text(
+              'Cerrar',
+              style: TextStyle(color: AppColors.darkTextMuted),
+            ),
+          ),
+        ],
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              mensaje,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppColors.darkText,
+                fontSize: 14,
+                height: 1.4,
+              ),
+            ),
+            if (mostrarBoton) ...[
+              const SizedBox(height: 18),
+              Center(
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.of(ctx).pop();
+                    final ok =
+                        await TaxiUbicacionMatchingService.abrirAjustesUbicacion(
+                      accionAjustes,
+                    );
+                    if (!mounted) return;
+                    if (!ok) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'No se pudieron abrir los ajustes. Ábrelos manualmente en el teléfono.',
+                          ),
+                          backgroundColor: AppColors.error,
+                        ),
+                      );
+                    }
+                  },
+                  icon: Icon(
+                    esGps ? Icons.gps_fixed : Icons.settings,
+                    size: 18,
+                  ),
+                  label: Text(
+                    esPermiso
+                        ? 'Abrir permisos de la app'
+                        : esGps
+                            ? 'Abrir ajustes de ubicación'
+                            : 'Abrir ajustes',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.botonPrincipal,
+                    foregroundColor: AppColors.onAccentButton,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'En iPhone: Ajustes → Privacidad → Ubicación → esta app.\n'
+                'En Android: Ajustes → Ubicación / Permisos de la app.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: AppColors.darkTextMuted,
+                  fontSize: 11,
+                  height: 1.35,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _cerrarModalCargaBuscando() async {
+    if (!mounted) return;
+    final nav = Navigator.of(context, rootNavigator: true);
+    if (nav.canPop()) {
+      nav.pop();
     }
   }
 
   Future<void> _toggleBuscando() async {
+    if (_toggleBusy || _cargando) return;
+    _toggleBusy = true;
+
     final next = !_buscando;
-    if (next) {
-      // Primero GPS + disponibilidad; el sonido solo si quedó activo de verdad.
-      final gps = await _iniciarGpsMatching();
-      if (!gps.ok) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              gps.err ?? 'Activa la ubicación para buscar viajes.',
-            ),
-            backgroundColor: AppColors.error,
-          ),
-        );
-        return;
-      }
-      await TaxiBuscandoPrefs.setActivo(true);
-      final res = await TaxiTarifasChoferService.instance.setDisponible(true);
-      if (!res.ok) {
-        await TaxiBuscandoPrefs.setActivo(false);
-        _pararPublicacionGps();
-        await _posSub?.cancel();
-        _posSub = null;
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(res.err ?? 'Configura tu tarifa en Ajustes de taxis'),
-            backgroundColor: AppColors.error,
-          ),
-        );
-        return;
-      }
-      try {
-        await TaxiBuscandoSonidoService.alActivar();
-      } catch (e) {
-        debugPrint('⚠️ Sonido buscando viajes: $e');
-      }
-    } else {
-      try {
-        await TaxiBuscandoSonidoService.alDesactivar();
-      } catch (e) {
-        debugPrint('⚠️ Sonido buscando viajes: $e');
-      }
-      await TaxiBuscandoPrefs.setActivo(false);
-      await TaxiTarifasChoferService.instance.setDisponible(false);
-      _pararPublicacionGps();
+    final activando = next;
+
+    if (!mounted) {
+      _toggleBusy = false;
+      return;
     }
+
+    unawaited(
+      showVolonexProgressDialog(
+        context,
+        title: activando ? 'Activando viajes' : 'Desactivando viajes',
+        message: activando
+            ? 'Activando su cuenta para empezar a recibir viajes…'
+            : 'Desactivando su cuenta. Dejará de recibir ofertas de viaje…',
+      ),
+    );
+
+    final started = DateTime.now();
+    var okFinal = false;
+    String? errorMsg;
+    String? accionAjustes;
+
+    try {
+      if (activando) {
+        // Primero GPS + disponibilidad; el sonido solo si quedó activo de verdad.
+        final gps = await _iniciarGpsMatching();
+        if (!gps.ok) {
+          errorMsg = gps.err ?? 'Activa la ubicación para buscar viajes.';
+          accionAjustes = gps.accionAjustes;
+        } else {
+          await TaxiBuscandoPrefs.setActivo(true);
+          final res =
+              await TaxiTarifasChoferService.instance.setDisponible(true);
+          if (!res.ok) {
+            await TaxiBuscandoPrefs.setActivo(false);
+            _pararPublicacionGps();
+            await _posSub?.cancel();
+            _posSub = null;
+            errorMsg = res.err ?? 'Configura tu tarifa en Ajustes de taxis';
+          } else {
+            try {
+              await TaxiBuscandoSonidoService.alActivar();
+            } catch (e) {
+              debugPrint('⚠️ Sonido buscando viajes: $e');
+            }
+            okFinal = true;
+          }
+        }
+      } else {
+        try {
+          await TaxiBuscandoSonidoService.alDesactivar();
+        } catch (e) {
+          debugPrint('⚠️ Sonido buscando viajes: $e');
+        }
+        await TaxiBuscandoPrefs.setActivo(false);
+        await TaxiTarifasChoferService.instance.setDisponible(false);
+        _pararPublicacionGps();
+        okFinal = true;
+      }
+
+      // Modal visible unos segundos para feedback claro.
+      const minShow = Duration(milliseconds: 2200);
+      final elapsed = DateTime.now().difference(started);
+      if (elapsed < minShow) {
+        await Future<void>.delayed(minShow - elapsed);
+      }
+    } finally {
+      await _cerrarModalCargaBuscando();
+      _toggleBusy = false;
+    }
+
     if (!mounted) return;
+
+    if (!okFinal) {
+      if (errorMsg != null) {
+        // Si el mensaje es de ubicación, diálogo centrado con acceso a ajustes.
+        final esUbicacion = accionAjustes != null ||
+            errorMsg.toLowerCase().contains('ubicación') ||
+            errorMsg.toLowerCase().contains('gps') ||
+            errorMsg.toLowerCase().contains('localiza');
+        if (esUbicacion) {
+          await _mostrarDialogoUbicacionRequerida(
+            mensaje: errorMsg,
+            accionAjustes: accionAjustes,
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(errorMsg),
+              backgroundColor: AppColors.error,
+            ),
+          );
+        }
+      }
+      return;
+    }
+
     setState(() => _buscando = next);
     widget.onBuscandoChanged?.call(next);
     if (next) {
@@ -264,6 +549,10 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
       _radar.reset();
       await _posSub?.cancel();
       _posSub = null;
+      // Volver a la zona Habana al salir de «buscar» (solo Cubalink23).
+      if (_esCubalink23) {
+        unawaited(_aplicarVistaCubalink23Habana(recentrarMapa: true));
+      }
     }
   }
 
@@ -278,6 +567,10 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Mismo tamaño en flota demo Cubalink23 (credibilidad visual).
+    const fleetSize = 30.0;
+    final yoSize = _esCubalink23 ? fleetSize : 40.0;
+
     final contenido = _cargando
         ? const Center(
             child: CircularProgressIndicator(color: Color(0xFFFF9800)),
@@ -291,23 +584,17 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
                   initialCenter: _vista.center,
                   initialZoom: _vista.zoom,
                   minZoom: 3,
-                  maxZoom: 16,
+                  maxZoom: _esCubalink23 ? 17 : 16,
                   backgroundColor: const Color(0xFFE8EEF4),
                   interactionOptions: const InteractionOptions(
                     flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
                   ),
                 ),
                 children: [
-                  // Mismo raster Voyager que el fallback de CubaLink taxi
-                  // (sin {r}: evita warning retina / tiles distintos).
-                  TileLayer(
-                    urlTemplate:
-                        'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-                    subdomains: const ['a', 'b', 'c', 'd'],
-                    userAgentPackageName: 'com.logiflow.repartidor',
-                    maxZoom: 16,
-                    maxNativeZoom: 16,
-                    retinaMode: false,
+                  RepartidorMapTileLayer(
+                    // Cubalink23 zoom calle: MBTiles suele quedar en blanco → online.
+                    preferOnline: _esCubalink23,
+                    maxZoom: _esCubalink23 ? 17 : 16,
                   ),
                   if (_nearbyCars.isNotEmpty)
                     MarkerLayer(
@@ -315,10 +602,13 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
                         for (final c in _nearbyCars)
                           Marker(
                             point: c.point,
-                            width: 32,
-                            height: 32,
+                            width: fleetSize,
+                            height: fleetSize,
                             alignment: Alignment.center,
-                            child: TaxiUberMapCar(headingDeg: c.headingDeg),
+                            child: TaxiUberMapCar(
+                              size: fleetSize,
+                              headingDeg: c.headingDeg,
+                            ),
                           ),
                       ],
                     ),
@@ -327,9 +617,9 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
                       markers: [
                         Marker(
                           point: _yo!,
-                          width: 40,
-                          height: 40,
-                          child: const TaxiUberMapCar(size: 40),
+                          width: yoSize,
+                          height: yoSize,
+                          child: TaxiUberMapCar(size: yoSize),
                         ),
                       ],
                     ),

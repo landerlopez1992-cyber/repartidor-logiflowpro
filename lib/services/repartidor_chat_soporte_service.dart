@@ -17,9 +17,16 @@ class RepartidorChatSoporteService {
   /// Texto visible en lista / notificación (evita líneas vacías).
   static String textoPreview(Map<String, dynamic> mensaje) {
     final texto = mensaje['mensaje']?.toString().trim() ?? '';
-    if (texto.isNotEmpty) return texto;
+    if (texto.isNotEmpty &&
+        texto != '🎤 Nota de voz' &&
+        texto != 'Nota de voz') {
+      return texto;
+    }
+    final audio = mensaje['audio_url']?.toString().trim() ?? '';
+    if (audio.isNotEmpty) return 'Nota de voz';
     final foto = mensaje['foto_url']?.toString().trim() ?? '';
     if (foto.isNotEmpty) return 'Imagen adjunta';
+    if (texto.isNotEmpty) return texto;
     return '';
   }
 

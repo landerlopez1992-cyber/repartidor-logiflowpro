@@ -3,7 +3,10 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../constants/repartidor_chat_origen.dart';
 import '../main.dart';
+import 'network_timeout.dart';
+import 'repartidor_chat_soporte_service.dart';
 import 'sync_service.dart';
 
 /// Caché de lectura y cola de mensajes de soporte para modo offline.
@@ -56,10 +59,223 @@ class RepartidorPantallasOfflineService {
 
   // ——— Chat mensajes (conversación) ———
 
+  /// Al abrir la app (con internet): descarga historial de chat empresa↔repartidor
+  /// y lo deja en caché para leerlo sin red.
+  static Future<void> prefetchChatSoporteAlAbrirApp(String authId) async {
+    if (!SyncService().isOnline) return;
+    final uid = authId.trim();
+    if (uid.isEmpty) return;
+    try {
+      String? tenantId = await cargarTenantIdRepartidor(uid);
+      if (tenantId == null || tenantId.isEmpty) {
+        try {
+          final userData = await ejecutarConTimeout(
+            supabase
+                .from('usuarios')
+                .select('tenant_id')
+                .eq('auth_id', uid)
+                .maybeSingle(),
+            timeout: const Duration(seconds: 8),
+          );
+          tenantId = userData?['tenant_id']?.toString();
+        } catch (_) {}
+      }
+
+      Future<List<dynamic>?> queryCanal({required bool soloAbiertas}) async {
+        var q = supabase
+            .from('conversaciones_soporte')
+            .select('id, origen_participante, usuario_web_id, tenant_id, estado')
+            .eq('repartidor_auth_id', uid)
+            .or(RepartidorChatSoporteService.filtroOrigenEmpresaRepartidor);
+        if (soloAbiertas) {
+          q = q.eq('estado', 'ABIERTA');
+        }
+        final tid = tenantId;
+        if (tid != null && tid.isNotEmpty) {
+          q = q.eq('tenant_id', tid);
+        }
+        return await ejecutarConTimeout(
+          q.order('updated_at', ascending: false).limit(5),
+          timeout: const Duration(seconds: 12),
+        );
+      }
+
+      String? pickConvId(List<dynamic>? rows) {
+        if (rows == null) return null;
+        for (final row in rows) {
+          if (row is! Map) continue;
+          final id = row['id']?.toString();
+          if (id == null || id.isEmpty) continue;
+          if (row['usuario_web_id'] != null) continue;
+          if (!RepartidorChatOrigen.esCanalEmpresaRepartidor(
+            row['origen_participante']?.toString(),
+          )) {
+            continue;
+          }
+          tenantId ??= row['tenant_id']?.toString();
+          return id;
+        }
+        return null;
+      }
+
+      // Incluir chats CERRADOS (cierre auto 12h) para poder leer historial offline.
+      String? convId = pickConvId(await queryCanal(soloAbiertas: true));
+      convId ??= pickConvId(await queryCanal(soloAbiertas: false));
+
+      if (convId == null || convId.isEmpty) {
+        print('💬 Boot chat: sin conversación para caché');
+        return;
+      }
+
+      await guardarMetaChat(uid, conversacionId: convId, tenantId: tenantId);
+
+      final mensajesRaw = await ejecutarConTimeout(
+        supabase
+            .from('mensajes_soporte')
+            .select('*')
+            .eq('conversacion_id', convId)
+            .order('created_at', ascending: true)
+            .limit(400),
+        timeout: const Duration(seconds: 18),
+      );
+      if (mensajesRaw == null) return;
+
+      final mensajes = (mensajesRaw as List)
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+
+      await guardarMensajesChat(convId, mensajes);
+
+      // Lista de hilos (por remitente empresa) para la pantalla de chats.
+      final map = <String, Map<String, dynamic>>{};
+      for (final m in mensajes) {
+        final remitenteId = m['remitente_auth_id']?.toString();
+        if (remitenteId == null ||
+            remitenteId.isEmpty ||
+            remitenteId == uid) {
+          continue;
+        }
+        final preview = RepartidorChatSoporteService.textoPreview(m);
+        if (preview.isEmpty) continue;
+        final created = m['created_at']?.toString() ?? '';
+
+        if (map.containsKey(remitenteId)) {
+          final actual = map[remitenteId]!;
+          final fa = DateTime.tryParse(
+                actual['ultimo_mensaje_fecha']?.toString() ?? '',
+              ) ??
+              DateTime.fromMillisecondsSinceEpoch(0);
+          final fn = DateTime.tryParse(created) ?? fa;
+          if (fn.isAfter(fa)) {
+            actual['ultimo_mensaje'] = preview;
+            actual['ultimo_mensaje_fecha'] =
+                created.isNotEmpty ? created : fa.toIso8601String();
+          }
+        } else {
+          Map<String, dynamic>? rem = await cargarRemitenteChat(remitenteId);
+          if (rem == null) {
+            try {
+              final remote = await ejecutarConTimeout(
+                supabase
+                    .from('usuarios')
+                    .select('nombre, rol, foto_perfil, email')
+                    .eq('auth_id', remitenteId)
+                    .maybeSingle(),
+                timeout: const Duration(seconds: 6),
+              );
+              if (remote != null) {
+                rem = Map<String, dynamic>.from(remote);
+                await guardarRemitenteChat(
+                  remitenteId,
+                  nombre: rem['nombre']?.toString() ?? 'Administrador',
+                  rol: rem['rol']?.toString() ?? 'ADMINISTRADOR',
+                  foto: rem['foto_perfil']?.toString(),
+                  email: rem['email']?.toString(),
+                );
+              }
+            } catch (_) {}
+          }
+          if (rem != null &&
+              !RepartidorChatOrigen.esRolEmpresa(rem['rol']?.toString())) {
+            continue;
+          }
+          map[remitenteId] = {
+            'remitente_auth_id': remitenteId,
+            'remitente_nombre':
+                rem?['nombre']?.toString() ?? 'Administrador',
+            'remitente_rol': rem?['rol']?.toString() ?? 'ADMINISTRADOR',
+            'remitente_foto': rem?['foto_perfil'],
+            'remitente_email': rem?['email'],
+            'ultimo_mensaje': preview,
+            'ultimo_mensaje_fecha':
+                created.isNotEmpty ? created : DateTime.now().toIso8601String(),
+            'mensajes_no_leidos': 0,
+            'conversacion_id': convId,
+          };
+        }
+      }
+
+      final lista = map.values.toList();
+      if (lista.isEmpty && mensajes.isNotEmpty) {
+        // Solo mensajes del repartidor: fila sintética para abrir el hilo.
+        String preview = 'Toca para escribir a tu empresa';
+        String fecha = DateTime.now().toIso8601String();
+        for (final m in mensajes.reversed) {
+          if (m['remitente_auth_id']?.toString() != uid) continue;
+          final p = RepartidorChatSoporteService.textoPreview(m);
+          if (p.isEmpty) continue;
+          preview = p;
+          fecha = m['created_at']?.toString() ?? fecha;
+          break;
+        }
+        lista.add({
+          'remitente_auth_id': 'empresa',
+          'remitente_nombre': 'Administrador',
+          'remitente_rol': 'ADMINISTRADOR',
+          'ultimo_mensaje': preview,
+          'ultimo_mensaje_fecha': fecha,
+          'mensajes_no_leidos': 0,
+          'conversacion_id': convId,
+          'modo_completo': true,
+          'modo_conversacion_completa': true,
+        });
+      } else {
+        lista.sort((a, b) {
+          final fa = DateTime.tryParse(
+                a['ultimo_mensaje_fecha']?.toString() ?? '',
+              ) ??
+              DateTime.fromMillisecondsSinceEpoch(0);
+          final fb = DateTime.tryParse(
+                b['ultimo_mensaje_fecha']?.toString() ?? '',
+              ) ??
+              DateTime.fromMillisecondsSinceEpoch(0);
+          return fb.compareTo(fa);
+        });
+      }
+
+      await guardarConversacionesChat(uid, lista);
+      await sincronizarMensajesSoporte();
+      print(
+        '💬 Boot chat: ${mensajes.length} mensajes en caché '
+        '(conv ${convId.substring(0, convId.length > 8 ? 8 : convId.length)}…)',
+      );
+    } catch (e) {
+      print('⚠️ prefetchChatSoporteAlAbrirApp: $e');
+    }
+  }
+
   static Future<void> guardarMensajesChat(String conversacionId, List<Map<String, dynamic>> mensajes) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('$_chatMensajesKey$conversacionId', jsonEncode(mensajes));
+      // Limitar tamaño en disco (últimos 400).
+      final trimmed = mensajes.length > 400
+          ? mensajes.sublist(mensajes.length - 400)
+          : mensajes;
+      await prefs.setString(
+        '$_chatMensajesKey$conversacionId',
+        jsonEncode(trimmed),
+      );
     } catch (_) {}
   }
 

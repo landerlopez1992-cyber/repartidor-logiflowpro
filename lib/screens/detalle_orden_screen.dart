@@ -2408,9 +2408,11 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
                 _formatearFecha(widget.orden.fechaEntrega)
               ),
             ],
-            const SizedBox(height: 8),
-            _buildInfoRow(Icons.description, 'Descripción', widget.orden.descripcion),
-            if (widget.orden.notas != null && widget.orden.notas!.isNotEmpty) ...[
+            if (widget.orden.descripcion.trim().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _buildInfoRow(Icons.description, 'Descripción', widget.orden.descripcion),
+            ],
+            if (widget.orden.notas != null && widget.orden.notas!.trim().isNotEmpty) ...[
               const SizedBox(height: 8),
               _buildInfoRow(Icons.note, 'Notas Adicionales', widget.orden.notas!),
             ],

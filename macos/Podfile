@@ -29,6 +29,15 @@ flutter_macos_podfile_setup
 target 'Runner' do
   use_frameworks!
 
+  # El trunk local de CocoaPods a menudo no trae 8.1.2; Firebase 11.15 acepta ~> 8.1.
+  # Sin este pin, `flutter run` falla con: could not find compatible versions for
+  # GoogleUtilities/Environment (snapshot 8.1.2 vs specs hasta 8.1.0).
+  pod 'GoogleUtilities', '8.1.0'
+
+  # Mismo problema CDN: locks apuntando a versiones que el trunk local no tiene.
+  pod 'GoogleDataTransport', '10.1.0'
+  pod 'PromisesObjC', '2.4.0'
+
   flutter_install_all_macos_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
     inherit! :search_paths

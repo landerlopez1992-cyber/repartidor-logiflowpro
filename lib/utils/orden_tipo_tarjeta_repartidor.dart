@@ -97,7 +97,7 @@ class OrdenTipoTarjetaRepartidorUtil {
       case OrdenTipoTarjetaRepartidor.entregaColaborador:
         return const OrdenTipoTarjetaInfo(
           tipo: OrdenTipoTarjetaRepartidor.entregaColaborador,
-          etiqueta: 'Pedido colaborador',
+          etiqueta: 'Pedido de un vendedor externo',
           icono: Icons.shopping_bag_outlined,
           colorAcento: Color(0xFF4DB6AC),
           colorFondo: _fondoTarjeta,

@@ -18,6 +18,7 @@ import 'detalle_orden_screen.dart';
 import '../config/app_colors.dart';
 import '../widgets/volonex_dialog.dart';
 import '../widgets/taxi_uber_map_car.dart';
+import '../widgets/repartidor_map_tile_layer.dart';
 
 /// Pantalla que muestra la ruta optimizada con todas las órdenes numeradas en el mapa
 /// Similar a Uber cuando tiene múltiples pedidos
@@ -1628,15 +1629,13 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
               ),
             ),
             children: [
-              // Mismo estilo base que el mapa moderno de taxi (Carto Voyager).
-              TileLayer(
-                urlTemplate:
-                    'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-                subdomains: const ['a', 'b', 'c', 'd'],
-                userAgentPackageName: 'com.logiflow.repartidor',
-                maxZoom: 16,
-                maxNativeZoom: 16,
-                retinaMode: false,
+              // MBTiles del tenant (offline) o Carto con caché en disco.
+              RepartidorMapTileLayer(
+                tenantId: _ordenesOrdenadas.isNotEmpty
+                    ? _ordenesOrdenadas.first.tenantId
+                    : (widget.ordenes.isNotEmpty
+                        ? widget.ordenes.first.tenantId
+                        : null),
               ),
 
               // Ruta real de navegación (no líneas rectas).

@@ -177,6 +177,8 @@ class RepartidorHistorialPagoService {
     if (tipo.startsWith('debito')) return true;
     if (tipo.startsWith('comision_viaje_cash')) return true;
     if (tipo.startsWith('retencion_comision')) return true;
+    if (tipo == 'transferencia_a_wallet_cliente') return true;
+    if (tipo == 'transferencia_a_fianza_taxi') return true;
     return false;
   }
 
@@ -196,6 +198,10 @@ class RepartidorHistorialPagoService {
         return 'Retiro a nómina (solicitud)';
       case 'debito_nomina_aceptada':
         return 'Pago de nómina (neto)';
+      case 'transferencia_a_wallet_cliente':
+        return 'Transferencia a billetera de cliente';
+      case 'transferencia_a_fianza_taxi':
+        return 'Transferencia a fianza de viajes';
       case 'retencion_comision_taxi_cash':
         return detalle.trim().isNotEmpty
             ? detalle.trim()

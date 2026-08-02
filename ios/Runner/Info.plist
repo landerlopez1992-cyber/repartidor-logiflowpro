@@ -45,6 +45,16 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Se usa el micrófono para enviar notas de voz a tu empresa.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Se usa la cámara para fotos de entrega, perfil y chat.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Se usa la galería para fotos de entrega, perfil y chat.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Se usa tu ubicación para entregas, rutas y viajes.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Se usa tu ubicación para entregas, rutas y viajes en segundo plano.</string>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>comgooglemaps</string>

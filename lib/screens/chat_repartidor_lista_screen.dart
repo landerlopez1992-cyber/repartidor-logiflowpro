@@ -52,6 +52,34 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
     return n;
   }
 
+  bool _filaListaEsVisible(Map<String, dynamic> c) {
+    if (c['modo_completo'] == true ||
+        c['modo_conversacion_completa'] == true) {
+      return true;
+    }
+    return RepartidorChatOrigen.esRolEmpresa(
+      c['remitente_rol']?.toString(),
+    );
+  }
+
+  /// Elige la primera conversación válida del canal empresa↔repartidor.
+  String? _primerConvIdCanalEmpresa(List<dynamic>? rows) {
+    if (rows == null) return null;
+    for (final row in rows) {
+      if (row is! Map) continue;
+      final id = row['id']?.toString();
+      if (id == null || id.isEmpty) continue;
+      if (row['usuario_web_id'] != null) continue;
+      if (!RepartidorChatOrigen.esCanalEmpresaRepartidor(
+        row['origen_participante']?.toString(),
+      )) {
+        continue;
+      }
+      return id;
+    }
+    return null;
+  }
+
   Future<void> _aplicarConversacionesLocales(String authId) async {
     var lista =
         await RepartidorPantallasOfflineService.cargarConversacionesChat(authId);
@@ -72,16 +100,19 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
       }
     }
 
-    if (lista != null && lista!.isNotEmpty && mounted) {
-      final limpias = lista!
-          .where((c) {
-            if (c['modo_completo'] == true) return true;
-            return RepartidorChatOrigen.esRolEmpresa(
-              c['remitente_rol']?.toString(),
-            );
+    if (lista != null && lista.isNotEmpty && mounted) {
+      final limpias = lista
+          .where(_filaListaEsVisible)
+          .map((c) {
+            final m = Map<String, dynamic>.from(c);
+            // Unificar flag de modo completo (caché boot vs lista).
+            if (m['modo_conversacion_completa'] == true) {
+              m['modo_completo'] = true;
+            }
+            return m;
           })
-          .map((c) => Map<String, dynamic>.from(c))
           .toList();
+      if (limpias.isEmpty) return;
       setState(() {
         _conversaciones = limpias;
         _cargando = false;
@@ -111,22 +142,26 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
     final meta = await RepartidorPantallasOfflineService.cargarMetaChat(user.id);
     if (meta != null) {
       final metaId = meta.conversacionId;
-      if (metaId != null &&
-          metaId.isNotEmpty &&
-          await RepartidorChatSoporteService.esConversacionCanalRepartidor(
-            metaId,
-          )) {
-        _conversacionId = metaId;
-        _tenantId = meta.tenantId;
-      } else {
-        // Meta apuntaba a chat web/cliente: no usar.
-        _conversacionId = null;
+      if (metaId != null && metaId.isNotEmpty) {
+        // Sin red: confiar en meta local. Con red: validar canal.
+        final okCanal = !SyncService().isOnline ||
+            await RepartidorChatSoporteService.esConversacionCanalRepartidor(
+              metaId,
+            );
+        if (okCanal) {
+          _conversacionId = metaId;
+          _tenantId = meta.tenantId;
+        } else {
+          // Meta apuntaba a chat web/cliente: no usar.
+          _conversacionId = null;
+        }
       }
     }
 
     _tenantId ??=
         await RepartidorPantallasOfflineService.cargarTenantIdRepartidor(user.id);
 
+    // Mostrar caché de inmediato (incluye chats cerrados) antes de la red.
     await _aplicarConversacionesLocales(user.id);
 
     if (_conversacionId != null && SyncService().isOnline) {
@@ -155,38 +190,31 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
         _tenantId = userData?['tenant_id']?.toString();
       }
 
-      // Solo canal empresa↔repartidor (excluye cliente_web / membresía).
-      var query = supabase
-          .from('conversaciones_soporte')
-          .select('id, origen_participante, usuario_web_id')
-          .eq('repartidor_auth_id', user.id)
-          .eq('estado', 'ABIERTA')
-          .or(RepartidorChatSoporteService.filtroOrigenEmpresaRepartidor);
-
-      if (_tenantId != null && _tenantId!.isNotEmpty) {
-        query = query.eq('tenant_id', _tenantId!);
-      }
-
-      final conversaciones = await ejecutarConTimeout(
-        query.order('updated_at', ascending: false).limit(5),
-        timeout: const Duration(seconds: 10),
-      );
-
-      String? convIdValida;
-      if (conversaciones != null) {
-        for (final row in conversaciones) {
-          final id = row['id']?.toString();
-          if (id == null || id.isEmpty) continue;
-          if (row['usuario_web_id'] != null) continue;
-          if (!RepartidorChatOrigen.esCanalEmpresaRepartidor(
-            row['origen_participante']?.toString(),
-          )) {
-            continue;
-          }
-          convIdValida = id;
-          break;
+      // 1) Preferir ABIERTA; 2) si el sistema cerró el chat (12h), seguir
+      // mostrando el hilo reciente (CERRADA u otro estado) para leer historial.
+      Future<List<dynamic>?> queryCanal({required bool soloAbiertas}) async {
+        var query = supabase
+            .from('conversaciones_soporte')
+            .select('id, origen_participante, usuario_web_id, estado')
+            .eq('repartidor_auth_id', user.id)
+            .or(RepartidorChatSoporteService.filtroOrigenEmpresaRepartidor);
+        if (soloAbiertas) {
+          query = query.eq('estado', 'ABIERTA');
         }
+        final tid = _tenantId;
+        if (tid != null && tid.isNotEmpty) {
+          query = query.eq('tenant_id', tid);
+        }
+        return await ejecutarConTimeout(
+          query.order('updated_at', ascending: false).limit(5),
+          timeout: const Duration(seconds: 10),
+        );
       }
+
+      String? convIdValida =
+          _primerConvIdCanalEmpresa(await queryCanal(soloAbiertas: true));
+      convIdValida ??=
+          _primerConvIdCanalEmpresa(await queryCanal(soloAbiertas: false));
 
       if (convIdValida != null) {
         _conversacionId = convIdValida;
@@ -200,18 +228,9 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
           _suscribirseAMensajes();
         }
       } else {
-        _conversacionId = null;
-        if (mounted) {
-          setState(() {
-            _conversaciones = [];
-            _cargando = false;
-          });
-        }
-        // Limpiar caché local contaminada con hilos web.
-        await RepartidorPantallasOfflineService.guardarConversacionesChat(
-          user.id,
-          [],
-        );
+        // Sin hilos en servidor: NO borrar caché local (historial offline).
+        await _aplicarConversacionesLocales(user.id);
+        if (mounted) setState(() => _cargando = false);
       }
     } catch (e) {
       print('❌ Error cargando datos: $e');

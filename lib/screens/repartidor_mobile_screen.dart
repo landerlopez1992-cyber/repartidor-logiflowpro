@@ -135,6 +135,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   bool _modoOrdenCercania = false;
   bool _ordenandoCercania = false;
   Map<String, int> _secuenciaCercania = {};
+  /// Tarjetas de orden expandidas en el home (por defecto colapsadas).
+  final Set<String> _ordenesTarjetaExpandidas = {};
   Map<String, double> _distanciaMetrosCercania = {};
   
   // Estado de conexión y sincronización
@@ -4049,109 +4051,117 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                           },
                         ),
                       ),
-                      if (!_esRecolector)
+                      if (!_esRecolector || _tieneRutaOptimizada)
                         SliverToBoxAdapter(
                           child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 4,
-                            ),
+                            padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
                             color: AppColors.darkBg,
                             child: Center(
                               child: Wrap(
                                 alignment: WrapAlignment.center,
-                                spacing: 8,
-                                runSpacing: 8,
+                                spacing: 6,
+                                runSpacing: 6,
                                 children: [
-                                  ElevatedButton.icon(
-                                    onPressed: _ordenandoCercania
-                                        ? null
-                                        : _ordenarOrdenesPorCercania,
-                                    icon: _ordenandoCercania
-                                        ? const SizedBox(
-                                            width: 18,
-                                            height: 18,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: Colors.white,
-                                            ),
-                                          )
-                                        : const Icon(Icons.near_me, size: 20),
-                                    label: Text(
-                                      _modoOrdenCercania
-                                          ? 'Actualizar cercanía'
-                                          : 'Ordenar por cercanía',
-                                      style: const TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold,
+                                  if (!_esRecolector)
+                                    ElevatedButton.icon(
+                                      onPressed: _ordenandoCercania
+                                          ? null
+                                          : _ordenarOrdenesPorCercania,
+                                      icon: _ordenandoCercania
+                                          ? const SizedBox(
+                                              width: 14,
+                                              height: 14,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: Colors.white,
+                                              ),
+                                            )
+                                          : const Icon(Icons.near_me, size: 15),
+                                      label: Text(
+                                        _modoOrdenCercania
+                                            ? 'Actualizar'
+                                            : 'Por cercanía',
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor:
+                                            const Color(0xFF1976D2),
+                                        foregroundColor: Colors.white,
+                                        visualDensity: VisualDensity.compact,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 8,
+                                        ),
+                                        minimumSize: const Size(0, 34),
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(18),
+                                        ),
                                       ),
                                     ),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor:
-                                          const Color(0xFF1976D2),
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 20,
-                                        vertical: 10,
+                                  if (_tieneRutaOptimizada)
+                                    ElevatedButton.icon(
+                                      onPressed: () => _mostrarRutaOptimizada(),
+                                      icon: const Icon(Icons.route, size: 15),
+                                      label: const Text(
+                                        'Ruta óptima',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                        ),
                                       ),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(25),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor:
+                                            const Color(0xFF4CAF50),
+                                        foregroundColor: Colors.white,
+                                        visualDensity: VisualDensity.compact,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 8,
+                                        ),
+                                        minimumSize: const Size(0, 34),
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                        elevation: 0,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(18),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  if (_modoOrdenCercania)
+                                  if (!_esRecolector && _modoOrdenCercania)
                                     OutlinedButton(
                                       onPressed: _desactivarOrdenCercania,
                                       style: OutlinedButton.styleFrom(
                                         foregroundColor:
                                             AppColors.darkTextMuted,
+                                        visualDensity: VisualDensity.compact,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 8,
+                                        ),
+                                        minimumSize: const Size(0, 34),
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
                                         side: const BorderSide(
                                           color: AppColors.darkBorder,
                                         ),
                                         shape: RoundedRectangleBorder(
                                           borderRadius:
-                                              BorderRadius.circular(25),
+                                              BorderRadius.circular(18),
                                         ),
                                       ),
-                                      child: const Text('Quitar orden'),
+                                      child: const Text(
+                                        'Quitar',
+                                        style: TextStyle(fontSize: 11),
+                                      ),
                                     ),
                                 ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      if (_tieneRutaOptimizada)
-                        SliverToBoxAdapter(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            color: AppColors.darkBg,
-                            child: Center(
-                              child: ElevatedButton.icon(
-                                onPressed: () => _mostrarRutaOptimizada(),
-                                icon: const Icon(Icons.route, size: 20),
-                                label: const Text(
-                                  'Ver Ruta Optimizada',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF4CAF50),
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 24,
-                                    vertical: 12,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(25),
-                                  ),
-                                  elevation: 2,
-                                ),
                               ),
                             ),
                           ),
@@ -4159,30 +4169,29 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                       SliverToBoxAdapter(
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 8,
+                            horizontal: 10,
+                            vertical: 6,
                           ),
                           color: AppColors.darkBg,
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Row(
+                          child: Center(
+                            child: Wrap(
+                              alignment: WrapAlignment.center,
+                              spacing: 4,
+                              runSpacing: 4,
                               children: [
                                 if (_esRecolector) ...[
                                   _buildFiltroChip(
                                     'ACTIVAS',
                                     _filtroEstado == 'ACTIVAS',
                                   ),
-                                  const SizedBox(width: 8),
                                   _buildFiltroChip(
                                     'POR RECOGER',
                                     _filtroEstado == 'POR RECOGER',
                                   ),
-                                  const SizedBox(width: 8),
                                   _buildFiltroChip(
                                     'EN CAMINO',
                                     _filtroEstado == 'EN CAMINO',
                                   ),
-                                  const SizedBox(width: 8),
                                   _buildFiltroChip(
                                     'RECOGIDO',
                                     _filtroEstado == 'RECOGIDO',
@@ -4193,28 +4202,23 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                                     _filtroEstado == 'ACTIVAS',
                                   ),
                                   if (_esRepartidorMaster) ...[
-                                    const SizedBox(width: 8),
                                     _buildFiltroRepartidorChip(
                                       'MÍAS',
                                       _filtroRepartidor == 'MÍAS',
                                     ),
-                                    const SizedBox(width: 8),
                                     _buildFiltroRepartidorChip(
                                       'TODAS',
                                       _filtroRepartidor == null,
                                     ),
                                   ],
-                                  const SizedBox(width: 8),
                                   _buildFiltroChip(
                                     'URGENTES',
                                     _filtroEstado == 'URGENTES',
                                   ),
-                                  const SizedBox(width: 8),
                                   _buildFiltroChip(
                                     'ATRASADAS',
                                     _filtroEstado == 'ATRASADAS',
                                   ),
-                                  const SizedBox(width: 8),
                                   _buildFiltroChip(
                                     'ENTREGADAS',
                                     _filtroEstado == 'ENTREGADAS',
@@ -4311,6 +4315,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                     : TaxiChoferMapaScreen(
                         embedded: true,
                         paisOperacion: _paisOperacion,
+                        mapVisible: _pestanaHomeViajes,
                         onBuscandoChanged: (activo) {
                           if (!mounted) return;
                           setState(() => _taxiBuscandoActivo = activo);
@@ -4486,6 +4491,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       label: label,
       selected: isSelected,
       selectedColor: const Color(0xFF2196F3),
+      compact: true,
       onTap: () {
         setState(() {
           _filtroEstado = label;
@@ -4506,6 +4512,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       selected: isSelected,
       selectedColor: esMias ? AppColors.exito : AppColors.botonPrincipal,
       icon: esMias ? Icons.person : null,
+      compact: true,
       onTap: () {
         setState(() {
           _filtroRepartidor = label == 'MÍAS' ? 'MÍAS' : null;
@@ -4563,6 +4570,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         : orden.estado == 'ENTREGADO EN SUCURSAL'
             ? 'ENTREGADO EN SUCURSAL'
             : 'POR ENVIAR';
+    final expandida = _ordenesTarjetaExpandidas.contains(orden.id);
     
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -4664,45 +4672,49 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                       ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  _buildRemesaStatusChip(estado),
+                  const SizedBox(width: 4),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildRemesaStatusChip(estado),
+                      const SizedBox(width: 2),
+                      _buildBotonExpandirTarjeta(orden.id, expandida),
+                    ],
+                  ),
                 ],
               ),
-              
-              const SizedBox(height: 12),
-              
-              // Cantidad a cobrar destacada
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: RemesaPuraUiTheme.fondoDestacado,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: RemesaPuraUiTheme.borde.withOpacity(0.65),
-                    width: 1,
-                  ),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(
-                      Icons.monetization_on,
-                      color: RemesaPuraUiTheme.acento,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Cantidad: \$${cantidadRemesa.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        color: AppColors.darkText,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
+
+              const SizedBox(height: 8),
+              Text(
+                'Cantidad: \$${cantidadRemesa.toStringAsFixed(2)}',
+                style: const TextStyle(
+                  color: AppColors.darkText,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-
+              const SizedBox(height: 6),
+              _buildInfoRow(Icons.person, 'De:', orden.emisor, maxLines: 1),
+              const SizedBox(height: 4),
+              _buildInfoRow(
+                Icons.person_outline,
+                'Para:',
+                orden.receptor,
+                maxLines: 1,
+              ),
+              if (!expandida) ...[
+                const SizedBox(height: 4),
+                _buildInfoRow(
+                  Icons.location_on,
+                  'Dir:',
+                  orden.recogerEnSucursal &&
+                          _sucursalesInfo.containsKey(orden.id)
+                      ? (_sucursalesInfo[orden.id]!['nombre']?.toString() ??
+                          'Sucursal')
+                      : _formatearDireccionCompleta(orden),
+                  maxLines: 1,
+                ),
+              ] else ...[
               const SizedBox(height: 8),
               Text(
                 orden.recogerEnSucursal
@@ -4717,13 +4729,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 ),
               ),
               
-              const SizedBox(height: 12),
-              
-              // Información del emisor y destinatario
-              _buildInfoRow(Icons.person, 'Emisor:', orden.emisor),
-              const SizedBox(height: 4),
-              _buildInfoRow(Icons.person_outline, 'Destinatario:', orden.receptor),
-              const SizedBox(height: 4),
+              const SizedBox(height: 8),
               
               // Mostrar dirección según recoger_en_sucursal
               if (orden.recogerEnSucursal && _sucursalesInfo.containsKey(orden.id)) ...[
@@ -4773,6 +4779,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 ),
                 const SizedBox(height: 4),
               ],
+              ], // fin expandida remesa
               
               // Botones compactos (centrados, sin estirar a todo el ancho)
               if (estado == 'POR ENVIAR') ...[
@@ -4881,6 +4888,86 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     );
   }
 
+  void _toggleOrdenTarjetaExpandida(String ordenId) {
+    setState(() {
+      if (_ordenesTarjetaExpandidas.contains(ordenId)) {
+        _ordenesTarjetaExpandidas.remove(ordenId);
+      } else {
+        _ordenesTarjetaExpandidas.add(ordenId);
+      }
+    });
+  }
+
+  /// Resumen compacto en tarjeta colapsada (De / Para / Dir).
+  Widget _buildResumenOrdenCompacta(Orden orden) {
+    if (orden.tipoOrden == 'RECOGIDA') {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildInfoRow(Icons.person, 'Cliente:', orden.emisor),
+          const SizedBox(height: 4),
+          _buildInfoRow(
+            Icons.location_on,
+            'Dir:',
+            _formatearDireccionCompleta(orden),
+            maxLines: 1,
+          ),
+        ],
+      );
+    }
+    if (OrdenRecogidaColaboradorUi.mostrarBloquePuntoColaborador(orden)) {
+      final nombre = (orden.vendedorContactoNombre ?? '').trim();
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildInfoRow(
+            Icons.storefront,
+            'Recoger:',
+            nombre.isNotEmpty ? nombre : 'Punto del colaborador',
+          ),
+          const SizedBox(height: 4),
+          _buildInfoRow(Icons.person_outline, 'Para:', orden.receptor, maxLines: 1),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildInfoRow(Icons.person, 'De:', orden.emisor, maxLines: 1),
+        const SizedBox(height: 4),
+        _buildInfoRow(Icons.person_outline, 'Para:', orden.receptor, maxLines: 1),
+        const SizedBox(height: 4),
+        _buildInfoRow(
+          Icons.location_on,
+          'Dir:',
+          orden.recogerEnSucursal && _sucursalesInfo.containsKey(orden.id)
+              ? (_sucursalesInfo[orden.id]!['nombre']?.toString() ??
+                  'Sucursal')
+              : _formatearDireccionCompleta(orden),
+          maxLines: 1,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBotonExpandirTarjeta(String ordenId, bool expandida) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _toggleOrdenTarjetaExpandida(ordenId),
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: Icon(
+            expandida ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
+            color: AppColors.darkTextMuted,
+            size: 26,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildOrdenCard(Orden orden) {
     final tipoInfo = OrdenTipoTarjetaRepartidorUtil.infoDeOrden(orden);
     if (tipoInfo.tipo == OrdenTipoTarjetaRepartidor.remesaPura) {
@@ -4894,6 +4981,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     final fondoTarjeta = esUrgente
         ? const Color(0xFF3A2528)
         : tipoInfo.colorFondo;
+    final expandida = _ordenesTarjetaExpandidas.contains(orden.id);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -4983,20 +5071,28 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                       ],
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 4),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _buildStatusChip(
-                        OrdenRecogidaColaboradorUi.estadoVisibleRepartidor(
-                          orden,
-                        ),
-                        esAtrasada,
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildStatusChip(
+                            OrdenRecogidaColaboradorUi.estadoVisibleRepartidor(
+                              orden,
+                            ),
+                            esAtrasada,
+                          ),
+                          const SizedBox(width: 2),
+                          _buildBotonExpandirTarjeta(orden.id, expandida),
+                        ],
                       ),
-                      if (orden.requiereFirma ||
-                          orden.tieneRemesa ||
-                          (orden.requierePago && !orden.pagado))
+                      if (expandida &&
+                          (orden.requiereFirma ||
+                              orden.tieneRemesa ||
+                              (orden.requierePago && !orden.pagado)))
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
                           child: Row(
@@ -5062,29 +5158,34 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                             ],
                           ),
                         ),
-                      FutureBuilder<String?>(
-                        future: EntregaFotoUtil.resolverUrlFoto(orden),
-                        builder: (context, snap) {
-                          final url = snap.data;
-                          if (!EntregaFotoUtil.urlTieneFoto(url)) {
-                            return const SizedBox.shrink();
-                          }
-                          return Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: FotoEntregaPreview(
-                              fotoUrl: url,
-                              ancho: 48,
-                              alto: 48,
-                              alineacion: Alignment.centerRight,
-                            ),
-                          );
-                        },
-                      ),
+                      if (expandida)
+                        FutureBuilder<String?>(
+                          future: EntregaFotoUtil.resolverUrlFoto(orden),
+                          builder: (context, snap) {
+                            final url = snap.data;
+                            if (!EntregaFotoUtil.urlTieneFoto(url)) {
+                              return const SizedBox.shrink();
+                            }
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: FotoEntregaPreview(
+                                fotoUrl: url,
+                                ancho: 48,
+                                alto: 48,
+                                alineacion: Alignment.centerRight,
+                              ),
+                            );
+                          },
+                        ),
                     ],
                   ),
                 ],
               ),
 
+              if (!expandida) ...[
+                const SizedBox(height: 8),
+                _buildResumenOrdenCompacta(orden),
+              ] else ...[
               const SizedBox(height: 8),
 
               // Información del repartidor asignado (solo para master)
@@ -5390,7 +5491,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
               const SizedBox(height: 8),
 
-              // Fecha de entrega - En rectángulo destacado
+              // Fecha de entrega - En rectángulo destacado (contenido centrado)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
@@ -5410,8 +5511,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   ),
                 ),
                 child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                children: [
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
                     Icon(
                       orden.recogerEnSucursal ? Icons.store : Icons.schedule, 
                       color: orden.recogerEnSucursal
@@ -5422,25 +5523,28 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                       size: 14,
                     ),
                     const SizedBox(width: 6),
-                  Text(
-                      orden.recogerEnSucursal
-                          ? 'Entregar en Sucursal'
-                          : OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(orden)
-                              ? '${OrdenRecogidaColaboradorUi.etiquetaPlazo(orden)} ${_formatearFecha(orden.fechaEntrega)}'
-                              : orden.tipoOrden == 'RECOGIDA'
-                                  ? 'Recoger orden a más tardar ${_formatearFecha(orden.fechaEntrega)}'
-                                  : 'Entregar orden a más tardar ${_formatearFecha(orden.fechaEntrega)}',
-                    style: TextStyle(
-                        color: orden.recogerEnSucursal
-                            ? const Color(0xFFDC2626) // Texto rojo fuerte para "Entregar en Sucursal"
-                            : esAtrasada 
-                                ? const Color(0xFFDC2626) 
-                                : const Color(0xFF1976D2),
-                      fontSize: 11,
-                        fontWeight: FontWeight.w600,
+                    Flexible(
+                      child: Text(
+                        orden.recogerEnSucursal
+                            ? 'Entregar en Sucursal'
+                            : OrdenRecogidaColaboradorUi.enFaseRecogidaColaborador(orden)
+                                ? '${OrdenRecogidaColaboradorUi.etiquetaPlazo(orden)} ${_formatearFecha(orden.fechaEntrega)}'
+                                : orden.tipoOrden == 'RECOGIDA'
+                                    ? 'Recoger orden a más tardar ${_formatearFecha(orden.fechaEntrega)}'
+                                    : 'Entregar orden a más tardar ${_formatearFecha(orden.fechaEntrega)}',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: orden.recogerEnSucursal
+                              ? const Color(0xFFDC2626) // Texto rojo fuerte para "Entregar en Sucursal"
+                              : esAtrasada 
+                                  ? const Color(0xFFDC2626) 
+                                  : const Color(0xFF1976D2),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
                 ),
               ),
 
@@ -5483,6 +5587,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   ),
                 ),
               ],
+              ], // fin expandida
 
               // Botón de acción compacto (centrado, sin estirar).
               if (_esRecolector) ...[
@@ -5497,7 +5602,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 ],
               ],
               
-              if (orden.estado == 'POR ENVIAR' &&
+              if (expandida &&
+                  orden.estado == 'POR ENVIAR' &&
                   orden.tipoOrden != 'RECOGIDA' &&
                   !OrdenRecogidaColaboradorUi.esRecogidaColaborador(orden)) ...[
                 const SizedBox(height: 8),
@@ -5566,6 +5672,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     String label,
     String value, {
     bool onLightSurface = false,
+    int? maxLines,
   }) {
     final muted =
         onLightSurface ? AppColors.textMutedOnLight : AppColors.darkTextMuted;
@@ -5577,6 +5684,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         const SizedBox(width: 4),
         Expanded(
           child: RichText(
+            maxLines: maxLines,
+            overflow: maxLines != null ? TextOverflow.ellipsis : TextOverflow.clip,
             text: TextSpan(
               style: TextStyle(
                 color: muted,

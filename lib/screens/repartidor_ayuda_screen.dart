@@ -24,6 +24,8 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
     8: false, // Ruta Optimizada
     9: false, // Chat con la Empresa
     10: false, // Master, Recolector y Remesas
+    11: false, // Viajes (Taxi)
+    12: false, // Compras de tienda y actualizaciones
   };
   
   @override
@@ -80,7 +82,8 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Aquí encontrarás toda la información que necesitas para usar la app de repartidor de forma eficiente.',
+                    'Aquí encontrarás cómo usar entregas, ruta optimizada, modo sin internet, '
+                    'Viajes (taxi), chat y liquidaciones de forma clara y actualizada.',
                     style: TextStyle(
                       fontSize: 14,
                       color: AppColors.darkTextMuted,
@@ -108,6 +111,8 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                 _buildItemLista('8. Ruta Optimizada'),
                 _buildItemLista('9. Chat con la Empresa'),
                 _buildItemLista('10. Master, Recolector y Remesas'),
+                _buildItemLista('11. Viajes (Taxi)'),
+                _buildItemLista('12. Compras de tienda y actualizaciones'),
               ],
             ),
             
@@ -154,12 +159,13 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
               icono: Icons.check_circle,
               contenido: [
                 _buildSubTitulo('Pasos para Entregar una Orden:'),
-                _buildItemLista('1. Asegúrate de que la orden esté en estado "EN REPARTO".'),
-                _buildItemLista('2. Usa el botón "Navegar" para abrir GPS y llegar al destino.'),
-                _buildItemLista('3. Al llegar, presiona "Entregar" o "Explorar Orden".'),
+                _buildItemLista('1. Asegúrate de que la orden esté en estado "EN REPARTO" (o pásala desde EN TRANSITO / ATRASADO).'),
+                _buildItemLista('2. Ve al destino con "Navegar" en la tarjeta, o usa "Ver Ruta Optimizada" si llevas varias (sección 8).'),
+                _buildItemLista('3. Al llegar, presiona "Entregar" o abre el detalle de la orden.'),
                 _buildItemLista('4. Completa la entrega: toma foto, solicita firma si es necesario.'),
                 _buildItemLista('5. Si requiere pago, cobra el monto indicado.'),
                 _buildItemLista('6. Confirma la entrega.'),
+                _buildItemLista('7. Si es compra de tienda, usa "Ver productos" para revisar qué debe llevar el paquete (sección 12).'),
                 const SizedBox(height: 12),
                 _buildSubTitulo('Fotografía de Entrega:'),
                 _buildTexto(
@@ -196,9 +202,16 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
               titulo: '3. Gestión de Órdenes',
               icono: Icons.inventory_2,
               contenido: [
-                _buildSubTitulo('Pantalla principal:'),
+                _buildSubTitulo('Pestañas Repartidor / Viajes:'),
                 _buildTexto(
-                  'En la pantalla de órdenes ves tu carga de trabajo. Usa los filtros superiores '
+                  'Arriba de la pantalla principal hay dos pestañas: "Repartidor" (paquetes y envíos) '
+                  'y "Viajes" (taxi). Si Viajes está bloqueado, configura primero "Ajustes de taxis" en Mi Perfil '
+                  '(sección 11).',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Pantalla principal (Repartidor):'),
+                _buildTexto(
+                  'En la pestaña Repartidor ves tu carga de trabajo. Usa los filtros superiores '
                   '(Activas, Entregadas, Urgentes, Atrasadas) para organizarte.',
                 ),
                 const SizedBox(height: 12),
@@ -211,12 +224,13 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                 _buildSubTitulo('Detalles de una Orden:'),
                 _buildTexto(
                   'Toca una tarjeta para ver dirección, destinatario, teléfono, notas, cobros y '
-                  'acciones (navegar, explorar, entregar).',
+                  'acciones (navegar, explorar, entregar). En compras de tienda verás "Ver productos".',
                 ),
                 const SizedBox(height: 12),
                 _buildSubTitulo('Notificaciones y campana:'),
                 _buildItemLista('• Icono de campana: avisos de nuevas órdenes o cambios importantes.'),
                 _buildItemLista('• También puedes recibir notificaciones push en el teléfono (si están activadas).'),
+                _buildItemLista('• Las solicitudes de viaje (taxi) llegan con un aviso especial para aceptar o rechazar.'),
                 const SizedBox(height: 12),
                 _buildSubTitulo('Cambios pendientes de subir:'),
                 _buildTexto(
@@ -232,8 +246,8 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                 const SizedBox(height: 12),
                 _buildSubTitulo('Órdenes Urgentes y Atrasadas:'),
                 _buildTexto(
-                  'Usa el filtro "Urgentes" o "Atrasadas" para priorizar. Las urgentes suelen ir '
-                  'destacadas en la lista.',
+                  'Usa el filtro "Urgentes" o "Atrasadas" para priorizar. En Ruta Optimizada también '
+                  'puedes priorizar urgentes/atrasadas desde el mapa (sección 8).',
                 ),
               ],
             ),
@@ -248,19 +262,26 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
               contenido: [
                 _buildSubTitulo('¿Qué puedo hacer CON internet?'),
                 _buildItemLista('• Ver y actualizar órdenes en tiempo real'),
+                _buildItemLista('• Descargar la lista del día a la caché al abrir la app (pantalla de carga)'),
                 _buildItemLista('• Sincronizar cambios con la empresa'),
-                _buildItemLista('• Recibir nuevas órdenes asignadas'),
-                _buildItemLista('• Actualizar estado de entregas'),
-                _buildItemLista('• Ver mapa y rutas optimizadas'),
-                _buildItemLista('• Solicitar pagos'),
+                _buildItemLista('• Recibir nuevas órdenes y solicitudes de viaje (taxi)'),
+                _buildItemLista('• Mejorar la ruta en el mapa con navegación por calles'),
+                _buildItemLista('• Buscar viajes, aceptar/rechazar y completar trayectos'),
+                _buildItemLista('• Solicitar liquidaciones y pagar comisiones de taxi'),
                 const SizedBox(height: 12),
                 _buildSubTitulo('¿Qué puedo hacer SIN internet?'),
-                _buildItemLista('• Ver las órdenes que ya se guardaron en el teléfono (no desaparecen por falta de señal).'),
-                _buildItemLista('• Seguir consultando detalle, destinatario y dirección en caché.'),
-                _buildItemLista('• Marcar entregas, firmas y fotos (quedan en cola local).'),
-                _buildItemLista('• Revisar conversaciones de chat guardadas localmente.'),
+                _buildItemLista('• Ver las órdenes ya guardadas en el teléfono (no desaparecen por falta de señal).'),
+                _buildItemLista('• Consultar detalle, destinatario, dirección y coordenadas en caché.'),
+                _buildItemLista('• Usar "Ver Ruta Optimizada" con el mapa de la app (descargado al boot), "Ir a esta parada", ETA y avance de paradas — sin Google Maps.'),
+                _buildItemLista('• Marcar EN REPARTO / entregas / firmas / fotos (quedan en cola local).'),
+                _buildItemLista('• Ver productos de compras de tienda si ya se descargaron al iniciar el turno.'),
+                _buildItemLista('• Revisar chat guardado localmente.'),
                 _buildItemLista('• Ver perfil y datos básicos desde caché.'),
-                _buildItemLista('• Navegar con GPS si el mapa del teléfono tiene datos móviles.'),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Qué NO funciona bien sin señal:'),
+                _buildItemLista('• Recibir nuevas órdenes o nuevas llamadas de viaje.'),
+                _buildItemLista('• Buscar / aceptar viajes de taxi en tiempo real (necesitas conexión).'),
+                _buildItemLista('• Geocodificar direcciones nuevas que aún no tienen latitud/longitud guardada.'),
                 const SizedBox(height: 12),
                 _buildSubTitulo('Aviso al perder conexión:'),
                 _buildTexto(
@@ -277,8 +298,9 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                 const SizedBox(height: 12),
                 _buildSubTitulo('Recomendación:'),
                 _buildTexto(
-                  'Abre la app con buena señal al iniciar el turno para descargar la lista del día. '
-                  'Así trabajarás mejor si más tarde entras a zonas con mala cobertura.',
+                  'Abre la app con buena señal al iniciar el turno: la pantalla de carga descarga '
+                  'órdenes (y productos de tienda cuando aplica) a la caché. Así puedes seguir '
+                  'trabajando en zonas con mala cobertura.',
                 ),
               ],
             ),
@@ -373,10 +395,17 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                   'En "Mi Perfil" (icono de ayuda) abres esta guía con todos los procesos actualizados.',
                 ),
                 const SizedBox(height: 12),
+                _buildSubTitulo('Ajustes de taxis (si tu empresa usa Viajes):'),
+                _buildItemLista('1. Entra a Mi Perfil → Ajustes de taxis.'),
+                _buildItemLista('2. Configura tu tarifa, plazas del vehículo y datos del auto (foto, placa, etc.).'),
+                _buildItemLista('3. Guarda. Sin esta configuración, la pestaña Viajes no se activa.'),
+                _buildItemLista('4. Desde ahí también gestionas comisión pendiente / fianza si la empresa lo pide (sección 11).'),
+                const SizedBox(height: 12),
                 _buildSubTitulo('Cerrar Sesión:'),
                 _buildTexto(
                   'Para cerrar sesión, ve a "Mi Perfil" y toca el botón "Cerrar Sesión" '
-                  'al final de la pantalla.',
+                  'al final de la pantalla. Evita cerrar sesión si hay entregas offline '
+                  'aún pendientes de sincronizar.',
                 ),
               ],
             ),
@@ -394,21 +423,21 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                   'La empresa necesita conocer tu ubicación en tiempo real para:',
                 ),
                 _buildItemLista('• Monitorear el progreso de las entregas'),
-                _buildItemLista('• Optimizar rutas de entrega'),
+                _buildItemLista('• Ordenar la Ruta Optimizada desde tu posición'),
                 _buildItemLista('• Asignar órdenes cercanas a tu ubicación'),
-                _buildItemLista('• Proporcionar estimaciones de llegada a los destinatarios'),
-                _buildItemLista('• Mejorar la seguridad y trazabilidad'),
+                _buildItemLista('• Buscar y atender Viajes (taxi): el pasajero ve tu avance'),
+                _buildItemLista('• Estimaciones de llegada y trazabilidad'),
                 const SizedBox(height: 12),
                 _buildSubTitulo('Cómo Activar la Localización:'),
                 _buildItemLista('1. La app solicitará permisos de ubicación al iniciar.'),
                 _buildItemLista('2. Acepta los permisos cuando se soliciten.'),
                 _buildItemLista('3. Asegúrate de tener el GPS activado en tu dispositivo.'),
-                _buildItemLista('4. La localización se activa automáticamente cuando inicias una entrega.'),
+                _buildItemLista('4. Con entregas o con "Buscando viajes" activo, mantén la ubicación encendida.'),
                 const SizedBox(height: 12),
                 _buildSubTitulo('Privacidad:'),
                 _buildTexto(
-                  'Tu ubicación solo es visible para la empresa durante tus horas de trabajo '
-                  'y cuando tienes órdenes activas. Puedes desactivarla cuando no estés trabajando.',
+                  'Tu ubicación la usa la empresa para operación (entregas y viajes). '
+                  'Cuando no estés trabajando, puedes desactivar el GPS y dejar de buscar viajes.',
                 ),
               ],
             ),
@@ -423,27 +452,41 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
               contenido: [
                 _buildSubTitulo('¿Qué es la Ruta Optimizada?'),
                 _buildTexto(
-                  'Cuando tienes 2 o más órdenes para entregar, puedes usar la función de '
-                  'Ruta Optimizada. Esta calcula el mejor orden de entrega para ahorrar tiempo y combustible.',
+                  'Cuando tienes varias órdenes, "Ver Ruta Optimizada" abre un mapa con las paradas '
+                  'numeradas en el mejor orden (por distancia desde tu ubicación). El flujo es directo: '
+                  'sin modales de ida y vuelta ni volver a la primera orden al terminar.',
                 ),
                 const SizedBox(height: 12),
-                _buildSubTitulo('Cómo Usar la Ruta Optimizada:'),
-                _buildItemLista('1. Asegúrate de tener al menos 2 órdenes asignadas.'),
-                _buildItemLista('2. Toca el botón "Ver Ruta Optimizada" en la pantalla principal.'),
-                _buildItemLista('3. Verás un mapa con todas las entregas numeradas.'),
-                _buildItemLista('4. Sigue el orden sugerido para máxima eficiencia.'),
-                _buildItemLista('5. Usa los botones + y - para acercar/alejar el mapa.'),
+                _buildSubTitulo('Cómo usarla (flujo actual):'),
+                _buildItemLista('1. En Repartidor, toca "Ver Ruta Optimizada".'),
+                _buildItemLista('2. La ruta se inicia sola: verás paradas en orden en el mapa.'),
+                _buildItemLista('3. "Ir a esta parada": centra el mapa en la entrega actual y la marca EN REPARTO si hace falta.'),
+                _buildItemLista('4. Al llegar, usa "Entregar" para foto/firma/cobro.'),
+                _buildItemLista('5. "Siguiente" pasa a la siguiente parada; en la última, "Finalizar" te regresa al inicio.'),
                 const SizedBox(height: 12),
-                _buildSubTitulo('Controles del Mapa:'),
-                _buildItemLista('• Botón +: Acerca el mapa para ver más detalle'),
-                _buildItemLista('• Botón -: Aleja el mapa para ver más área'),
-                _buildItemLista('• Icono de objetivo: Centra el mapa en tu ubicación'),
-                _buildItemLista('• Botón "Navegar": Abre GPS para la orden actual'),
+                _buildSubTitulo('Sin internet en la ruta:'),
+                _buildTexto(
+                  'No necesitas Google Maps. Al iniciar el turno con señal, la app descarga el mapa '
+                  'de tu zona (MBTiles de la empresa) y teselas alrededor de tus entregas. '
+                  'Offline verás el mapa, las paradas numeradas y la ruta estimada dentro de la app. '
+                  'Abrir en app externa es solo opcional y sí requiere internet.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Urgentes / atrasadas:'),
+                _buildTexto(
+                  'Si hay órdenes urgentes o atrasadas, puedes priorizarlas desde un aviso en el mapa. '
+                  'Si no, el orden sigue la distancia más eficiente.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Controles útiles:'),
+                _buildItemLista('• Icono de ubicación: centra el mapa en ti'),
+                _buildItemLista('• Icono de ruta: encaja todas las paradas en pantalla'),
+                _buildItemLista('• Abrir en app externa (opcional): Google Maps u otra, si lo prefieres'),
                 const SizedBox(height: 12),
                 _buildSubTitulo('Estados en la Ruta:'),
                 _buildTexto(
-                  'La ruta incluye órdenes listas para reparto. Las que siguen en "POR ENVIAR" '
-                  'normalmente no forman parte del recorrido hasta que la empresa las active.',
+                  'La ruta incluye órdenes activas listas para reparto. Las "POR ENVIAR" normalmente '
+                  'no entran hasta que la empresa las active. Las ENTREGADO / CANCELADA salen del mapa.',
                 ),
               ],
             ),
@@ -516,7 +559,105 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                 _buildSubTitulo('Órdenes de tienda por vendedor:'),
                 _buildTexto(
                   'Las entregas gestionadas por un vendedor/colaborador en la tienda web pueden no '
-                  'aparecerte en tu lista: las lleva quien vendió el producto, no el repartidor de envíos.',
+                  'aparecerte en tu lista: las lleva quien vendió el producto, no el repartidor de envíos. '
+                  'Si sí te las asignan, usa "Ver productos" (sección 12).',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('También puedes hacer Viajes (taxi):'),
+                _buildTexto(
+                  'Si tu empresa lo activa, además de paquetes puedes atender viajes en la pestaña '
+                  '"Viajes" (sección 11). La suspensión de viajes no bloquea tus entregas de paquetería.',
+                ),
+              ],
+            ),
+            
+            const SizedBox(height: 12),
+
+            // Sección 11: Viajes (Taxi)
+            _buildSeccionExpandible(
+              indice: 11,
+              titulo: '11. Viajes (Taxi)',
+              icono: Icons.local_taxi,
+              contenido: [
+                _buildSubTitulo('¿Qué es la pestaña Viajes?'),
+                _buildTexto(
+                  'Es el modo chofer de la misma app. Atiendes solicitudes de pasajeros de tu empresa: '
+                  'mapa, búsqueda de viajes, aceptación y navegación hasta el destino.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Activar Viajes (una sola vez):'),
+                _buildItemLista('1. Mi Perfil → Ajustes de taxis.'),
+                _buildItemLista('2. Define tu tarifa (precio por distancia), plazas y datos del vehículo.'),
+                _buildItemLista('3. Guarda. Luego podrás abrir la pestaña Viajes en la pantalla principal.'),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Buscar viajes:'),
+                _buildItemLista('1. Cambia a la pestaña "Viajes".'),
+                _buildItemLista('2. Activa "Buscando viajes" (punto verde = estás disponible).'),
+                _buildItemLista('3. Mantén el GPS activo; sin ubicación no puedes buscar.'),
+                _buildItemLista('4. Cuando llegue una solicitud, verás el aviso para Aceptar o Rechazar.'),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Flujo del viaje (después de aceptar):'),
+                _buildItemLista('1. Hacia el pasajero → botón "Llegada" cuando estés en el punto de recogida.'),
+                _buildItemLista('2. Esperando al pasajero → "Iniciar viaje" al subir.'),
+                _buildItemLista('3. Hacia el destino → "Completar viaje" al terminar.'),
+                _buildItemLista('4. Puedes cancelar solo antes de iniciar el trayecto al destino (según reglas de la empresa).'),
+                _buildItemLista('5. Si cierras la app con un viaje activo, al volver te avisará para continuar el mapa.'),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Chat del viaje:'),
+                _buildTexto(
+                  'Durante el viaje puedes escribir al pasajero desde el mapa del trayecto '
+                  '(icono de chat). Úsalo para coordinar llegada o cambios de punto.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Comisión, fianza y pagos a la empresa:'),
+                _buildTexto(
+                  'Algunos viajes generan comisión que debes liquidar a la empresa. En Comisión pendiente '
+                  'puedes pagar con fianza, en oficina o por los métodos que muestre la pantalla '
+                  '(por ejemplo Zelle, si aplica). Si acumulas deuda, la empresa puede suspender Viajes.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Viajes suspendidos:'),
+                _buildTexto(
+                  'Si ves "Viajes suspendidos", no puedes buscar ni aceptar viajes hasta que la empresa '
+                  'te reactive. Puedes seguir usando Repartidor, chat y el resto de funciones. '
+                  'Contacta a tu empresa por el chat de soporte.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Internet en Viajes:'),
+                _buildTexto(
+                  'Aceptar, iniciar y completar viajes requieren conexión. Sin señal no recibirás '
+                  'nuevas solicitudes. Con señal débil, espera a que cargue el detalle antes de aceptar.',
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 12),
+
+            // Sección 12: Compras de tienda y actualizaciones
+            _buildSeccionExpandible(
+              indice: 12,
+              titulo: '12. Compras de tienda y actualizaciones',
+              icono: Icons.shopping_bag_outlined,
+              contenido: [
+                _buildSubTitulo('Ver productos de una orden de tienda:'),
+                _buildTexto(
+                  'En órdenes de compra (tienda) aparece "Ver productos". Ahí ves el listado y fotos '
+                  'de lo que el cliente compró, para validar el contenido al entregar.',
+                ),
+                _buildItemLista('• Con internet: se cargan al abrir o al iniciar turno.'),
+                _buildItemLista('• Sin internet: se muestran si ya se descargaron a la caché del teléfono.'),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Actualización obligatoria de la app:'),
+                _buildTexto(
+                  'A veces la empresa exige una versión nueva. Verás un aviso que no permite continuar '
+                  'hasta actualizar desde la tienda de aplicaciones. Es normal: evita fallos con '
+                  'órdenes, viajes o sincronización.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Consejo:'),
+                _buildTexto(
+                  'Mantén la app actualizada y abre con buena señal al empezar el día para que '
+                  'órdenes, productos y datos de perfil queden listos en caché.',
                 ),
               ],
             ),
@@ -553,8 +694,8 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Si tienes dudas adicionales o problemas técnicos, usa el chat de la app '
-                    'o contacta a tu supervisor en la empresa.',
+                    'Si tienes dudas de entregas, Viajes (taxi), comisiones o problemas técnicos, '
+                    'usa el chat de la app o contacta a tu supervisor en la empresa.',
                     style: TextStyle(
                       fontSize: 14,
                       color: AppColors.darkTextMuted,

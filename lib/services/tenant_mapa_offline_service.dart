@@ -124,18 +124,47 @@ class TenantMapaOfflineService {
   }
 
   Future<String?> tenantIdChofer() async {
+    final uid = _db.auth.currentUser?.id;
     try {
-      final uid = _db.auth.currentUser?.id;
+      if (uid != null) {
+        final row = await _db
+            .from('usuarios')
+            .select('tenant_id')
+            .eq('auth_id', uid)
+            .maybeSingle()
+            .timeout(const Duration(seconds: 8));
+        final tid = row?['tenant_id']?.toString();
+        if (tid != null && tid.isNotEmpty) {
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString('cached_tenant_id_$uid', tid);
+          } catch (_) {}
+          return tid;
+        }
+      }
+    } catch (_) {}
+
+    // Offline: tenant guardado en boot / sesión previa.
+    try {
       if (uid == null) return null;
-      final row = await _db
-          .from('usuarios')
-          .select('tenant_id')
-          .eq('auth_id', uid)
-          .maybeSingle()
-          .timeout(const Duration(seconds: 8));
-      return row?['tenant_id']?.toString();
-    } catch (_) {
-      return null;
-    }
+      final prefs = await SharedPreferences.getInstance();
+      final cached = prefs.getString('cached_tenant_id_$uid');
+      if (cached != null && cached.trim().isNotEmpty) return cached.trim();
+    } catch (_) {}
+    return null;
+  }
+
+  /// Solo lectura local (sin red). Útil al abrir mapa sin internet.
+  Future<String?> localMbtilesPathIfReady(String? tenantId) async {
+    if (kIsWeb) return null;
+    final tid = (tenantId ?? '').trim();
+    if (tid.isEmpty) return null;
+    try {
+      final local = await _localFile(tid);
+      if (await local.exists() && await local.length() > 1024) {
+        return local.path;
+      }
+    } catch (_) {}
+    return null;
   }
 }
