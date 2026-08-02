@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../config/app_colors.dart';
 import '../services/taxi_tarifas_chofer_service.dart';
 import '../services/taxi_vehiculo_catalog.dart';
+import '../utils/repartidor_requires_online.dart';
 
 /// Ajustes de tarifa taxi del socio (distancia + plazas + vehículo).
 class TaxiAjustesScreen extends StatefulWidget {
@@ -84,8 +85,17 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
   }
 
   Future<void> _cargar() async {
+    // Caché primero → UI lista; red solo si hay internet (timeout corto).
+    final cached = await TaxiTarifasChoferService.instance.loadCached();
+    if (cached != null && mounted) {
+      _aplicarTarifa(cached);
+    }
     final t = await TaxiTarifasChoferService.instance.get();
     if (!mounted) return;
+    _aplicarTarifa(t);
+  }
+
+  void _aplicarTarifa(TaxiTarifaChofer t) {
     setState(() {
       _unidad = t.unidad;
       _capacidad = t.capacidadPasajeros.clamp(1, _maxPlazas);
@@ -200,6 +210,13 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
       ),
     );
     if (confirmar != true || !mounted) return;
+
+    if (!await repartidorRequiereInternet(
+      context,
+      accion: 'guardar tu tarifa',
+    )) {
+      return;
+    }
 
     setState(() => _saving = true);
     final res = await TaxiTarifasChoferService.instance.guardar(

@@ -8,6 +8,7 @@ import '../services/repartidor_pantallas_offline_service.dart';
 import '../services/sync_service.dart';
 import '../services/network_timeout.dart';
 import '../utils/mensaje_error_operacion.dart';
+import '../utils/repartidor_connectivity.dart';
 import 'chat_soporte_filtrado_screen.dart';
 
 class ChatRepartidorListaScreen extends StatefulWidget {
@@ -164,11 +165,14 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
     // Mostrar caché de inmediato (incluye chats cerrados) antes de la red.
     await _aplicarConversacionesLocales(user.id);
 
-    if (_conversacionId != null && SyncService().isOnline) {
+    final sinRed = !SyncService().isOnline ||
+        RepartidorConnectivity.online.value == false;
+
+    if (_conversacionId != null && !sinRed) {
       _suscribirseAMensajes();
     }
 
-    if (!SyncService().isOnline) {
+    if (sinRed) {
       if (mounted) setState(() => _cargando = false);
       return;
     }
@@ -820,7 +824,7 @@ class _ChatRepartidorListaScreenState extends State<ChatRepartidorListaScreen> {
                           margin: const EdgeInsets.only(bottom: 12),
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFFFF3E0),
+                            color: AppColors.darkElevated,
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(color: const Color(0xFFFF9800)),
                           ),

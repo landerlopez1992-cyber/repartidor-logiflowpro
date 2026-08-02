@@ -20,6 +20,129 @@ class RepartidorPantallasOfflineService {
   static const _chatRemitentesKey = 'cache_chat_remitentes_';
   static const _mapaUbicKey = 'cache_mapa_ubicacion_';
   static const _pendingMensajesKey = 'pending_mensajes_soporte';
+  static const _comisionKey = 'cache_taxi_comision_mi_deuda_';
+  static const _metodoCobroKey = 'cache_repartidor_metodo_cobro_';
+
+  // ——— Comisión / fianza cash ———
+
+  static Future<void> guardarComisionMiDeuda(
+    String authId,
+    Map<String, dynamic> data,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        '$_comisionKey$authId',
+        jsonEncode(data),
+      );
+    } catch (e) {
+      print('⚠️ guardarComisionMiDeuda: $e');
+    }
+  }
+
+  static Future<Map<String, dynamic>?> cargarComisionMiDeuda(
+    String authId,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('$_comisionKey$authId');
+      if (raw == null || raw.isEmpty) return null;
+      return Map<String, dynamic>.from(jsonDecode(raw) as Map);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Con internet: descarga deuda/fianza para leerla offline.
+  static Future<void> prefetchComisionMiDeudaAlAbrirApp(String authId) async {
+    if (!SyncService().isOnline) return;
+    final uid = authId.trim();
+    if (uid.isEmpty) return;
+    try {
+      final res = await ejecutarConTimeout(
+        supabase.rpc('taxi_comision_mi_deuda'),
+        timeout: const Duration(seconds: 10),
+      );
+      if (res is Map && res['ok'] == true) {
+        await guardarComisionMiDeuda(
+          uid,
+          Map<String, dynamic>.from(res),
+        );
+      }
+    } catch (e) {
+      print('⚠️ prefetchComisionMiDeuda: $e');
+    }
+  }
+
+  // ——— Método de cobro (nómina) ———
+
+  static Future<void> guardarMetodoCobro(
+    String authId, {
+    required String? preferido,
+    required Map<String, dynamic> datos,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        '$_metodoCobroKey$authId',
+        jsonEncode({
+          'preferido': preferido,
+          'datos': datos,
+          'saved_at': DateTime.now().toIso8601String(),
+        }),
+      );
+    } catch (e) {
+      print('⚠️ guardarMetodoCobro: $e');
+    }
+  }
+
+  static Future<({String? preferido, Map<String, dynamic> datos})?>
+      cargarMetodoCobro(String authId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('$_metodoCobroKey$authId');
+      if (raw == null || raw.isEmpty) return null;
+      final m = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      final datos = m['datos'];
+      return (
+        preferido: m['preferido']?.toString(),
+        datos: datos is Map
+            ? Map<String, dynamic>.from(datos)
+            : <String, dynamic>{},
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> prefetchMetodoCobroAlAbrirApp(String authId) async {
+    if (!SyncService().isOnline) return;
+    final uid = authId.trim();
+    if (uid.isEmpty) return;
+    try {
+      final row = await ejecutarConTimeout(
+        supabase
+            .from('usuarios')
+            .select(
+              'repartidor_metodo_cobro_preferido, repartidor_metodo_cobro_datos',
+            )
+            .eq('auth_id', uid)
+            .maybeSingle(),
+        timeout: const Duration(seconds: 8),
+      );
+      if (row == null) return;
+      final datos = row['repartidor_metodo_cobro_datos'];
+      await guardarMetodoCobro(
+        uid,
+        preferido: row['repartidor_metodo_cobro_preferido']?.toString(),
+        datos: datos is Map
+            ? Map<String, dynamic>.from(datos)
+            : <String, dynamic>{},
+      );
+    } catch (e) {
+      print('⚠️ prefetchMetodoCobro: $e');
+    }
+  }
 
   // ——— Notificaciones ———
 
@@ -727,6 +850,8 @@ class RepartidorPantallasOfflineService {
             k.startsWith(_chatMetaKey) ||
             k.startsWith(_chatRemitentesKey) ||
             k.startsWith(_mapaUbicKey) ||
+            k.startsWith(_comisionKey) ||
+            k.startsWith(_metodoCobroKey) ||
             k == _pendingMensajesKey) {
           await prefs.remove(k);
         }

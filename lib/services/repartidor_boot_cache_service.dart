@@ -229,6 +229,13 @@ class RepartidorBootCacheService {
       } catch (e) {
         print('⚠️ Boot chat (no crítico): $e');
       }
+      try {
+        await RepartidorPantallasOfflineService.prefetchComisionMiDeudaAlAbrirApp(
+          user.id,
+        );
+      } catch (e) {
+        print('⚠️ Boot comisión (no crítico): $e');
+      }
     } else {
       try {
         final meta =
@@ -241,6 +248,9 @@ class RepartidorBootCacheService {
             '💬 Sin internet · chat en caché: ${msgs?.length ?? 0} mensajes',
           );
         }
+      } catch (_) {}
+      try {
+        await RepartidorPantallasOfflineService.cargarComisionMiDeuda(user.id);
       } catch (_) {}
     }
 

@@ -1,6 +1,11 @@
+import 'dart:convert';
+
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../utils/repartidor_connectivity.dart';
+import '../utils/repartidor_requires_online.dart';
+import 'sync_service.dart';
 import 'taxi_buscando_prefs.dart';
 import 'taxi_vehiculo_catalog.dart';
 
@@ -39,6 +44,13 @@ class TaxiTarifaChofer {
   final String vehiculoColor;
   final String vehiculoAvatarKey;
 
+  static const vacia = TaxiTarifaChofer(
+    configurado: false,
+    unidad: 'km',
+    precioPorUnidadUsd: 0,
+    disponible: false,
+  );
+
   factory TaxiTarifaChofer.fromJson(Map<String, dynamic> m) {
     return TaxiTarifaChofer(
       configurado: m['configurado'] == true,
@@ -64,25 +76,89 @@ class TaxiTarifaChofer {
           ),
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'configurado': configurado,
+        'unidad': unidad,
+        'precio_por_unidad_usd': precioPorUnidadUsd,
+        'disponible': disponible,
+        'capacidad_pasajeros': capacidadPasajeros,
+        'pasajeros_incluidos': pasajerosIncluidos,
+        'recargo_por_pasajero_usd': recargoPorPasajeroUsd,
+        'radio_trabajo_m': radioTrabajoM,
+        'distancia_max_viaje_m': distanciaMaxViajeM,
+        'vehiculo_marca': vehiculoMarca,
+        'vehiculo_modelo': vehiculoModelo,
+        'vehiculo_anio': vehiculoAnio,
+        'vehiculo_color': vehiculoColor,
+        'vehiculo_avatar_key': vehiculoAvatarKey,
+      };
 }
 
 class TaxiTarifasChoferService {
   TaxiTarifasChoferService._();
   static final TaxiTarifasChoferService instance = TaxiTarifasChoferService._();
 
+  static const _cachePrefix = 'cache_taxi_tarifa_chofer_';
+
   SupabaseClient get _db => Supabase.instance.client;
 
-  Future<TaxiTarifaChofer> get() async {
-    final res = await _db.rpc('taxi_tarifa_chofer_get');
-    if (res is! Map) {
-      return const TaxiTarifaChofer(
-        configurado: false,
-        unidad: 'km',
-        precioPorUnidadUsd: 0,
-        disponible: false,
+  String? get _uid => _db.auth.currentUser?.id;
+
+  Future<TaxiTarifaChofer?> loadCached() async {
+    try {
+      final uid = _uid;
+      if (uid == null) return null;
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('$_cachePrefix$uid');
+      if (raw == null || raw.isEmpty) return null;
+      return TaxiTarifaChofer.fromJson(
+        Map<String, dynamic>.from(jsonDecode(raw) as Map),
       );
+    } catch (_) {
+      return null;
     }
-    return TaxiTarifaChofer.fromJson(Map<String, dynamic>.from(res));
+  }
+
+  Future<void> saveCached(TaxiTarifaChofer t) async {
+    try {
+      final uid = _uid;
+      if (uid == null) return;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('$_cachePrefix$uid', jsonEncode(t.toJson()));
+    } catch (e) {
+      print('⚠️ saveCached tarifa: $e');
+    }
+  }
+
+  /// Offline-first: caché al instante; red con timeout corto (nunca cuelga).
+  Future<TaxiTarifaChofer> get({bool forceNetwork = false}) async {
+    final cached = await loadCached();
+    if (!forceNetwork && repartidorSinInternet()) {
+      return cached ?? TaxiTarifaChofer.vacia;
+    }
+    try {
+      final res = await _db
+          .rpc('taxi_tarifa_chofer_get')
+          .timeout(const Duration(seconds: 5));
+      if (res is! Map) {
+        return cached ?? TaxiTarifaChofer.vacia;
+      }
+      final t = TaxiTarifaChofer.fromJson(Map<String, dynamic>.from(res));
+      await saveCached(t);
+      return t;
+    } catch (e) {
+      print('⚠️ taxi_tarifa get → caché: $e');
+      return cached ?? TaxiTarifaChofer.vacia;
+    }
+  }
+
+  /// Prefetch al boot (con internet).
+  Future<void> prefetchAlAbrirApp() async {
+    if (repartidorSinInternet()) return;
+    try {
+      await get(forceNetwork: true);
+    } catch (_) {}
   }
 
   Future<({bool ok, String? err})> guardar({
@@ -98,33 +174,50 @@ class TaxiTarifasChoferService {
     int? vehiculoAnio,
     String? vehiculoColor,
   }) async {
-    final res = await _db.rpc(
-      'taxi_tarifa_chofer_upsert',
-      params: {
-        'p_unidad': unidad,
-        'p_precio_por_unidad_usd': precioPorUnidadUsd,
-        'p_capacidad_pasajeros': capacidadPasajeros.clamp(1, 20),
-        'p_pasajeros_incluidos': pasajerosIncluidos.clamp(1, 20),
-        'p_recargo_por_pasajero_usd': recargoPorPasajeroUsd.clamp(0, 500),
-        'p_radio_trabajo_m': radioTrabajoM.clamp(5000, 500000),
-        'p_distancia_max_viaje_m': distanciaMaxViajeM,
-        'p_vehiculo_marca': vehiculoMarca,
-        'p_vehiculo_modelo': vehiculoModelo,
-        'p_vehiculo_anio': vehiculoAnio,
-        'p_vehiculo_color': vehiculoColor,
-      },
-    );
-    if (res is Map && res['ok'] == true) return (ok: true, err: null);
-    final err = res is Map
-        ? (res['error']?.toString() ?? 'No se pudo guardar')
-        : 'No se pudo guardar';
-    return (ok: false, err: err);
+    if (repartidorSinInternet()) {
+      return (
+        ok: false,
+        err: 'Sin internet: no se puede guardar la tarifa ahora.',
+      );
+    }
+    try {
+      final res = await _db
+          .rpc(
+            'taxi_tarifa_chofer_upsert',
+            params: {
+              'p_unidad': unidad,
+              'p_precio_por_unidad_usd': precioPorUnidadUsd,
+              'p_capacidad_pasajeros': capacidadPasajeros.clamp(1, 20),
+              'p_pasajeros_incluidos': pasajerosIncluidos.clamp(1, 20),
+              'p_recargo_por_pasajero_usd': recargoPorPasajeroUsd.clamp(0, 500),
+              'p_radio_trabajo_m': radioTrabajoM.clamp(5000, 500000),
+              'p_distancia_max_viaje_m': distanciaMaxViajeM,
+              'p_vehiculo_marca': vehiculoMarca,
+              'p_vehiculo_modelo': vehiculoModelo,
+              'p_vehiculo_anio': vehiculoAnio,
+              'p_vehiculo_color': vehiculoColor,
+            },
+          )
+          .timeout(const Duration(seconds: 8));
+      if (res is Map && res['ok'] == true) {
+        final refreshed = await get(forceNetwork: true);
+        await saveCached(refreshed);
+        return (ok: true, err: null);
+      }
+      final err = res is Map
+          ? (res['error']?.toString() ?? 'No se pudo guardar')
+          : 'No se pudo guardar';
+      return (ok: false, err: err);
+    } catch (e) {
+      return (ok: false, err: 'Sin conexión al guardar: $e');
+    }
   }
 
   /// Actualiza disponibilidad en BD. Sin red: encola y devuelve ok (caché local manda).
   Future<({bool ok, String? err, bool queued})> setDisponible(bool value) async {
     try {
-      if (RepartidorConnectivity.online.value == false) {
+      if (RepartidorConnectivity.online.value == false ||
+          !SyncService().isOnline) {
         await TaxiBuscandoPrefs.marcarPendienteSyncDisponible(value);
         return (ok: true, err: null, queued: true);
       }
@@ -136,6 +229,27 @@ class TaxiTarifasChoferService {
           .timeout(const Duration(seconds: 4));
       if (res is Map && res['ok'] == true) {
         await TaxiBuscandoPrefs.limpiarPendienteSyncDisponible();
+        final cached = await loadCached();
+        if (cached != null) {
+          await saveCached(
+            TaxiTarifaChofer(
+              configurado: cached.configurado,
+              unidad: cached.unidad,
+              precioPorUnidadUsd: cached.precioPorUnidadUsd,
+              disponible: value,
+              capacidadPasajeros: cached.capacidadPasajeros,
+              pasajerosIncluidos: cached.pasajerosIncluidos,
+              recargoPorPasajeroUsd: cached.recargoPorPasajeroUsd,
+              radioTrabajoM: cached.radioTrabajoM,
+              distanciaMaxViajeM: cached.distanciaMaxViajeM,
+              vehiculoMarca: cached.vehiculoMarca,
+              vehiculoModelo: cached.vehiculoModelo,
+              vehiculoAnio: cached.vehiculoAnio,
+              vehiculoColor: cached.vehiculoColor,
+              vehiculoAvatarKey: cached.vehiculoAvatarKey,
+            ),
+          );
+        }
         return (ok: true, err: null, queued: false);
       }
       final msg = res is Map
@@ -143,7 +257,6 @@ class TaxiTarifasChoferService {
               res['error']?.toString() ??
               'No se pudo actualizar')
           : 'No se pudo actualizar';
-      // Error de negocio (tarifa, fianza…): no encolar como si fuera éxito.
       final lower = msg.toLowerCase();
       final esNegocio = lower.contains('tarifa') ||
           lower.contains('fianza') ||
@@ -161,18 +274,13 @@ class TaxiTarifasChoferService {
     }
   }
 
-  /// Empuja a BD el estado local / pendiente cuando vuelve internet.
   Future<void> flushPendienteDisponibleSiHay() async {
     try {
       final pendiente = await TaxiBuscandoPrefs.pendienteSyncDisponible();
-      final local = await TaxiBuscandoPrefs.esActivo();
-      final desired = pendiente ?? local;
-      // Si no hay pendiente y local coincide con lo esperado, igual reafirmamos
-      // solo cuando hay flag pendiente.
       if (pendiente == null) return;
-      final res = await setDisponible(desired);
+      final res = await setDisponible(pendiente);
       if (res.ok && !res.queued) {
-        print('✅ disponible sincronizado tras offline: $desired');
+        print('✅ disponible sincronizado tras offline: $pendiente');
       }
     } catch (e) {
       print('⚠️ flushPendienteDisponibleSiHay: $e');

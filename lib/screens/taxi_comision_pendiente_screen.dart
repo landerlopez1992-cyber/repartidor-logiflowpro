@@ -6,6 +6,8 @@ import '../config/app_colors.dart';
 import '../main.dart';
 import '../services/repartidor_saldo_service.dart';
 import '../services/repartidor_seguridad_service.dart';
+import '../services/repartidor_pantallas_offline_service.dart';
+import '../services/sync_service.dart';
 import '../widgets/taxi_fianza_confirm_flow.dart';
 import '../widgets/taxi_zelle_enviar_recibo_flow.dart';
 import '../widgets/taxi_zelle_pago_explicacion_modal.dart';
@@ -50,10 +52,42 @@ class _TaxiComisionPendienteScreenState
       _error = null;
     });
     try {
+      final uid = supabase.auth.currentUser?.id;
+      if (uid != null) {
+        final cached =
+            await RepartidorPantallasOfflineService.cargarComisionMiDeuda(uid);
+        if (cached != null && cached['ok'] == true && mounted) {
+          setState(() {
+            _data = cached;
+            _loading = false;
+            final deuda = _n(cached['deuda_usd']);
+            if (deuda > 0 && _pagoCtrl.text.isEmpty) {
+              _pagoCtrl.text = deuda.toStringAsFixed(2);
+            }
+          });
+        }
+      }
+
+      if (!SyncService().isOnline) {
+        if (_data.isEmpty && mounted) {
+          setState(() {
+            _error =
+                'Sin conexión y sin datos guardados. Abre esta pantalla con internet una vez.';
+            _loading = false;
+          });
+        } else if (mounted) {
+          setState(() => _loading = false);
+        }
+        return;
+      }
+
       final res = await supabase.rpc('taxi_comision_mi_deuda');
       final map = Map<String, dynamic>.from(res as Map);
       if (map['ok'] != true) {
         throw Exception(map['mensaje'] ?? map['error'] ?? 'Error');
+      }
+      if (uid != null) {
+        await RepartidorPantallasOfflineService.guardarComisionMiDeuda(uid, map);
       }
       if (!mounted) return;
       setState(() {
@@ -67,6 +101,10 @@ class _TaxiComisionPendienteScreenState
       _suscribirPagoPendiente();
     } catch (e) {
       if (!mounted) return;
+      if (_data.isNotEmpty) {
+        setState(() => _loading = false);
+        return;
+      }
       setState(() {
         _error = '$e';
         _loading = false;
@@ -497,6 +535,17 @@ class _TaxiComisionPendienteScreenState
                               fontSize: 14,
                             ),
                           ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'La fianza sirve para que, cuando un pasajero te pague en efectivo, '
+                            'la app descuente de aquí la comisión de la empresa y tú no te endeudes.',
+                            style: TextStyle(
+                              color: AppColors.darkTextMuted,
+                              fontSize: 12,
+                              height: 1.35,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
                           Text(
                             'Billetera (saldo): \$${saldo.toStringAsFixed(2)}',
                             style: const TextStyle(
@@ -522,10 +571,12 @@ class _TaxiComisionPendienteScreenState
                             ),
                             const SizedBox(height: 4),
                             const Text(
-                              'Mueve dinero de tu billetera a la fianza para cubrir comisiones cash automáticamente.',
+                              'Pasa dinero de tu billetera a la fianza. Ese monto queda listo '
+                              'para cubrir la comisión de los viajes que cobres en cash.',
                               style: TextStyle(
                                 color: AppColors.darkTextMuted,
                                 fontSize: 12,
+                                height: 1.35,
                               ),
                             ),
                             const SizedBox(height: 8),

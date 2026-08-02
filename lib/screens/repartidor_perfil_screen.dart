@@ -2840,7 +2840,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           titulo: 'Comisión / fianza cash',
           subtitulo: _cuentaSuspendida
               ? 'Deshabilitado — cuenta suspendida'
-              : 'Deuda, fianza y transferir saldo a fianza',
+              : 'Reserva para comisión de viajes pagados en efectivo',
           enabled: !_cuentaSuspendida,
           onTap: () async {
             await Navigator.of(context).push(

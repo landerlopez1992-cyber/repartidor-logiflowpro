@@ -10,6 +10,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../config/app_colors.dart';
 import '../main.dart';
+import '../services/chat_audio_cache_service.dart';
 import '../services/network_timeout.dart';
 import '../services/repartidor_chat_mensaje_sonido_service.dart';
 import '../services/repartidor_pantallas_offline_service.dart';
@@ -384,6 +385,14 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
         }
       }
 
+      // Prefetch notas de voz a disco (reproducir luego sin internet).
+      for (final m in mensajesEnriquecidos) {
+        final a = m['audio_url']?.toString().trim();
+        if (a != null && a.isNotEmpty && a.startsWith('http')) {
+          unawaited(ChatAudioCache.prefetch(a));
+        }
+      }
+
       await _persistirMensajesEnCache();
       await _marcarComoLeidos();
     } catch (e) {
@@ -428,6 +437,12 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
 
             if (mounted) {
               _agregarMensajeSiNoExiste(nuevoMensaje);
+              final audioIn = nuevoMensaje['audio_url']?.toString().trim();
+              if (audioIn != null &&
+                  audioIn.isNotEmpty &&
+                  audioIn.startsWith('http')) {
+                unawaited(ChatAudioCache.prefetch(audioIn));
+              }
               unawaited(_persistirMensajesEnCache());
               Future.delayed(const Duration(milliseconds: 100), () {
                 _scrollToBottom();
@@ -902,6 +917,10 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
       timeout: const Duration(seconds: 45),
     );
     final publicUrl = supabase.storage.from(bucket).getPublicUrl(fileName);
+    // Guardar en caché local antes de borrar el temporal (offline playback).
+    try {
+      await ChatAudioCache.saveFromFile(publicUrl, pathLocal);
+    } catch (_) {}
 
     final datosMensaje = <String, dynamic>{
       'conversacion_id': widget.conversacionId,
@@ -1173,7 +1192,13 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                             final esAdminMsg = rolRemitente == 'ADMINISTRADOR';
                             final esEmpleadoMsg = rolRemitente == 'EMPLEADO';
                             final fotoRemitente = mensaje['remitente_foto'];
-                            final fotoUrl = mensaje['foto_url'];
+                            final fotoUrl = mensaje['foto_url']?.toString();
+                            final audioUrlRaw =
+                                mensaje['audio_url']?.toString().trim();
+                            final audioUrl =
+                                (audioUrlRaw != null && audioUrlRaw.isNotEmpty)
+                                    ? audioUrlRaw
+                                    : null;
 
                             final fechaMsg = DateTime.tryParse(
                                   mensaje['created_at']?.toString() ?? '',
@@ -1185,7 +1210,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                             return KeyedSubtree(
                               key: ValueKey('msg_$msgKey'),
                               child: _buildMensajeBurbuja(
-                                mensaje['mensaje'],
+                                mensaje['mensaje']?.toString() ?? '',
                                 esMio,
                                 nombreRemitente,
                                 esAdminMsg,
@@ -1193,6 +1218,7 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                                 fotoRemitente,
                                 fechaMsg,
                                 fotoUrl,
+                                audioUrl: audioUrl,
                                 pendienteEnvio: pendienteEnvio,
                               ),
                             );
@@ -1608,18 +1634,19 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
                               vertical: 10,
                             ),
                   decoration: BoxDecoration(
+                    // Fondo oscuro siempre: texto claro (#ECEFF1) legible.
+                    // Antes: blanco / verde claro + darkText → texto casi invisible.
                     color: esMio
                         ? AppColors.primary
-                        : esAdmin
-                            ? const Color(0xFF4CAF50).withOpacity(0.1)
-                            : esEmpleado
-                                ? const Color(0xFFFF9800).withOpacity(0.1)
-                                : Colors.white,
-                    border: !esMio && (esAdmin || esEmpleado)
+                        : AppColors.darkElevated,
+                    border: !esMio
                         ? Border.all(
                             color: esAdmin
-                                ? const Color(0xFF4CAF50).withOpacity(0.3)
-                                : const Color(0xFFFF9800).withOpacity(0.3),
+                                ? const Color(0xFF4CAF50).withValues(alpha: 0.55)
+                                : esEmpleado
+                                    ? const Color(0xFFFF9800)
+                                        .withValues(alpha: 0.55)
+                                    : AppColors.darkBorder,
                             width: 1,
                           )
                         : null,

@@ -399,7 +399,7 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                 _buildItemLista('1. Entra a Mi Perfil → Ajustes de taxis.'),
                 _buildItemLista('2. Configura tu tarifa, plazas del vehículo y datos del auto (foto, placa, etc.).'),
                 _buildItemLista('3. Guarda. Sin esta configuración, la pestaña Viajes no se activa.'),
-                _buildItemLista('4. Desde ahí también gestionas comisión pendiente / fianza si la empresa lo pide (sección 11).'),
+                _buildItemLista('4. Desde ahí también gestionas la fianza de viajes cash (sección 11): el dinero reservado para que la empresa cobre su comisión cuando el pasajero te paga en efectivo.'),
                 const SizedBox(height: 12),
                 _buildSubTitulo('Cerrar Sesión:'),
                 _buildTexto(
@@ -609,11 +609,55 @@ class _RepartidorAyudaScreenState extends State<RepartidorAyudaScreen> {
                   '(icono de chat). Úsalo para coordinar llegada o cambios de punto.',
                 ),
                 const SizedBox(height: 12),
-                _buildSubTitulo('Comisión, fianza y pagos a la empresa:'),
+                _buildSubTitulo('¿Qué es el saldo de fianza? (léelo si eres nuevo)'),
                 _buildTexto(
-                  'Algunos viajes generan comisión que debes liquidar a la empresa. En Comisión pendiente '
-                  'puedes pagar con fianza, en oficina o por los métodos que muestre la pantalla '
-                  '(por ejemplo Zelle, si aplica). Si acumulas deuda, la empresa puede suspender Viajes.',
+                  'Imagina que un pasajero te paga el viaje en efectivo (cash). Ese dinero se queda '
+                  'en tu bolsillo, pero la empresa igual debe cobrar su comisión de ese viaje. '
+                  'Para no “deberle” a la empresa cada vez que cobras en cash, usas la fianza.',
+                ),
+                _buildItemLista(
+                  '• La fianza es un dinero tuyo que dejas guardado en la app solo para viajes.',
+                ),
+                _buildItemLista(
+                  '• Cuando haces un viaje pagado en cash, el sistema descuenta de la fianza '
+                  'la comisión que le corresponde a la empresa.',
+                ),
+                _buildItemLista(
+                  '• Así no te endeudas: la empresa ya cobró su parte desde tu fianza, y tú te '
+                  'quedas con el efectivo del pasajero.',
+                ),
+                _buildItemLista(
+                  '• Si la fianza se agota o acumulas comisión sin pagar, la empresa puede '
+                  'bloquearte para buscar nuevos viajes hasta que recargues o liquides.',
+                ),
+                const SizedBox(height: 8),
+                _buildTexto(
+                  'Ejemplo simple: el pasajero te paga \$10 en cash. La empresa se lleva, por '
+                  'ejemplo, \$1 de comisión. Ese \$1 sale de tu fianza (no del billete que tienes '
+                  'en la mano). Si no tuvieras fianza, ese \$1 quedaría como deuda.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Cómo cargar y usar la fianza:'),
+                _buildItemLista(
+                  '1. Mi Perfil → Comisión / fianza cash.',
+                ),
+                _buildItemLista(
+                  '2. Si tienes saldo en tu billetera (ganancias de entregas u otros), puedes '
+                  'transferirlo a la fianza. Ese dinero pasa a cubrir comisiones de viajes cash.',
+                ),
+                _buildItemLista(
+                  '3. También puedes pagar la comisión pendiente en oficina o con los métodos '
+                  'que muestre la pantalla (por ejemplo Zelle, si tu empresa lo ofrece).',
+                ),
+                _buildItemLista(
+                  '4. La transferencia a fianza no se puede “devolver” sola a la billetera: '
+                  'queda para viajes y comisiones cash.',
+                ),
+                const SizedBox(height: 12),
+                _buildSubTitulo('Resumen en una frase:'),
+                _buildTexto(
+                  'Fianza = reserva para que la app cobre la comisión de los viajes en efectivo, '
+                  'y tú no te quedes debiendo a la empresa.',
                 ),
                 const SizedBox(height: 12),
                 _buildSubTitulo('Viajes suspendidos:'),

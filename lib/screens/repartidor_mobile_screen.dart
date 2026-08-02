@@ -25,6 +25,7 @@ import '../services/network_timeout.dart';
 import '../services/offline_storage_service.dart';
 import '../services/connectivity_assistant_service.dart';
 import '../widgets/repartidor_connectivity_app_bar_icon.dart';
+import '../utils/repartidor_connectivity.dart';
 import '../services/shorebird_service.dart';
 import '../services/goodbarber_sync_service.dart';
 import '../services/paises_service.dart';
@@ -1881,10 +1882,17 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   Future<void> _cargarMensajesNoLeidos() async {
     try {
+      if (!SyncService().isOnline ||
+          RepartidorConnectivity.online.value == false) {
+        // Sin red: no bloquear ni spamear RPC; mantener badge actual.
+        return;
+      }
       _conversacionesSoporteIds =
-          await RepartidorChatSoporteService.idsConversacionesRepartidor();
+          await RepartidorChatSoporteService.idsConversacionesRepartidor()
+              .timeout(const Duration(seconds: 6), onTimeout: () => []);
       final mensajesNoLeidos =
-          await RepartidorChatSoporteService.contarMensajesNoLeidos();
+          await RepartidorChatSoporteService.contarMensajesNoLeidos()
+              .timeout(const Duration(seconds: 6), onTimeout: () => 0);
 
       print(
         '📊 Mensajes soporte no leídos (mis conversaciones): $mensajesNoLeidos',
@@ -1897,9 +1905,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       }
     } catch (e) {
       print('❌ Error al cargar mensajes no leídos: $e');
-      if (mounted) {
-        setState(() => _mensajesNoLeidos = 0);
-      }
+      // No forzar a 0 si falló por red: el badge local puede seguir siendo válido.
     }
   }
 
@@ -3862,17 +3868,21 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             ),
           ),
           IconButton(
-            onPressed: () async {
-              // Actualizar contador antes de navegar para mostrar el badge correcto
-              await _cargarMensajesNoLeidos();
-              // NO marcar mensajes como leídos aquí - solo se marcarán cuando se entre a una conversación específica
-              await Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) => const ChatRepartidorListaScreen(),
-                ),
+            onPressed: () {
+              // Abrir YA desde caché. Badge/sync en segundo plano (sin internet el
+              // await previo hacía que el toque “no hiciera nada” varios segundos).
+              unawaited(
+                Navigator.of(context)
+                    .push(
+                  MaterialPageRoute(
+                    builder: (context) => const ChatRepartidorListaScreen(),
+                  ),
+                )
+                    .then((_) {
+                  unawaited(_cargarMensajesNoLeidos());
+                }),
               );
-              // Actualizar contador al volver del chat
-              await _cargarMensajesNoLeidos();
+              unawaited(_cargarMensajesNoLeidos());
             },
             icon: Stack(
               children: [
