@@ -509,6 +509,32 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                   ),
                 ],
                 const SizedBox(height: 18),
+                if (o.esCompartido) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE3F2FD),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFF90CAF9)),
+                    ),
+                    child: Text(
+                      'Viaje compartido · ${o.pasajeros} pasajeros '
+                      '(recogidas cercanas, mismo sentido)',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Color(0xFF1565C0),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        height: 1.3,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
                 if (o.esPagoCash)
                   _cashMontosCompactos(
                     cobrar: o.precioUsd ?? o.gananciaUsd,

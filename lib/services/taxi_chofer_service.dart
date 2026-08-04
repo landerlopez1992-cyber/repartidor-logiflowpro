@@ -78,6 +78,9 @@ class TaxiOfertaChofer {
   bool get esReserva =>
       estado.startsWith('reserva_') || rutaFase.trim().toLowerCase() == 'reserva';
 
+  /// Viaje pool (trayecto compartido entre pasajeros).
+  bool get esCompartido => ofertaTipo.toLowerCase() == 'compartido';
+
   TaxiOfertaChofer copyWith({
     double? pasajeroRating,
     int? pasajeroReviews,
