@@ -96,6 +96,12 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
     );
   }
 
+  Future<TaxiOfertaChofer> _conRating(TaxiOfertaChofer o) async {
+    final r = await TaxiChoferService.instance
+        .pasajeroRatingPorSolicitud(o.id);
+    return o.copyWith(pasajeroRating: r.rating, pasajeroReviews: r.reviews);
+  }
+
   Future<void> _cargarSilencioso() async {
     if (_busy || !mounted) return;
     try {
@@ -129,7 +135,9 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
         );
         return;
       }
-      setState(() => _oferta = o);
+      final conR = await _conRating(o);
+      if (!mounted) return;
+      setState(() => _oferta = conR);
     } catch (_) {}
   }
 
@@ -153,8 +161,10 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
         );
         return;
       }
+      final conR = await _conRating(o);
+      if (!mounted) return;
       setState(() {
-        _oferta = o;
+        _oferta = conR;
         _loading = false;
       });
     } catch (e) {
@@ -456,6 +466,26 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                     fontWeight: FontWeight.w800,
                     height: 1.2,
                   ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.star_rounded,
+                        color: Color(0xFFFF9800), size: 18),
+                    const SizedBox(width: 4),
+                    Text(
+                      o.pasajeroReviews > 0
+                          ? '${o.pasajeroRating.toStringAsFixed(1)} · ${o.pasajeroReviews} valoraciones'
+                          : 'Pasajero nuevo',
+                      style: const TextStyle(
+                        color: Color(0xFF9CA3AF),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
                 if (o.esPagoCash) ...[
                   const SizedBox(height: 10),

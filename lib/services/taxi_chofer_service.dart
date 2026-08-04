@@ -35,6 +35,8 @@ class TaxiOfertaChofer {
     this.comisionPct = 0,
     this.comisionViajeUsd = 0,
     this.topeDeudaUsd = 100,
+    this.pasajeroRating = 5.0,
+    this.pasajeroReviews = 0,
   });
 
   final String id;
@@ -69,6 +71,58 @@ class TaxiOfertaChofer {
   final double comisionPct;
   final double comisionViajeUsd;
   final double topeDeudaUsd;
+  /// Promedio 1–5 del pasajero (reseñas de otros choferes).
+  final double pasajeroRating;
+  final int pasajeroReviews;
+
+  bool get esReserva =>
+      estado.startsWith('reserva_') || rutaFase.trim().toLowerCase() == 'reserva';
+
+  TaxiOfertaChofer copyWith({
+    double? pasajeroRating,
+    int? pasajeroReviews,
+    String? estado,
+    String? rutaFase,
+    String? pasajeroFotoUrl,
+    String? pasajeroNombre,
+  }) {
+    return TaxiOfertaChofer(
+      id: id,
+      estado: estado ?? this.estado,
+      origenLat: origenLat,
+      origenLng: origenLng,
+      destinoLat: destinoLat,
+      destinoLng: destinoLng,
+      origenTexto: origenTexto,
+      destinoTexto: destinoTexto,
+      distanciaKm: distanciaKm,
+      distanciaMi: distanciaMi,
+      gananciaUsd: gananciaUsd,
+      pasajeroNombre: pasajeroNombre ?? this.pasajeroNombre,
+      pasajeroFotoUrl: pasajeroFotoUrl ?? this.pasajeroFotoUrl,
+      pasajeroTelefono: pasajeroTelefono,
+      solicitanteNombre: solicitanteNombre,
+      solicitanteTelefono: solicitanteTelefono,
+      paraMi: paraMi,
+      ofertaTipo: ofertaTipo,
+      origenProvincia: origenProvincia,
+      origenMunicipio: origenMunicipio,
+      precioUsd: precioUsd,
+      distanciaAlOrigenKm: distanciaAlOrigenKm,
+      createdAt: createdAt,
+      rutaFase: rutaFase ?? this.rutaFase,
+      pasajeros: pasajeros,
+      capacidadChofer: capacidadChofer,
+      metodoPago: metodoPago,
+      esPagoCash: esPagoCash,
+      cashHabilitado: cashHabilitado,
+      comisionPct: comisionPct,
+      comisionViajeUsd: comisionViajeUsd,
+      topeDeudaUsd: topeDeudaUsd,
+      pasajeroRating: pasajeroRating ?? this.pasajeroRating,
+      pasajeroReviews: pasajeroReviews ?? this.pasajeroReviews,
+    );
+  }
 
   /// Fase 1: yendo al punto A (recogida).
   bool get haciaPasajero =>
@@ -155,6 +209,8 @@ class TaxiOfertaChofer {
           (m['comision_empresa_usd'] as num?)?.toDouble() ??
           0,
       topeDeudaUsd: (m['tope_deuda_usd'] as num?)?.toDouble() ?? 100,
+      pasajeroRating: (m['pasajero_rating'] as num?)?.toDouble() ?? 5.0,
+      pasajeroReviews: (m['pasajero_reviews'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -518,6 +574,55 @@ class TaxiChoferService {
       return TaxiDemandaSugerencia.fromJson(Map<String, dynamic>.from(res));
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Rating del pasajero (promedio de reseñas de choferes).
+  Future<({double rating, int reviews})> pasajeroRatingPorSolicitud(
+    String solicitudId,
+  ) async {
+    try {
+      final res = await _db.rpc(
+        'taxi_pasajero_rating_por_solicitud',
+        params: {'p_solicitud_id': solicitudId},
+      );
+      if (res is! Map || res['ok'] != true) {
+        return (rating: 5.0, reviews: 0);
+      }
+      return (
+        rating: (res['pasajero_rating'] as num?)?.toDouble() ?? 5.0,
+        reviews: (res['pasajero_reviews'] as num?)?.toInt() ?? 0,
+      );
+    } catch (_) {
+      return (rating: 5.0, reviews: 0);
+    }
+  }
+
+  Future<({bool ok, String? err})> guardarReviewPasajero({
+    required String solicitudId,
+    required int estrellas,
+    String? comentario,
+  }) async {
+    try {
+      final res = await _db.rpc(
+        'taxi_chofer_guardar_review_pasajero',
+        params: {
+          'p_solicitud_id': solicitudId,
+          'p_estrellas': estrellas,
+          'p_comentario': comentario,
+        },
+      );
+      if (res is Map && res['ok'] == true) {
+        return (ok: true, err: null);
+      }
+      return (
+        ok: false,
+        err: res is Map
+            ? (res['mensaje']?.toString() ?? res['error']?.toString())
+            : 'No se pudo guardar la valoración',
+      );
+    } catch (e) {
+      return (ok: false, err: e.toString());
     }
   }
 }

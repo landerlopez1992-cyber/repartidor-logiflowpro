@@ -75,6 +75,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     _oferta = widget.oferta;
     unawaited(_bloquearSiCuentaSuspendida());
     unawaited(_refrescarFotoPasajero());
+    unawaited(_cargarRatingPasajero());
     _iniciarGps();
     _pingTimer = Timer.periodic(const Duration(seconds: 8), (_) {
       unawaited(_enviarUbicacion());
@@ -87,6 +88,102 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     });
     unawaited(_actualizarBadgeChat());
     unawaited(_pollEstadoViajeRemoto());
+  }
+
+  Future<void> _cargarRatingPasajero() async {
+    final id = _oferta.id;
+    if (id.isEmpty) return;
+    final r =
+        await TaxiChoferService.instance.pasajeroRatingPorSolicitud(id);
+    if (!mounted) return;
+    setState(() {
+      _oferta = _oferta.copyWith(
+        pasajeroRating: r.rating,
+        pasajeroReviews: r.reviews,
+      );
+    });
+  }
+
+  Future<void> _pedirValoracionPasajero() async {
+    if (!mounted) return;
+    var estrellas = 5;
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            return AlertDialog(
+              constraints: const BoxConstraints(maxWidth: 400),
+              insetPadding:
+                  const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+              title: const Text(
+                '¿Cómo fue el pasajero?',
+                style: TextStyle(
+                  color: Color(0xFF2C2C2C),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _oferta.pasajeroNombre.trim().isEmpty
+                        ? 'Pasajero'
+                        : _oferta.pasajeroNombre.trim(),
+                    style: const TextStyle(
+                      color: Color(0xFF666666),
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(5, (i) {
+                      final n = i + 1;
+                      return IconButton(
+                        onPressed: () => setLocal(() => estrellas = n),
+                        icon: Icon(
+                          n <= estrellas
+                              ? Icons.star_rounded
+                              : Icons.star_outline_rounded,
+                          color: const Color(0xFFFF9800),
+                          size: 32,
+                        ),
+                      );
+                    }),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text(
+                    'Omitir',
+                    style: TextStyle(color: Color(0xFF666666)),
+                  ),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF37474F),
+                  ),
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text(
+                    'Enviar',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (ok != true || !mounted) return;
+    await TaxiChoferService.instance.guardarReviewPasajero(
+      solicitudId: _oferta.id,
+      estrellas: estrellas,
+    );
   }
 
   Future<void> _bloquearSiCuentaSuspendida() async {
@@ -344,6 +441,8 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
           mostrarCancelar: true,
         );
         if (!mounted) return;
+        await _pedirValoracionPasajero();
+        if (!mounted) return;
         Navigator.of(context).pop();
         if (irPerfil == true && mounted) {
           await Navigator.of(context).push(
@@ -364,6 +463,8 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
           backgroundColor: const Color(0xFF4CAF50),
         ),
       );
+      await _pedirValoracionPasajero();
+      if (!mounted) return;
       Navigator.of(context).pop();
       return;
     }
@@ -477,26 +578,32 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     // Tras iniciar trayecto a B el socio no puede cancelar.
     if (_busy || _faseDestino) return;
     final esCash = _oferta.esPagoCash;
+    final esReserva = _oferta.esReserva;
     final go = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         constraints: const BoxConstraints(maxWidth: 400),
         insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-        title: const Text(
-          '¿Cancelar este viaje?',
-          style: TextStyle(
+        title: Text(
+          esReserva ? '¿Liberar esta reserva?' : '¿Cancelar este viaje?',
+          style: const TextStyle(
             color: Color(0xFF2C2C2C),
             fontWeight: FontWeight.w700,
           ),
         ),
         content: Text(
-          esCash
-              ? 'Si cancelas, pierdes esta carrera. Era pago en efectivo: '
-                  'no se devolverá saldo al pasajero porque no se cobró billetera.\n\n'
-                  'No recibirás ganancia por este viaje.'
-              : 'Si cancelas (por seguridad o algo sospechoso), pierdes esta carrera '
-                  'y el importe se devuelve completo al pasajero.\n\n'
-                  'No recibirás ganancia por este viaje.',
+          esReserva
+              ? 'Si liberas la reserva, se buscará otro conductor para el '
+                  'pasajero. Tú dejas de tener este viaje asignado.\n\n'
+                  'El pasajero será notificado y la reserva seguirá activa '
+                  'hasta que otro socio la acepte.'
+              : esCash
+                  ? 'Si cancelas, pierdes esta carrera. Era pago en efectivo: '
+                      'no se devolverá saldo al pasajero porque no se cobró billetera.\n\n'
+                      'No recibirás ganancia por este viaje.'
+                  : 'Si cancelas (por seguridad o algo sospechoso), pierdes esta carrera '
+                      'y el importe se devuelve completo al pasajero.\n\n'
+                      'No recibirás ganancia por este viaje.',
           style: const TextStyle(
             color: Color(0xFF666666),
             height: 1.4,
@@ -506,9 +613,9 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text(
-              'Seguir el viaje',
-              style: TextStyle(color: Color(0xFF666666)),
+            child: Text(
+              esReserva ? 'Mantener reserva' : 'Seguir el viaje',
+              style: const TextStyle(color: Color(0xFF666666)),
             ),
           ),
           ElevatedButton(
@@ -516,9 +623,9 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
               backgroundColor: const Color(0xFFDC2626),
             ),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text(
-              'Cancelar viaje',
-              style: TextStyle(color: Colors.white),
+            child: Text(
+              esReserva ? 'Liberar reserva' : 'Cancelar viaje',
+              style: const TextStyle(color: Colors.white),
             ),
           ),
         ],
@@ -547,8 +654,8 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          res.reasignada == true
-              ? 'Reserva liberada. Se buscará otro conductor.'
+          res.reasignada == true || esReserva
+              ? 'Reserva liberada. Se buscará otro conductor para el pasajero.'
               : esCash
                   ? 'Viaje cancelado. No se devolvió saldo (era cash).'
                   : 'Viaje cancelado. El saldo se devolvió al pasajero.',
@@ -654,6 +761,26 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                         fontWeight: FontWeight.w800,
                         fontSize: 18,
                       ),
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.star_rounded,
+                            color: Color(0xFFFF9800), size: 16),
+                        const SizedBox(width: 4),
+                        Text(
+                          _oferta.pasajeroReviews > 0
+                              ? '${_oferta.pasajeroRating.toStringAsFixed(1)} · ${_oferta.pasajeroReviews} val.'
+                              : 'Pasajero nuevo',
+                          style: const TextStyle(
+                            color: Color(0xFF9CA3AF),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 10),
                     _buildEtaBanner(),
