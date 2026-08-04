@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:geocoding/geocoding.dart';
 
 import '../config/app_colors.dart';
 import '../services/taxi_tarifas_chofer_service.dart';
@@ -19,6 +20,7 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
   final _recargoCtrl = TextEditingController();
   final _modeloCtrl = TextEditingController();
   final _placaCtrl = TextEditingController();
+  final _destinoCtrl = TextEditingController();
   String _unidad = 'km';
   int _capacidad = 4;
   int _incluidos = 2;
@@ -29,6 +31,10 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
   String? _marca;
   int? _anio;
   String? _color;
+  bool _soloHaciaDestino = false;
+  int _destinoRadioM = 25000;
+  double? _destinoLat;
+  double? _destinoLng;
   bool _loading = true;
   bool _saving = false;
 
@@ -36,6 +42,7 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
   static const int _maxPlazas = 20;
   static const List<int> _radiosKm = [30, 50, 80, 150, 250];
   static const List<int?> _maxViajeKm = [null, 50, 100, 200, 500];
+  static const List<int> _destinoRadiosKm = [10, 25, 50, 100];
 
   String get _avatarKey => TaxiVehiculoCatalog.resolveAvatarKey(
         marca: _marca ?? '',
@@ -122,6 +129,11 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
       _placaCtrl.text = t.vehiculoPlaca;
       _anio = t.vehiculoAnio;
       _color = t.vehiculoColor.isNotEmpty ? t.vehiculoColor : null;
+      _destinoCtrl.text = t.destinoPreferidoTexto;
+      _destinoLat = t.destinoPreferidoLat;
+      _destinoLng = t.destinoPreferidoLng;
+      _destinoRadioM = t.destinoPreferidoRadioM.clamp(5000, 200000);
+      _soloHaciaDestino = t.soloHaciaDestinoPreferido;
       _loading = false;
     });
   }
@@ -236,16 +248,78 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
       vehiculoPlaca: _placaCtrl.text.trim(),
     );
     if (!mounted) return;
+
+    if (!res.ok) {
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(res.err ?? 'Error al guardar'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return;
+    }
+
+    // Destino preferido (filtro): geocodificar si hay texto.
+    final destTxt = _destinoCtrl.text.trim();
+    double? lat = _destinoLat;
+    double? lng = _destinoLng;
+    if (destTxt.isEmpty) {
+      lat = null;
+      lng = null;
+      _soloHaciaDestino = false;
+    } else if (_soloHaciaDestino || lat == null || lng == null) {
+      try {
+        final places = await locationFromAddress(destTxt)
+            .timeout(const Duration(seconds: 8));
+        if (places.isNotEmpty) {
+          lat = places.first.latitude;
+          lng = places.first.longitude;
+        }
+      } catch (_) {
+        if (_soloHaciaDestino) {
+          setState(() => _saving = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'No se pudo ubicar el destino. Escribe una ciudad o dirección más clara.',
+              ),
+              backgroundColor: AppColors.error,
+            ),
+          );
+          return;
+        }
+      }
+    }
+
+    final destRes = await TaxiTarifasChoferService.instance.setDestinoPreferido(
+      texto: destTxt.isEmpty ? null : destTxt,
+      lat: lat,
+      lng: lng,
+      radioM: _destinoRadioM,
+      solo: destTxt.isNotEmpty && _soloHaciaDestino,
+    );
+    if (!mounted) return;
     setState(() => _saving = false);
+
+    if (!destRes.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Tarifa guardada, pero el destino no: ${destRes.err ?? "error"}',
+          ),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return;
+    }
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          res.ok
-              ? 'Tarifa guardada: \$${precio.toStringAsFixed(2)} / $_unidad'
-              : (res.err ?? 'Error al guardar'),
+          'Tarifa guardada: \$${precio.toStringAsFixed(2)} / $_unidad',
         ),
-        backgroundColor: res.ok ? AppColors.exito : AppColors.error,
+        backgroundColor: AppColors.exito,
       ),
     );
     if (res.ok) Navigator.of(context).pop(true);
@@ -257,6 +331,7 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
     _recargoCtrl.dispose();
     _modeloCtrl.dispose();
     _placaCtrl.dispose();
+    _destinoCtrl.dispose();
     super.dispose();
   }
 
@@ -660,6 +735,90 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
                           );
                         }).toList(),
                       ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'Voy hacia (opcional)',
+                        style: TextStyle(
+                          color: AppColors.darkTextMuted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Si activas el filtro, solo te ofrecerán viajes cuyo '
+                        'destino esté cerca de esa zona (útil si vuelves a casa '
+                        'o vas a un aeropuerto).',
+                        style: TextStyle(
+                          color: AppColors.darkTextMuted,
+                          fontSize: 12,
+                          height: 1.35,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: _destinoCtrl,
+                        style: const TextStyle(color: AppColors.darkText),
+                        onChanged: (_) {
+                          // Si cambia el texto, forzar re-geocode al guardar.
+                          _destinoLat = null;
+                          _destinoLng = null;
+                        },
+                        decoration: _fieldDeco(
+                          'Ciudad o dirección de destino',
+                          hint: 'Ej. Aeropuerto, Miami Beach…',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text(
+                          'Solo viajes hacia esa zona',
+                          style: TextStyle(
+                            color: AppColors.darkText,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        subtitle: const Text(
+                          'Si está apagado, ves todos los viajes (el destino '
+                          'queda solo como nota).',
+                          style: TextStyle(
+                            color: AppColors.darkTextMuted,
+                            fontSize: 12,
+                          ),
+                        ),
+                        value: _soloHaciaDestino,
+                        activeColor: AppColors.header,
+                        onChanged: (v) => setState(() => _soloHaciaDestino = v),
+                      ),
+                      if (_soloHaciaDestino) ...[
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Radio alrededor del destino',
+                          style: TextStyle(
+                            color: AppColors.darkTextMuted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: _destinoRadiosKm.map((km) {
+                            final selected =
+                                (_destinoRadioM / 1000).round() == km;
+                            return _labelChip(
+                              label: '$km km',
+                              selected: selected,
+                              onTap: () => setState(
+                                () => _destinoRadioM = km * 1000,
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
                       const SizedBox(height: 24),
                       const Text(
                         'Tu vehículo',

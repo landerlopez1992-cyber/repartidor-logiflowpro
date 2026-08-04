@@ -26,6 +26,11 @@ class TaxiTarifaChofer {
     this.vehiculoColor = '',
     this.vehiculoAvatarKey = 'moderno',
     this.vehiculoPlaca = '',
+    this.destinoPreferidoTexto = '',
+    this.destinoPreferidoLat,
+    this.destinoPreferidoLng,
+    this.destinoPreferidoRadioM = 25000,
+    this.soloHaciaDestinoPreferido = false,
   });
 
   final bool configurado;
@@ -45,6 +50,11 @@ class TaxiTarifaChofer {
   final String vehiculoColor;
   final String vehiculoAvatarKey;
   final String vehiculoPlaca;
+  final String destinoPreferidoTexto;
+  final double? destinoPreferidoLat;
+  final double? destinoPreferidoLng;
+  final int destinoPreferidoRadioM;
+  final bool soloHaciaDestinoPreferido;
 
   static const vacia = TaxiTarifaChofer(
     configurado: false,
@@ -77,6 +87,12 @@ class TaxiTarifaChofer {
             capacidad: (m['capacidad_pasajeros'] as num?)?.toInt() ?? 4,
           ),
       vehiculoPlaca: m['vehiculo_placa']?.toString() ?? '',
+      destinoPreferidoTexto: m['destino_preferido_texto']?.toString() ?? '',
+      destinoPreferidoLat: (m['destino_preferido_lat'] as num?)?.toDouble(),
+      destinoPreferidoLng: (m['destino_preferido_lng'] as num?)?.toDouble(),
+      destinoPreferidoRadioM:
+          (m['destino_preferido_radio_m'] as num?)?.toInt() ?? 25000,
+      soloHaciaDestinoPreferido: m['solo_hacia_destino_preferido'] == true,
     );
   }
 
@@ -96,6 +112,11 @@ class TaxiTarifaChofer {
         'vehiculo_color': vehiculoColor,
         'vehiculo_avatar_key': vehiculoAvatarKey,
         'vehiculo_placa': vehiculoPlaca,
+        'destino_preferido_texto': destinoPreferidoTexto,
+        'destino_preferido_lat': destinoPreferidoLat,
+        'destino_preferido_lng': destinoPreferidoLng,
+        'destino_preferido_radio_m': destinoPreferidoRadioM,
+        'solo_hacia_destino_preferido': soloHaciaDestinoPreferido,
       };
 }
 
@@ -224,6 +245,44 @@ class TaxiTarifasChoferService {
     }
   }
 
+  /// Destino preferido / filtro «solo hacia esa zona».
+  Future<({bool ok, String? err})> setDestinoPreferido({
+    String? texto,
+    double? lat,
+    double? lng,
+    int radioM = 25000,
+    bool solo = false,
+  }) async {
+    if (repartidorSinInternet()) {
+      return (ok: false, err: 'Sin internet: no se puede guardar el destino.');
+    }
+    try {
+      final res = await _db
+          .rpc(
+            'taxi_tarifa_chofer_set_destino_preferido',
+            params: {
+              'p_texto': texto,
+              'p_lat': lat,
+              'p_lng': lng,
+              'p_radio_m': radioM.clamp(5000, 200000),
+              'p_solo': solo,
+            },
+          )
+          .timeout(const Duration(seconds: 8));
+      if (res is Map && res['ok'] == true) {
+        final refreshed = await get(forceNetwork: true);
+        await saveCached(refreshed);
+        return (ok: true, err: null);
+      }
+      final err = res is Map
+          ? (res['error']?.toString() ?? 'No se pudo guardar el destino')
+          : 'No se pudo guardar el destino';
+      return (ok: false, err: err);
+    } catch (e) {
+      return (ok: false, err: 'Sin conexión al guardar destino: $e');
+    }
+  }
+
   /// Actualiza disponibilidad en BD. Sin red: encola y devuelve ok (caché local manda).
   Future<({bool ok, String? err, bool queued})> setDisponible(bool value) async {
     try {
@@ -259,6 +318,11 @@ class TaxiTarifasChoferService {
               vehiculoColor: cached.vehiculoColor,
               vehiculoAvatarKey: cached.vehiculoAvatarKey,
               vehiculoPlaca: cached.vehiculoPlaca,
+              destinoPreferidoTexto: cached.destinoPreferidoTexto,
+              destinoPreferidoLat: cached.destinoPreferidoLat,
+              destinoPreferidoLng: cached.destinoPreferidoLng,
+              destinoPreferidoRadioM: cached.destinoPreferidoRadioM,
+              soloHaciaDestinoPreferido: cached.soloHaciaDestinoPreferido,
             ),
           );
         }

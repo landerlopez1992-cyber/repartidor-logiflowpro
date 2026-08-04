@@ -457,6 +457,28 @@ class TaxiChoferService {
       if (res['ok'] == true) {
         final reasig = res['estado']?.toString() == 'reserva_reasignando' ||
             res['estado']?.toString() == 'reserva_pendiente_chofer';
+        if (res['needs_pasarela_refund'] == true) {
+          final gate =
+              (res['pasarela']?.toString() ?? '').toLowerCase().trim();
+          final pagoId = (res['pago_id']?.toString() ?? '').trim();
+          final tenantId = (res['tenant_id']?.toString() ?? '').trim();
+          final preferSquare = gate == 'square' ||
+              (pagoId.isNotEmpty && !pagoId.startsWith('pi_'));
+          final fn =
+              preferSquare ? 'web-wallet-square' : 'web-wallet-stripe';
+          if (tenantId.isNotEmpty) {
+            try {
+              await _db.functions.invoke(
+                fn,
+                body: {
+                  'action': 'refund_taxi_solicitud',
+                  'tenant_id': tenantId,
+                  'solicitud_id': solicitudId,
+                },
+              );
+            } catch (_) {}
+          }
+        }
         return (
           ok: true,
           err: null,
