@@ -32,6 +32,7 @@ import '../services/paises_service.dart';
 import '../utils/moneda_tenant_util.dart';
 import 'taxi_ajustes_screen.dart';
 import 'taxi_comision_pendiente_screen.dart';
+import 'taxi_ganancias_screen.dart';
 import 'repartidor_metodo_cobro_screen.dart';
 
 class RepartidorPerfilScreen extends StatefulWidget {
@@ -2835,6 +2836,22 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             Navigator.of(context).push(
               MaterialPageRoute<void>(
                 builder: (_) => const TaxiAjustesScreen(),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 8),
+        _tileTaxiOpcion(
+          icon: Icons.insights_outlined,
+          titulo: 'Mis ganancias',
+          subtitulo: _cuentaSuspendida
+              ? 'Deshabilitado — cuenta suspendida'
+              : 'Hoy, semana, propinas y demanda',
+          enabled: !_cuentaSuspendida,
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const TaxiGananciasScreen(),
               ),
             );
           },

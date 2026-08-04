@@ -500,6 +500,81 @@ class TaxiChoferService {
           .eq('leida', false);
     } catch (_) {}
   }
+
+  Future<TaxiGananciasResumen?> gananciasResumen() async {
+    try {
+      final res = await _db.rpc('taxi_chofer_ganancias_resumen');
+      if (res is! Map || res['ok'] != true) return null;
+      return TaxiGananciasResumen.fromJson(Map<String, dynamic>.from(res));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<TaxiDemandaSugerencia?> demandaSugerencia() async {
+    try {
+      final res = await _db.rpc('taxi_chofer_demanda_sugerencia');
+      if (res is! Map || res['ok'] != true) return null;
+      return TaxiDemandaSugerencia.fromJson(Map<String, dynamic>.from(res));
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+class TaxiGananciasResumen {
+  const TaxiGananciasResumen({
+    required this.gananciaHoy,
+    required this.gananciaSemana,
+    required this.viajesHoy,
+    required this.viajesSemana,
+    required this.comisionPendiente,
+    required this.fianza,
+    required this.propinasSemana,
+  });
+
+  final double gananciaHoy;
+  final double gananciaSemana;
+  final int viajesHoy;
+  final int viajesSemana;
+  final double comisionPendiente;
+  final double fianza;
+  final double propinasSemana;
+
+  factory TaxiGananciasResumen.fromJson(Map<String, dynamic> m) {
+    return TaxiGananciasResumen(
+      gananciaHoy: (m['ganancia_hoy_usd'] as num?)?.toDouble() ?? 0,
+      gananciaSemana: (m['ganancia_semana_usd'] as num?)?.toDouble() ?? 0,
+      viajesHoy: (m['viajes_hoy'] as num?)?.toInt() ?? 0,
+      viajesSemana: (m['viajes_semana'] as num?)?.toInt() ?? 0,
+      comisionPendiente: (m['comision_pendiente_usd'] as num?)?.toDouble() ?? 0,
+      fianza: (m['fianza_usd'] as num?)?.toDouble() ?? 0,
+      propinasSemana: (m['propinas_semana_usd'] as num?)?.toDouble() ?? 0,
+    );
+  }
+}
+
+class TaxiDemandaSugerencia {
+  const TaxiDemandaSugerencia({
+    required this.altaDemanda,
+    required this.pedidosPendientes,
+    required this.sociosOnline,
+    required this.mensaje,
+  });
+
+  final bool altaDemanda;
+  final int pedidosPendientes;
+  final int sociosOnline;
+  final String mensaje;
+
+  factory TaxiDemandaSugerencia.fromJson(Map<String, dynamic> m) {
+    return TaxiDemandaSugerencia(
+      altaDemanda: m['alta_demanda'] == true,
+      pedidosPendientes: (m['pedidos_pendientes'] as num?)?.toInt() ?? 0,
+      sociosOnline: (m['socios_online'] as num?)?.toInt() ?? 0,
+      mensaje: m['mensaje']?.toString() ?? '',
+    );
+  }
 }
 
 class TaxiViajeChatMsg {

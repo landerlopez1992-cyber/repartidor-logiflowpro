@@ -13,6 +13,7 @@ import '../widgets/taxi_cash_comision_aviso_modal.dart';
 import '../widgets/taxi_chofer_maplibre.dart';
 import 'repartidor_mobile_screen.dart';
 import 'taxi_comision_pendiente_screen.dart';
+import 'taxi_ganancias_screen.dart';
 
 /// Navegación GPS del socio:
 /// 1) Ubicación actual → punto A (recogida)
@@ -588,6 +589,22 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
             fontWeight: FontWeight.w700,
           ),
         ),
+        actions: [
+          if (!_faseEspera)
+            IconButton(
+              tooltip: 'Abrir en Maps / Waze',
+              onPressed: () async {
+                final dest = _faseDestino ? _puntoB : _puntoA;
+                await abrirNavegacionExterna(
+                  context: context,
+                  lat: dest.latitude,
+                  lng: dest.longitude,
+                  etiqueta: _faseDestino ? 'destino' : 'recogida',
+                );
+              },
+              icon: const Icon(Icons.directions),
+            ),
+        ],
       ),
       body: Column(
         children: [

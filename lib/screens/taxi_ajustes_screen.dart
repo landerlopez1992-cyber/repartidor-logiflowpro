@@ -18,6 +18,7 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
   final _precioCtrl = TextEditingController();
   final _recargoCtrl = TextEditingController();
   final _modeloCtrl = TextEditingController();
+  final _placaCtrl = TextEditingController();
   String _unidad = 'km';
   int _capacidad = 4;
   int _incluidos = 2;
@@ -118,6 +119,7 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
       _distanciaMaxViajeM = t.distanciaMaxViajeM;
       _marca = t.vehiculoMarca.isNotEmpty ? t.vehiculoMarca : null;
       _modeloCtrl.text = t.vehiculoModelo;
+      _placaCtrl.text = t.vehiculoPlaca;
       _anio = t.vehiculoAnio;
       _color = t.vehiculoColor.isNotEmpty ? t.vehiculoColor : null;
       _loading = false;
@@ -231,6 +233,7 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
       vehiculoModelo: _modeloCtrl.text.trim(),
       vehiculoAnio: _anio,
       vehiculoColor: _color,
+      vehiculoPlaca: _placaCtrl.text.trim(),
     );
     if (!mounted) return;
     setState(() => _saving = false);
@@ -253,6 +256,7 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
     _precioCtrl.dispose();
     _recargoCtrl.dispose();
     _modeloCtrl.dispose();
+    _placaCtrl.dispose();
     super.dispose();
   }
 
@@ -735,6 +739,16 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
                         controller: _modeloCtrl,
                         style: const TextStyle(color: AppColors.darkText),
                         decoration: _textoFieldDeco('Modelo'),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _placaCtrl,
+                        textCapitalization: TextCapitalization.characters,
+                        style: const TextStyle(color: AppColors.darkText),
+                        decoration: _textoFieldDeco('Placa / matrícula'),
+                        inputFormatters: [
+                          LengthLimitingTextInputFormatter(16),
+                        ],
                       ),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<int>(

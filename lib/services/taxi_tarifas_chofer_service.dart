@@ -25,6 +25,7 @@ class TaxiTarifaChofer {
     this.vehiculoAnio,
     this.vehiculoColor = '',
     this.vehiculoAvatarKey = 'moderno',
+    this.vehiculoPlaca = '',
   });
 
   final bool configurado;
@@ -43,6 +44,7 @@ class TaxiTarifaChofer {
   final int? vehiculoAnio;
   final String vehiculoColor;
   final String vehiculoAvatarKey;
+  final String vehiculoPlaca;
 
   static const vacia = TaxiTarifaChofer(
     configurado: false,
@@ -74,6 +76,7 @@ class TaxiTarifaChofer {
             anio: (m['vehiculo_anio'] as num?)?.toInt(),
             capacidad: (m['capacidad_pasajeros'] as num?)?.toInt() ?? 4,
           ),
+      vehiculoPlaca: m['vehiculo_placa']?.toString() ?? '',
     );
   }
 
@@ -92,6 +95,7 @@ class TaxiTarifaChofer {
         'vehiculo_anio': vehiculoAnio,
         'vehiculo_color': vehiculoColor,
         'vehiculo_avatar_key': vehiculoAvatarKey,
+        'vehiculo_placa': vehiculoPlaca,
       };
 }
 
@@ -173,6 +177,7 @@ class TaxiTarifasChoferService {
     String? vehiculoModelo,
     int? vehiculoAnio,
     String? vehiculoColor,
+    String? vehiculoPlaca,
   }) async {
     if (repartidorSinInternet()) {
       return (
@@ -200,6 +205,12 @@ class TaxiTarifasChoferService {
           )
           .timeout(const Duration(seconds: 8));
       if (res is Map && res['ok'] == true) {
+        try {
+          await _db.rpc(
+            'taxi_tarifa_chofer_set_placa',
+            params: {'p_placa': (vehiculoPlaca ?? '').trim()},
+          );
+        } catch (_) {}
         final refreshed = await get(forceNetwork: true);
         await saveCached(refreshed);
         return (ok: true, err: null);
@@ -247,6 +258,7 @@ class TaxiTarifasChoferService {
               vehiculoAnio: cached.vehiculoAnio,
               vehiculoColor: cached.vehiculoColor,
               vehiculoAvatarKey: cached.vehiculoAvatarKey,
+              vehiculoPlaca: cached.vehiculoPlaca,
             ),
           );
         }
