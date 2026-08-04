@@ -6,6 +6,7 @@ class RepartidorNotificacionTipos {
   static const String legacyOrdenNueva = 'ORDEN_NUEVA';
 
   static const String taxiViaje = 'taxi_viaje';
+  static const String taxiReserva = 'taxi_reserva';
   static const String taxiViajeCompletado = 'taxi_viaje_completado';
   static const String taxiPropina = 'taxi_propina';
   static const String taxiChat = 'taxi_chat';
@@ -13,8 +14,8 @@ class RepartidorNotificacionTipos {
   static const List<String> tiposOrdenNueva = [nuevaOrden, legacyOrdenNueva];
 
   /// Solo oferta entrante → modal llamada + ringtone/vibración persistente.
-  /// NO incluir propina, chat ni completado (eso vibraba sin haber viaje).
-  static const List<String> tiposTaxiViaje = [taxiViaje];
+  /// Incluye reservas programadas (misma UX de aceptar/rechazar).
+  static const List<String> tiposTaxiViaje = [taxiViaje, taxiReserva];
 
   static const List<String> tiposTaxiViajeCompletado = [taxiViajeCompletado];
   static const List<String> tiposTaxiPropina = [taxiPropina];
@@ -23,6 +24,7 @@ class RepartidorNotificacionTipos {
   /// Badge / lista de notificaciones (todos los avisos del módulo taxi).
   static const List<String> tiposTaxiTodos = [
     taxiViaje,
+    taxiReserva,
     taxiViajeCompletado,
     taxiPropina,
     taxiChat,

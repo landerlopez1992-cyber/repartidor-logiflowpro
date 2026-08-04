@@ -421,6 +421,21 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                     height: 1.3,
                   ),
                 ),
+                if (o.estado.startsWith('reserva_') ||
+                    o.rutaFase == 'reserva') ...[
+                  const SizedBox(height: 6),
+                  const Text(
+                    'VIAJE CON RESERVA — acepta y se confirma la cita. '
+                    'El saldo se acredita solo al completar el trayecto.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFFECEFF1),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 6),
                 const Text(
                   'Revisa el trayecto y responde',

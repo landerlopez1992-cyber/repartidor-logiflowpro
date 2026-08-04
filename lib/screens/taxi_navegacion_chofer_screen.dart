@@ -546,9 +546,11 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          esCash
-              ? 'Viaje cancelado. No se devolvió saldo (era cash).'
-              : 'Viaje cancelado. El saldo se devolvió al pasajero.',
+          res.reasignada == true
+              ? 'Reserva liberada. Se buscará otro conductor.'
+              : esCash
+                  ? 'Viaje cancelado. No se devolvió saldo (era cash).'
+                  : 'Viaje cancelado. El saldo se devolvió al pasajero.',
         ),
         backgroundColor: const Color(0xFF37474F),
       ),

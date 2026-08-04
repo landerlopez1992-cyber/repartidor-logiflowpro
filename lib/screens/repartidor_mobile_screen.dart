@@ -68,6 +68,7 @@ import '../widgets/volonex_ui.dart';
 import '../utils/entrega_foto_util.dart';
 import '../widgets/foto_entrega_preview.dart';
 import '../widgets/foto_entrega_selector_sheet.dart';
+import '../widgets/entrega_tipo_dialog.dart';
 import '../utils/repartidor_nombre_util.dart';
 import '../utils/repartidor_master_util.dart';
 import '../services/repartidor_seguridad_service.dart';
@@ -5907,6 +5908,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         return const Color(0xFF4CAF50); // Verde para "RECOGIDO" (similar a ENTREGADO)
       case 'LISTO PARA RECOGER':
         return const Color(0xFFFF9800); // Naranja para "LISTO PARA RECOGER"
+      case 'ENTREGA_PARCIAL':
+        return const Color(0xFFFF9800);
       case 'EN REPARTO':
         return const Color(0xFFFF9800); // Naranja para "EN REPARTO"
       case 'EN CAMINO':
@@ -5940,6 +5943,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         return Icons.check_circle; // Icono de check para "RECOGIDO"
       case 'LISTO PARA RECOGER':
         return Icons.store_mall_directory; // Icono de tienda para "LISTO PARA RECOGER"
+      case 'ENTREGA_PARCIAL':
+        return Icons.inventory_2_outlined;
       case 'EN REPARTO':
         return Icons.delivery_dining; // Icono de reparto
       case 'EN CAMINO':
@@ -6740,6 +6745,89 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         orden.cantidadBultos > 1;
   }
 
+  Future<void> _marcarEntregaParcialRpc(
+    Orden orden, {
+    required List<int> indices,
+    DateTime? fechaFaltantes,
+  }) async {
+    if (!await repartidorRequiereInternet(
+      context,
+      accion: 'registrar entrega parcial',
+    )) {
+      return;
+    }
+    try {
+      final foto = (orden.fotoEntrega ?? '').trim();
+      final raw = await supabase.rpc(
+        'orden_marcar_entrega',
+        params: {
+          'p_orden_id': orden.id,
+          'p_tipo': 'parcial',
+          'p_items_indices': indices,
+          'p_foto_url': foto.isEmpty ? null : foto,
+          'p_fecha_estimada_faltantes': fechaFaltantes?.toUtc().toIso8601String(),
+          'p_nota': null,
+        },
+      );
+      final map = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+      if (map['ok'] != true) {
+        _mostrarMensaje(map['error']?.toString() ?? 'No se pudo registrar la entrega parcial');
+        return;
+      }
+      // Actualizar caché local para que la orden siga en activas (no cerrada).
+      try {
+        final ordenData = await supabase
+            .from('ordenes')
+            .select('*')
+            .eq('id', orden.id)
+            .single();
+        final actualizada = Orden.fromJson(ordenData);
+        _actualizarOrdenEnLista(actualizada);
+        await OrdenCacheService.updateCachedOrder(actualizada);
+      } catch (_) {
+        /* la recarga abajo cubre */
+      }
+      _mostrarMensaje('Entrega parcial registrada. La orden sigue activa.');
+      await _cargarOrdenes(
+        preservarOrdenId: orden.id,
+        preservarEstado: 'ENTREGA_PARCIAL',
+      );
+      _verificarYActivarRastreo();
+    } catch (e) {
+      print('❌ Error entrega parcial: $e');
+      _mostrarMensaje(
+        'No se pudo registrar la entrega parcial. '
+        'Revisa la conexión e inténtalo de nuevo.',
+      );
+    }
+  }
+
+  /// Cierre completo vía RPC (marca todos los ítems de tienda). Si falla, null.
+  Future<bool?> _marcarEntregaCompletaRpc(Orden orden) async {
+    if (repartidorSinInternet()) return null;
+    try {
+      final foto = (orden.fotoEntrega ?? '').trim();
+      final raw = await supabase.rpc(
+        'orden_marcar_entrega',
+        params: {
+          'p_orden_id': orden.id,
+          'p_tipo': 'completa',
+          'p_items_indices': <int>[],
+          'p_foto_url': foto.isEmpty ? null : foto,
+          'p_fecha_estimada_faltantes': null,
+          'p_nota': null,
+        },
+      );
+      final map = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+      if (map['ok'] == true) return true;
+      print('⚠️ RPC completa: ${map['error']}');
+      return false;
+    } catch (e) {
+      print('⚠️ RPC completa falló: $e');
+      return null;
+    }
+  }
+
   Future<void> _marcarComoEntregado(Orden orden) async {
     if (_ordenRequiereProcesoEntregaGuiado(orden)) {
       await Navigator.of(context).push(
@@ -6749,6 +6837,22 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       );
       await _aplicarOrdenDesdeCacheTrasDetalle(orden.id);
       return;
+    }
+
+    final tipoEntrega = await mostrarDialogoTipoEntrega(
+      context: context,
+      orden: orden,
+    );
+    if (tipoEntrega == null) return;
+
+    // Parcial exige red: la RPC no se puede encolar en SyncService (cola legacy).
+    if (tipoEntrega.tipo == 'parcial') {
+      if (!await repartidorRequiereInternet(
+        context,
+        accion: 'hacer una entrega parcial',
+      )) {
+        return;
+      }
     }
 
     // Aviso rápido si faltan coordenadas (antes de foto/firma/validaciones lentas)
@@ -6812,11 +6916,22 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
     if (_confirmacionEntregaObligatoria) {
       final confirmadoFinal = await _mostrarConfirmacion(
-        'Confirmar Entrega',
-        '¿Estás seguro de que quieres marcar esta orden como entregada?\n\n'
-        'Tiempo máximo de espera configurado: $_tiempoEsperaEntrega min.',
+        tipoEntrega.tipo == 'parcial' ? 'Confirmar entrega parcial' : 'Confirmar Entrega',
+        tipoEntrega.tipo == 'parcial'
+            ? '¿Confirmas la entrega parcial? La orden seguirá activa hasta completar lo pendiente.'
+            : '¿Estás seguro de que quieres marcar esta orden como entregada?\n\n'
+                'Tiempo máximo de espera configurado: $_tiempoEsperaEntrega min.',
       );
       if (!confirmadoFinal) return;
+    }
+
+    if (tipoEntrega.tipo == 'parcial') {
+      await _marcarEntregaParcialRpc(
+        ordenTrabajo,
+        indices: tipoEntrega.indicesItems,
+        fechaFaltantes: tipoEntrega.fechaEstimadaFaltantes,
+      );
+      return;
     }
 
     print('✅ Usuario confirmó la entrega de la orden #${ordenTrabajo.numeroOrden}');
@@ -6868,12 +6983,33 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         );
         _actualizarOrdenEnLista(ordenLocal);
 
-        final syncResult = await OrdenEstadoSyncHelper.persistirCambioEstado(
-          ordenId: ordenTrabajo.id,
-          ordenEnCache: ordenLocal,
-          updateData: updateData,
-          queueType: 'mark_delivered',
-        );
+        // Con red: RPC completa marca ítems de tienda + ENTREGADO (evita dejar “pendientes” tras parcial).
+        // Sin red / si RPC falla: cola offline legacy (igual que antes).
+        final rpcOk = await _marcarEntregaCompletaRpc(ordenTrabajo);
+        late final OrdenEstadoSyncResult syncResult;
+        if (rpcOk == true) {
+          await OrdenCacheService.updateCachedOrder(ordenLocal);
+          try {
+            await GoodBarberSyncService.sincronizarEstadoAGoodBarber(
+              supabase,
+              ordenTrabajo.id,
+              'ENTREGADO',
+            );
+          } catch (e) {
+            print('⚠️ GoodBarber sync tras RPC completa: $e');
+          }
+          syncResult = const OrdenEstadoSyncResult(
+            persistedToDb: true,
+            queued: false,
+          );
+        } else {
+          syncResult = await OrdenEstadoSyncHelper.persistirCambioEstado(
+            ordenId: ordenTrabajo.id,
+            ordenEnCache: ordenLocal,
+            updateData: updateData,
+            queueType: 'mark_delivered',
+          );
+        }
 
         if (!syncResult.persistedToDb) {
           _mostrarMensaje(

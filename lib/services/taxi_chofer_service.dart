@@ -381,24 +381,43 @@ class TaxiChoferService {
     }
   }
 
-  /// Cancela viaje aceptado/en curso: reembolsa 100% al pasajero; el socio pierde la carrera.
-  Future<({bool ok, String? err, double? amountUsd})> cancelarViajeChofer(
-    String solicitudId,
-  ) async {
+  /// Cancela viaje aceptado/en curso.
+  /// Si es reserva confirmada, el backend reasigna (libera) sin reembolso total.
+  Future<({bool ok, String? err, double? amountUsd, bool? reasignada})>
+      cancelarViajeChofer(String solicitudId) async {
     try {
       final res = await _db.rpc(
         'taxi_chofer_cancelar_viaje',
         params: {'p_solicitud_id': solicitudId},
       );
       if (res is! Map) {
-        return (ok: false, err: 'No se pudo cancelar el viaje.', amountUsd: null);
+        return (
+          ok: false,
+          err: 'No se pudo cancelar el viaje.',
+          amountUsd: null,
+          reasignada: null,
+        );
       }
       if (res['ok'] == true) {
+        final reasig = res['estado']?.toString() == 'reserva_reasignando' ||
+            res['estado']?.toString() == 'reserva_pendiente_chofer';
         return (
           ok: true,
           err: null,
           amountUsd: (res['amount_usd'] as num?)?.toDouble(),
+          reasignada: reasig,
         );
+      }
+      // Fallback explícito si el backend aún no redirige reservas.
+      final err = res['error']?.toString();
+      if (err == 'estado_invalido') {
+        final libera = await _db.rpc(
+          'taxi_chofer_libera_reserva',
+          params: {'p_solicitud_id': solicitudId},
+        );
+        if (libera is Map && libera['ok'] == true) {
+          return (ok: true, err: null, amountUsd: null, reasignada: true);
+        }
       }
       return (
         ok: false,
@@ -406,9 +425,10 @@ class TaxiChoferService {
             res['error']?.toString() ??
             'No se pudo cancelar el viaje.',
         amountUsd: null,
+        reasignada: null,
       );
     } catch (e) {
-      return (ok: false, err: e.toString(), amountUsd: null);
+      return (ok: false, err: e.toString(), amountUsd: null, reasignada: null);
     }
   }
 

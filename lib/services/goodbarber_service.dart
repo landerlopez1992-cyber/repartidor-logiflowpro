@@ -621,6 +621,10 @@ class GoodBarberService {
         // ATRASADO no se sincroniza con GoodBarber (no existe en GoodBarber)
         print('   → No se sincroniza (ATRASADO no existe en GoodBarber)');
         return null;
+      case 'ENTREGA_PARCIAL':
+        // Parcial: orden sigue activa; no marcar DELIVERED en GoodBarber.
+        print('   → No se sincroniza (ENTREGA_PARCIAL; pedido aún activo)');
+        return null;
       default:
         print('⚠️ Estado desconocido de VolonexPro+: $estadoLogiFlow');
         return null;
