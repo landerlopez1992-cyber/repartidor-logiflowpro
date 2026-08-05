@@ -518,11 +518,16 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                   _cashMontosCompactos(
                     cobrar: o.precioUsd ?? o.gananciaUsd,
                     queda: o.gananciaUsd,
-                    empresa: o.comisionViajeUsd > 0
-                        ? o.comisionViajeUsd
-                        : ((o.precioUsd ?? o.gananciaUsd) - o.gananciaUsd)
-                            .clamp(0.0, o.precioUsd ?? o.gananciaUsd)
-                            .toDouble(),
+                    // Comisión nunca puede superar lo que paga el cliente.
+                    empresa: () {
+                      final cobrar = o.precioUsd ?? o.gananciaUsd;
+                      final raw = o.comisionViajeUsd > 0
+                          ? o.comisionViajeUsd
+                          : (o.comisionPct > 0
+                              ? cobrar * o.comisionPct / 100.0
+                              : (cobrar - o.gananciaUsd));
+                      return raw.clamp(0.0, cobrar).toDouble();
+                    }(),
                   )
                 else ...[
                   _infoCard(

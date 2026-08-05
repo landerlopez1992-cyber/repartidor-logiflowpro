@@ -462,6 +462,15 @@ class TaxiChoferService {
         low.contains('ya aceptó')) {
       return 'Otro socio ya tomó este viaje.';
     }
+    if (low.contains('capacidad_insuficiente')) {
+      return 'Tu vehículo no tiene plazas suficientes para este viaje.';
+    }
+    if (low.contains('tarifa_alta')) {
+      return 'Tu tarifa no encaja con el precio de este viaje.';
+    }
+    if (low.contains('comision_pendiente')) {
+      return 'Tienes comisión en efectivo pendiente. Regúlala para aceptar viajes.';
+    }
     if (low.contains('ya_rechazado') || low.contains('ya rechazaste')) {
       return 'Ya rechazaste este viaje.';
     }
