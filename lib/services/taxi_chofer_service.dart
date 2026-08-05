@@ -529,8 +529,14 @@ class TaxiChoferService {
           oferta: null,
         );
       }
-      // Siempre pedir detalle completo (incluye pasajero_foto_url del perfil web).
-      final det = await detalleOferta(solicitudId);
+      // La aceptación ya quedó confirmada por el RPC. Un fallo de red en este
+      // segundo fetch no debe convertirla en un falso rechazo en pantalla.
+      TaxiOfertaChofer? det;
+      try {
+        det = await detalleOferta(solicitudId);
+      } catch (_) {
+        det = null;
+      }
       if (det != null) {
         return (ok: true, err: null, oferta: det);
       }

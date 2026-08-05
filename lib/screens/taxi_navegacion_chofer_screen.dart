@@ -51,6 +51,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
   bool _chatSheetAbierto = false;
   Timer? _estadoPollTimer;
   bool _salidaRemotaManejada = false;
+  bool _estadoPollEnCurso = false;
 
   /// Índice del tramo actual en [_legs].
   int _legIndex = 0;
@@ -362,12 +363,18 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
 
   /// Si el pasajero (u otro lado) cancela, salir del mapa y no quedar colgado.
   Future<void> _pollEstadoViajeRemoto() async {
-    if (_salidaRemotaManejada || _busy || !mounted) return;
+    if (_salidaRemotaManejada ||
+        _busy ||
+        _estadoPollEnCurso ||
+        !mounted) {
+      return;
+    }
     final id = _oferta.id;
     if (id.isEmpty) return;
+    _estadoPollEnCurso = true;
     try {
       final det = await TaxiChoferService.instance.detalleOferta(id);
-      if (!mounted || _salidaRemotaManejada) return;
+      if (!mounted || _salidaRemotaManejada || _busy) return;
 
       // null = error temporal / RPC; no cerrar la navegación.
       if (det == null) return;
@@ -403,7 +410,10 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
           });
         }
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _estadoPollEnCurso = false;
+    }
   }
 
   Future<void> _cerrarPorCancelacionRemota(String mensaje) async {
