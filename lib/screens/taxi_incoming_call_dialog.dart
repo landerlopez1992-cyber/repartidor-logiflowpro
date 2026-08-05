@@ -7,6 +7,7 @@ import '../navigation/repartidor_navigator.dart';
 import '../services/taxi_chofer_service.dart';
 import '../services/taxi_llamada_persistente_service.dart';
 import '../widgets/taxi_cash_comision_aviso_modal.dart';
+import '../widgets/taxi_itinerario_chofer_panel.dart';
 import 'taxi_navegacion_chofer_screen.dart';
 
 /// Modal estilo “llamada entrante” persistente (Uber).
@@ -509,30 +510,8 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                   ),
                 ],
                 const SizedBox(height: 18),
-                if (o.esCompartido) ...[
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE3F2FD),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: const Color(0xFF90CAF9)),
-                    ),
-                    child: Text(
-                      'Viaje compartido · ${o.pasajeros} pasajeros '
-                      '(recogidas cercanas, mismo sentido)',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Color(0xFF1565C0),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        height: 1.3,
-                      ),
-                    ),
-                  ),
+                if (o.esCompartido || o.tieneParadas) ...[
+                  TaxiOfertaTipoBanner(oferta: o),
                   const SizedBox(height: 10),
                 ],
                 if (o.esPagoCash)
@@ -562,23 +541,28 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                 const SizedBox(height: 8),
                 _infoCard(
                   icon: Icons.route_outlined,
-                  label: 'Trayecto A → B',
+                  label: o.esCompartido
+                      ? 'Trayecto compartido (aprox.)'
+                      : (o.tieneParadas
+                          ? 'Trayecto con paradas'
+                          : 'Trayecto A → B'),
                   value:
-                      '${o.distanciaKm.toStringAsFixed(2)} km · ${o.distanciaMi.toStringAsFixed(2)} mi',
+                      '${o.distanciaKm.toStringAsFixed(2)} km · ${o.distanciaMi.toStringAsFixed(2)} mi'
+                      '${o.ofertaTipoEtiqueta != '—' ? ' · ${o.ofertaTipoEtiqueta}' : ''}',
                 ),
                 if (distA != null) ...[
                   const SizedBox(height: 8),
                   _infoCard(
                     icon: Icons.near_me_outlined,
-                    label: 'Distancia hasta el punto de recogida',
+                    label: 'Hasta la primera recogida',
                     value: '${distA.toStringAsFixed(2)} km desde tu ubicación',
                   ),
                 ],
-                const SizedBox(height: 8),
-                _infoCard(
-                  icon: Icons.trip_origin,
-                  label: 'Recoger en (punto A)',
-                  value: o.origenTexto.isEmpty ? '—' : o.origenTexto,
+                const SizedBox(height: 10),
+                TaxiItinerarioChoferPanel(
+                  oferta: o,
+                  compact: true,
+                  dark: true,
                 ),
                 const SizedBox(height: 8),
               ],

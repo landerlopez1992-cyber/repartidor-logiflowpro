@@ -1,4 +1,62 @@
+import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+/// Parada / punto del itinerario (recogida, parada intermedia, destino).
+class TaxiItinerarioStop {
+  const TaxiItinerarioStop({
+    required this.tipo,
+    required this.orden,
+    required this.etiqueta,
+    required this.texto,
+    this.lat,
+    this.lng,
+    this.pasajero,
+    this.solicitudId,
+  });
+
+  final String tipo; // recogida | recogida_companero | parada | destino | destino_companero
+  final int orden;
+  final String etiqueta;
+  final String texto;
+  final double? lat;
+  final double? lng;
+  final String? pasajero;
+  final String? solicitudId;
+
+  bool get esParada => tipo == 'parada';
+  bool get esRecogida => tipo.startsWith('recogida');
+  bool get esDestino => tipo.startsWith('destino');
+
+  LatLng? get latLng {
+    if (lat == null || lng == null) return null;
+    if (lat == 0 && lng == 0) return null;
+    return LatLng(lat!, lng!);
+  }
+
+  factory TaxiItinerarioStop.fromJson(Map<String, dynamic> m) {
+    return TaxiItinerarioStop(
+      tipo: m['tipo']?.toString() ?? 'parada',
+      orden: (m['orden'] as num?)?.toInt() ?? 0,
+      etiqueta: m['etiqueta']?.toString() ?? '',
+      texto: m['texto']?.toString() ?? '',
+      lat: (m['lat'] as num?)?.toDouble(),
+      lng: (m['lng'] as num?)?.toDouble(),
+      pasajero: m['pasajero']?.toString(),
+      solicitudId: m['solicitud_id']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'tipo': tipo,
+        'orden': orden,
+        'etiqueta': etiqueta,
+        'texto': texto,
+        'lat': lat,
+        'lng': lng,
+        'pasajero': pasajero,
+        'solicitud_id': solicitudId,
+      };
+}
 
 /// Oferta / viaje taxi para el socio (app Repartidor).
 class TaxiOfertaChofer {
@@ -37,6 +95,14 @@ class TaxiOfertaChofer {
     this.topeDeudaUsd = 100,
     this.pasajeroRating = 5.0,
     this.pasajeroReviews = 0,
+    this.esPool = false,
+    this.poolEsLead = false,
+    this.paradasCount = 0,
+    this.itinerario = const [],
+    this.poolPrecioTotalUsd,
+    this.itinerarioIndice = 0,
+    this.itinerarioEsperando = false,
+    this.itinerarioPersistido = false,
   });
 
   final String id;
@@ -74,12 +140,88 @@ class TaxiOfertaChofer {
   /// Promedio 1–5 del pasajero (reseñas de otros choferes).
   final double pasajeroRating;
   final int pasajeroReviews;
+  final bool esPool;
+  final bool poolEsLead;
+  final int paradasCount;
+  final List<TaxiItinerarioStop> itinerario;
+  final double? poolPrecioTotalUsd;
+  final int itinerarioIndice;
+  final bool itinerarioEsperando;
+  final bool itinerarioPersistido;
 
   bool get esReserva =>
       estado.startsWith('reserva_') || rutaFase.trim().toLowerCase() == 'reserva';
 
   /// Viaje pool (trayecto compartido entre pasajeros).
-  bool get esCompartido => ofertaTipo.toLowerCase() == 'compartido';
+  bool get esCompartido =>
+      esPool || ofertaTipo.toLowerCase() == 'compartido';
+
+  bool get tieneParadas =>
+      paradasCount > 0 || itinerario.any((e) => e.esParada);
+
+  /// Paradas intermedias con coordenadas (mapa).
+  List<LatLng> get paradasLatLng => itinerario
+      .where((e) => e.esParada)
+      .map((e) => e.latLng)
+      .whereType<LatLng>()
+      .toList();
+
+  /// Tramos de navegación estilo Uber Share:
+  /// recogidas → paradas → destinos (destinos ordenados por cercanía si [desde]).
+  List<TaxiItinerarioStop> legsNavegacion({LatLng? desdeParaDestinos}) {
+    final pickups = itinerario.where((e) => e.esRecogida).toList();
+    final paradas = itinerario.where((e) => e.esParada).toList();
+    var destinos = itinerario.where((e) => e.esDestino).toList();
+    if (desdeParaDestinos != null && destinos.length > 1) {
+      destinos = List<TaxiItinerarioStop>.of(destinos)
+        ..sort((a, b) {
+          final da = _distM(desdeParaDestinos, a);
+          final db = _distM(desdeParaDestinos, b);
+          return da.compareTo(db);
+        });
+      // Renumerar etiquetas para el chofer: Destino 1 / Destino 2
+      destinos = [
+        for (var i = 0; i < destinos.length; i++)
+          TaxiItinerarioStop(
+            tipo: destinos[i].tipo,
+            orden: destinos[i].orden,
+            etiqueta: destinos.length > 1
+                ? 'Destino ${i + 1}${destinos[i].pasajero != null && destinos[i].pasajero!.isNotEmpty ? ' · ${destinos[i].pasajero}' : ''}'
+                : destinos[i].etiqueta,
+            texto: destinos[i].texto,
+            lat: destinos[i].lat,
+            lng: destinos[i].lng,
+            pasajero: destinos[i].pasajero,
+            solicitudId: destinos[i].solicitudId,
+          ),
+      ];
+    }
+    return [...pickups, ...paradas, ...destinos];
+  }
+
+  static double _distM(LatLng from, TaxiItinerarioStop stop) {
+    final ll = stop.latLng;
+    if (ll == null) return 1e12;
+    const d = Distance();
+    return d.as(LengthUnit.Meter, from, ll);
+  }
+
+  List<LatLng> get todosPuntosMapa {
+    final out = <LatLng>[];
+    for (final s in itinerario) {
+      final ll = s.latLng;
+      if (ll != null) out.add(ll);
+    }
+    if (out.isEmpty) {
+      if (origenLat != 0 || origenLng != 0) {
+        out.add(LatLng(origenLat, origenLng));
+      }
+      if (destinoLat != 0 || destinoLng != 0) {
+        out.add(LatLng(destinoLat, destinoLng));
+      }
+    }
+    return out;
+  }
 
   TaxiOfertaChofer copyWith({
     double? pasajeroRating,
@@ -88,6 +230,10 @@ class TaxiOfertaChofer {
     String? rutaFase,
     String? pasajeroFotoUrl,
     String? pasajeroNombre,
+    List<TaxiItinerarioStop>? itinerario,
+    int? itinerarioIndice,
+    bool? itinerarioEsperando,
+    bool? itinerarioPersistido,
   }) {
     return TaxiOfertaChofer(
       id: id,
@@ -124,6 +270,16 @@ class TaxiOfertaChofer {
       topeDeudaUsd: topeDeudaUsd,
       pasajeroRating: pasajeroRating ?? this.pasajeroRating,
       pasajeroReviews: pasajeroReviews ?? this.pasajeroReviews,
+      esPool: esPool,
+      poolEsLead: poolEsLead,
+      paradasCount: paradasCount,
+      itinerario: itinerario ?? this.itinerario,
+      poolPrecioTotalUsd: poolPrecioTotalUsd,
+      itinerarioIndice: itinerarioIndice ?? this.itinerarioIndice,
+      itinerarioEsperando:
+          itinerarioEsperando ?? this.itinerarioEsperando,
+      itinerarioPersistido:
+          itinerarioPersistido ?? this.itinerarioPersistido,
     );
   }
 
@@ -154,6 +310,8 @@ class TaxiOfertaChofer {
         return 'Confort';
       case 'premium':
         return 'Premium';
+      case 'compartido':
+        return 'Compartido';
       case '':
         return '—';
       default:
@@ -175,6 +333,66 @@ class TaxiOfertaChofer {
     if (rawCreated != null && rawCreated.isNotEmpty) {
       created = DateTime.tryParse(rawCreated)?.toLocal();
     }
+    final itin = <TaxiItinerarioStop>[];
+    final rawPersistido = m['itinerario_chofer_orden'];
+    final rawItin = rawPersistido is List && rawPersistido.isNotEmpty
+        ? rawPersistido
+        : m['itinerario'];
+    if (rawItin is List) {
+      for (final e in rawItin) {
+        if (e is Map) {
+          itin.add(TaxiItinerarioStop.fromJson(Map<String, dynamic>.from(e)));
+        }
+      }
+    }
+    // Fallback si el RPC aún no trae itinerario: A → waypoints → B
+    if (itin.isEmpty) {
+      itin.add(
+        TaxiItinerarioStop(
+          tipo: 'recogida',
+          orden: 1,
+          etiqueta: 'Recogida',
+          texto: m['origen_texto']?.toString() ?? '',
+          lat: (m['origen_lat'] as num?)?.toDouble(),
+          lng: (m['origen_lng'] as num?)?.toDouble(),
+          pasajero: m['pasajero_nombre']?.toString(),
+        ),
+      );
+      final wps = m['waypoints'];
+      if (wps is List) {
+        var i = 0;
+        for (final w in wps) {
+          if (w is! Map) continue;
+          i++;
+          final wm = Map<String, dynamic>.from(w);
+          itin.add(
+            TaxiItinerarioStop(
+              tipo: 'parada',
+              orden: 1 + i,
+              etiqueta: 'Parada $i',
+              texto: wm['texto']?.toString() ??
+                  wm['formatted_address']?.toString() ??
+                  'Parada',
+              lat: (wm['lat'] as num?)?.toDouble(),
+              lng: (wm['lng'] as num?)?.toDouble(),
+            ),
+          );
+        }
+      }
+      itin.add(
+        TaxiItinerarioStop(
+          tipo: 'destino',
+          orden: itin.length + 1,
+          etiqueta: 'Destino',
+          texto: m['destino_texto']?.toString() ?? '',
+          lat: (m['destino_lat'] as num?)?.toDouble(),
+          lng: (m['destino_lng'] as num?)?.toDouble(),
+          pasajero: m['pasajero_nombre']?.toString(),
+        ),
+      );
+    }
+    final esPool = m['es_pool'] == true ||
+        (m['oferta_tipo']?.toString() ?? '').toLowerCase() == 'compartido';
     return TaxiOfertaChofer(
       id: m['id']?.toString() ?? '',
       estado: m['estado']?.toString() ?? '',
@@ -214,6 +432,17 @@ class TaxiOfertaChofer {
       topeDeudaUsd: (m['tope_deuda_usd'] as num?)?.toDouble() ?? 100,
       pasajeroRating: (m['pasajero_rating'] as num?)?.toDouble() ?? 5.0,
       pasajeroReviews: (m['pasajero_reviews'] as num?)?.toInt() ?? 0,
+      esPool: esPool,
+      poolEsLead: m['pool_es_lead'] == true,
+      paradasCount: (m['paradas_count'] as num?)?.toInt() ??
+          itin.where((e) => e.esParada).length,
+      itinerario: itin,
+      poolPrecioTotalUsd: (m['pool_precio_total_usd'] as num?)?.toDouble(),
+      itinerarioIndice:
+          (m['itinerario_chofer_indice'] as num?)?.toInt() ?? 0,
+      itinerarioEsperando: m['itinerario_chofer_esperando'] == true,
+      itinerarioPersistido:
+          rawPersistido is List && rawPersistido.isNotEmpty,
     );
   }
 }
@@ -268,6 +497,11 @@ class TaxiChoferService {
       final res = await _db.rpc('taxi_chofer_viaje_activo');
       if (res is! Map || res['ok'] != true) return null;
       if (res['activo'] != true) return null;
+      final id = res['id']?.toString() ?? '';
+      if (id.isNotEmpty) {
+        final detalle = await detalleOferta(id);
+        if (detalle != null) return detalle;
+      }
       return TaxiOfertaChofer.fromJson(Map<String, dynamic>.from(res));
     } catch (_) {
       return null;
@@ -397,6 +631,36 @@ class TaxiChoferService {
       );
     } catch (e) {
       return (ok: false, err: e.toString(), oferta: null);
+    }
+  }
+
+  Future<({bool ok, String? err})> guardarProgresoItinerario({
+    required String solicitudId,
+    required List<TaxiItinerarioStop> orden,
+    required int indice,
+    required bool esperando,
+  }) async {
+    try {
+      final res = await _db.rpc(
+        'taxi_chofer_itinerario_progreso',
+        params: {
+          'p_solicitud_id': solicitudId,
+          'p_indice': indice,
+          'p_esperando': esperando,
+          'p_orden': orden.map((e) => e.toJson()).toList(),
+        },
+      );
+      if (res is Map && res['ok'] == true) {
+        return (ok: true, err: null);
+      }
+      return (
+        ok: false,
+        err: res is Map
+            ? (res['mensaje']?.toString() ?? res['error']?.toString())
+            : 'No se pudo guardar el progreso',
+      );
+    } catch (e) {
+      return (ok: false, err: e.toString());
     }
   }
 

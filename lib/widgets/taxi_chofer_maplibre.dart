@@ -20,6 +20,9 @@ class TaxiChoferMapLibre extends StatefulWidget {
     this.destination,
     this.routePoints = const [],
     this.showDestination = false,
+    this.stops = const [],
+    this.overviewPoints = const [],
+    this.activeTarget,
     this.tenantId,
   });
 
@@ -28,6 +31,12 @@ class TaxiChoferMapLibre extends StatefulWidget {
   final LatLng? destination;
   final List<LatLng> routePoints;
   final bool showDestination;
+  /// Paradas intermedias / puntos extra del itinerario.
+  final List<LatLng> stops;
+  /// Vista general de toda la secuencia; la ruta azul sigue siendo el tramo activo.
+  final List<LatLng> overviewPoints;
+  /// Punto al que navega ahora (naranja).
+  final LatLng? activeTarget;
   final String? tenantId;
 
   @override
@@ -172,6 +181,9 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
         widget.pickup,
         if (widget.showDestination && widget.destination != null)
           widget.destination!,
+        ...widget.stops,
+        ...widget.overviewPoints,
+        if (widget.activeTarget != null) widget.activeTarget!,
         ...widget.routePoints,
       ];
       if (pts.length < 2) {
@@ -212,6 +224,15 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
 
   Widget _buildFallback() {
     final polylines = <Polyline>[];
+    if (widget.overviewPoints.length >= 2) {
+      polylines.add(
+        Polyline(
+          points: widget.overviewPoints,
+          color: const Color(0xFF37474F).withValues(alpha: 0.7),
+          strokeWidth: 3,
+        ),
+      );
+    }
     if (widget.routePoints.length >= 2) {
       polylines.add(
         Polyline(
@@ -232,12 +253,41 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
           size: 36,
         ),
       ),
+      for (var i = 0; i < widget.stops.length; i++)
+        Marker(
+          point: widget.stops[i],
+          width: 34,
+          height: 34,
+          child: const Icon(
+            Icons.add_location_alt,
+            color: Color(0xFFFF9800),
+            size: 30,
+          ),
+        ),
       if (widget.showDestination && widget.destination != null)
         Marker(
           point: widget.destination!,
           width: 40,
           height: 40,
           child: const Icon(Icons.flag, color: Color(0xFFDC2626), size: 34),
+        ),
+      if (widget.activeTarget != null)
+        Marker(
+          point: widget.activeTarget!,
+          width: 44,
+          height: 44,
+          child: Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: const Color(0xFFFF9800), width: 3),
+              color: const Color(0xFFFF9800).withValues(alpha: 0.15),
+            ),
+            child: const Icon(
+              Icons.navigation,
+              color: Color(0xFFFF9800),
+              size: 22,
+            ),
+          ),
         ),
       if (widget.driver != null)
         Marker(

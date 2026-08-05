@@ -11,14 +11,15 @@ import '../services/taxi_directions_service.dart';
 import '../widgets/taxi_cash_cobrar_completar_modal.dart';
 import '../widgets/taxi_cash_comision_aviso_modal.dart';
 import '../widgets/taxi_chofer_maplibre.dart';
+import '../widgets/taxi_itinerario_chofer_panel.dart';
 import 'repartidor_mobile_screen.dart';
 import 'taxi_comision_pendiente_screen.dart';
 import 'taxi_ganancias_screen.dart';
 
-/// Navegación GPS del socio:
-/// 1) Ubicación actual → punto A (recogida)
-/// 2) Llegada → espera abordaje («Iniciar viaje»)
-/// 3) Punto A → punto B (destino)
+/// Navegación GPS del socio (estilo Uber):
+/// · Recogidas (1 o más si es compartido)
+/// · Paradas intermedias
+/// · Destinos (si hay varios, el más cercano en ruta primero)
 class TaxiNavegacionChoferScreen extends StatefulWidget {
   const TaxiNavegacionChoferScreen({super.key, required this.oferta});
 
@@ -51,21 +52,104 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
   Timer? _estadoPollTimer;
   bool _salidaRemotaManejada = false;
 
+  /// Índice del tramo actual en [_legs].
+  int _legIndex = 0;
+  /// Tras «Llegada» en una recogida: espera abordaje.
+  bool _awaitingBoard = false;
+  /// Legs con destinos reordenados tras iniciar viaje compartido.
+  List<TaxiItinerarioStop>? _legsOrdered;
+
   LatLng get _puntoA => LatLng(_oferta.origenLat, _oferta.origenLng);
   LatLng get _puntoB => LatLng(_oferta.destinoLat, _oferta.destinoLng);
 
-  bool get _faseEspera => _oferta.esperandoPasajero && !_oferta.haciaDestino;
-  bool get _faseDestino => _oferta.haciaDestino;
+  List<TaxiItinerarioStop> get _legs =>
+      _legsOrdered ?? _oferta.legsNavegacion();
+
+  TaxiItinerarioStop? get _legActual {
+    final legs = _legs;
+    if (legs.isEmpty) return null;
+    return legs[_legIndex.clamp(0, legs.length - 1)];
+  }
+
+  String get _solicitudPasajeroActual {
+    final id = (_legActual?.solicitudId ?? '').trim();
+    return id.isNotEmpty ? id : _oferta.id;
+  }
+
+  String get _pasajeroActualNombre {
+    final nombre = (_legActual?.pasajero ?? '').trim();
+    return nombre.isNotEmpty ? nombre : _oferta.pasajeroNombre;
+  }
+
+  bool get _pasajeroActualEsCompanero =>
+      _solicitudPasajeroActual != _oferta.id;
+
+  bool get _multiTramo =>
+      _oferta.esCompartido ||
+      _oferta.tieneParadas ||
+      _legs.length > 2;
+
+  bool get _faseEspera {
+    if (_multiTramo) return _awaitingBoard;
+    return _awaitingBoard ||
+        (_oferta.esperandoPasajero &&
+            !_oferta.haciaDestino &&
+            (_legActual?.esRecogida ?? true));
+  }
+
+  bool get _faseDestino =>
+      _oferta.haciaDestino || (_legActual?.esDestino ?? false);
+
+  bool get _faseParada => _legActual?.esParada ?? false;
+
+  LatLng get _navTarget {
+    final ll = _legActual?.latLng;
+    if (ll != null) return ll;
+    if (_faseDestino) return _puntoB;
+    return _puntoA;
+  }
 
   String get _tituloFase {
+    final leg = _legActual;
+    if (_faseEspera) {
+      final nom = (leg?.pasajero ?? '').trim();
+      if (nom.isNotEmpty) return 'Esperando a $nom';
+      return 'Esperando al pasajero';
+    }
+    if (leg != null) {
+      if (leg.esRecogida) return 'Hacia recogida';
+      if (leg.esParada) return 'Hacia parada';
+      if (leg.esDestino) {
+        return _legs.where((e) => e.esDestino).length > 1
+            ? 'Hacia destino'
+            : 'Hacia el destino';
+      }
+    }
     if (_faseDestino) return 'Hacia el destino';
-    if (_faseEspera) return 'Esperando al pasajero';
     return 'Hacia el pasajero';
   }
 
   String get _botonLabel {
-    if (_faseDestino) return 'Completar viaje';
-    if (_faseEspera) return 'Iniciar viaje';
+    final legs = _legs;
+    final leg = _legActual;
+    final haySiguiente = _legIndex < legs.length - 1;
+
+    if (_faseEspera) {
+      if (leg != null && leg.esRecogida) {
+        final quedanRecogidas = legs
+            .skip(_legIndex + 1)
+            .any((e) => e.esRecogida);
+        if (quedanRecogidas) return 'A bordo · ir al siguiente pasajero';
+      }
+      return 'Iniciar viaje';
+    }
+    if (_faseParada) return 'Parada completada';
+    if (_faseDestino) {
+      if (haySiguiente && (legs[_legIndex + 1].esDestino)) {
+        return 'Pasajero bajó · siguiente destino';
+      }
+      return 'Completar viaje';
+    }
     return 'Llegada';
   }
 
@@ -73,6 +157,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
   void initState() {
     super.initState();
     _oferta = widget.oferta;
+    _sincronizarLegConEstado();
     unawaited(_bloquearSiCuentaSuspendida());
     unawaited(_refrescarFotoPasajero());
     unawaited(_cargarRatingPasajero());
@@ -88,6 +173,77 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     });
     unawaited(_actualizarBadgeChat());
     unawaited(_pollEstadoViajeRemoto());
+  }
+
+  /// Alinea el tramo local con el estado del backend (reabrir app a mitad).
+  void _sincronizarLegConEstado() {
+    final legs = _legs;
+    if (legs.isEmpty) return;
+    if (_oferta.itinerarioPersistido) {
+      _legsOrdered = List<TaxiItinerarioStop>.of(_oferta.itinerario);
+      _legIndex =
+          _oferta.itinerarioIndice.clamp(0, _legsOrdered!.length - 1);
+      _awaitingBoard = _oferta.itinerarioEsperando;
+      return;
+    }
+    if (_oferta.haciaDestino) {
+      _legsOrdered ??= _oferta.legsNavegacion(
+        desdeParaDestinos: _yo ?? _puntoA,
+      );
+      final idx = _legs.indexWhere((e) => e.esParada || e.esDestino);
+      _legIndex = idx >= 0 ? idx : 0;
+      _awaitingBoard = false;
+    } else if (_oferta.esperandoPasajero) {
+      _legIndex = 0;
+      _awaitingBoard = true;
+    } else {
+      _legIndex = 0;
+      _awaitingBoard = false;
+    }
+  }
+
+  void _avanzarLeg() {
+    final legs = _legs;
+    if (_legIndex < legs.length - 1) {
+      _legIndex++;
+      _awaitingBoard = false;
+    }
+  }
+
+  void _prepararLegsTrasIniciar() {
+    _legsOrdered = _oferta.legsNavegacion(
+      desdeParaDestinos: _yo ?? _navTarget,
+    );
+    final idx = _legs.indexWhere((e) => e.esParada || e.esDestino);
+    _legIndex = idx >= 0 ? idx : (_legs.length - 1);
+    _awaitingBoard = false;
+  }
+
+  Future<bool> _guardarProgreso() async {
+    for (var intento = 0; intento < 2; intento++) {
+      final res =
+          await TaxiChoferService.instance.guardarProgresoItinerario(
+        solicitudId: _oferta.id,
+        orden: _legs,
+        indice: _legIndex,
+        esperando: _awaitingBoard,
+      );
+      if (res.ok) return true;
+      if (intento == 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No se guardó el avance del itinerario. Revisa la conexión e inténtalo otra vez.',
+          ),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    }
+    return false;
   }
 
   Future<void> _cargarRatingPasajero() async {
@@ -233,8 +389,18 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       if (est == 'aceptado' || est == 'en_camino' || est == 'en_viaje') {
         if (det.estado != _oferta.estado ||
             det.rutaFase != _oferta.rutaFase ||
-            det.pasajeroFotoUrl != _oferta.pasajeroFotoUrl) {
-          setState(() => _oferta = det);
+            det.pasajeroFotoUrl != _oferta.pasajeroFotoUrl ||
+            det.itinerarioIndice != _legIndex ||
+            det.itinerarioEsperando != _awaitingBoard) {
+          setState(() {
+            _oferta = det;
+            if (det.itinerarioPersistido) {
+              _legsOrdered = List<TaxiItinerarioStop>.of(det.itinerario);
+              _legIndex =
+                  det.itinerarioIndice.clamp(0, _legsOrdered!.length - 1);
+              _awaitingBoard = det.itinerarioEsperando;
+            }
+          });
         }
       }
     } catch (_) {}
@@ -322,18 +488,50 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     }
 
     final LatLng origen;
-    final LatLng destino;
-    if (_faseDestino) {
-      origen = _yo ?? _puntoA;
-      destino = _puntoB;
-    } else if (_faseEspera) {
-      // Ya en punto A: mostrar ETA A→B informativo (próximo tramo).
-      origen = _puntoA;
-      destino = _puntoB;
+    final LatLng destino = _navTarget;
+    if (_faseEspera) {
+      // En recogida: ETA informativo al siguiente tramo.
+      origen = _navTarget;
+      final legs = _legs;
+      LatLng? next;
+      for (var i = _legIndex + 1; i < legs.length; i++) {
+        next = legs[i].latLng;
+        if (next != null) break;
+      }
+      // destino ya es _navTarget; si hay next, usarlo para preview
+      final previewDest = next ?? _puntoB;
+      _cargandoRuta = true;
+      try {
+        final result = await TaxiDirectionsService.instance.rutaConEta(
+          origen: origen,
+          destino: previewDest,
+        );
+        if (!mounted) return;
+        setState(() {
+          _rutaReal = result.points.length >= 2
+              ? result.points
+              : [origen, previewDest];
+          _ultimaRutaAt = DateTime.now();
+          _ultimoOrigenRuta = origen;
+          _etaSegundos = result.durationS;
+          _etaConTrafico = result.traffic;
+          _etaLabel = 'En el punto de recogida — espera al pasajero';
+          _cargandoRuta = false;
+        });
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          _rutaReal = [origen, previewDest];
+          _cargandoRuta = false;
+        });
+      }
+      return;
     } else {
       final yo = _yo;
-      if (yo == null) return;
+      if (yo == null && !_faseDestino && !_faseParada) return;
+      origen = yo ?? _puntoA;
       if (!forzar &&
+          yo != null &&
           _ultimoOrigenRuta != null &&
           Geolocator.distanceBetween(
                 _ultimoOrigenRuta!.latitude,
@@ -344,8 +542,6 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
               80) {
         return;
       }
-      origen = yo;
-      destino = _puntoA;
     }
 
     _cargandoRuta = true;
@@ -355,12 +551,10 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
         destino: destino,
       );
       if (!mounted) return;
-      final haciaPasajero = !_faseDestino && !_faseEspera;
-      final eta = _faseEspera
-          ? 'En el punto de recogida — espera al pasajero'
-          : TaxiDirectionsService.formatEtaChofer(
+      final haciaPasajero = _legActual?.esRecogida == true;
+      final eta = TaxiDirectionsService.formatEtaChofer(
               haciaPasajero: haciaPasajero,
-              haciaDestino: _faseDestino,
+              haciaDestino: _faseDestino || _faseParada,
               durationS: result.durationS,
               durationText: result.durationText,
             );
@@ -393,89 +587,182 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     );
   }
 
-  Future<void> _accionPrincipal() async {
-    if (_busy) return;
+  Future<void> _completarViajeFinal() async {
+    if (_oferta.esPagoCash) {
+      final totalCobrar = _oferta.precioUsd ?? _oferta.gananciaUsd;
+      final comision = _oferta.comisionViajeUsd > 0
+          ? _oferta.comisionViajeUsd
+          : (totalCobrar > 0 && _oferta.comisionPct > 0
+              ? totalCobrar * _oferta.comisionPct / 100.0
+              : (totalCobrar - _oferta.gananciaUsd).clamp(0.0, totalCobrar));
+      final cobrado = await TaxiCashCobrarCompletarModal.show(
+        context,
+        totalCobrarUsd: totalCobrar,
+        gananciaChoferUsd: _oferta.gananciaUsd,
+        comisionEmpresaUsd: comision,
+      );
+      if (cobrado != true || !mounted) return;
+    }
 
-    if (_faseDestino) {
-      // Viaje cash: primero confirmar cobro al pasajero, luego completar.
-      if (_oferta.esPagoCash) {
-        final totalCobrar = _oferta.precioUsd ?? _oferta.gananciaUsd;
-        final comision = _oferta.comisionViajeUsd > 0
-            ? _oferta.comisionViajeUsd
-            : (totalCobrar > 0 && _oferta.comisionPct > 0
-                ? totalCobrar * _oferta.comisionPct / 100.0
-                : (totalCobrar - _oferta.gananciaUsd).clamp(0.0, totalCobrar));
-        final cobrado = await TaxiCashCobrarCompletarModal.show(
-          context,
-          totalCobrarUsd: totalCobrar,
-          gananciaChoferUsd: _oferta.gananciaUsd,
-          comisionEmpresaUsd: comision,
-        );
-        if (cobrado != true || !mounted) return;
-      }
-
-      setState(() => _busy = true);
-      final res = await TaxiChoferService.instance.completar(_oferta.id);
-      if (!mounted) return;
-      setState(() => _busy = false);
-      if (!res.ok) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(res.err ?? 'No se pudo completar'),
-            backgroundColor: AppColors.error,
-          ),
-        );
-        return;
-      }
-      if (res.esCash || _oferta.esPagoCash) {
-        final total = _oferta.precioUsd ?? _oferta.gananciaUsd;
-        final comision = res.comisionUsd ?? _oferta.comisionViajeUsd;
-        final irPerfil = await TaxiCashComisionAvisoModal.show(
-          context,
-          totalViajeUsd: total,
-          comisionUsd: comision,
-          topeDeudaUsd: _oferta.topeDeudaUsd,
-          comisionPct: _oferta.comisionPct,
-          gananciaChoferUsd: res.gananciaUsd ?? _oferta.gananciaUsd,
-          tituloAccion: 'Ir a pagar',
-          mostrarCancelar: true,
-        );
-        if (!mounted) return;
-        await _pedirValoracionPasajero();
-        if (!mounted) return;
-        Navigator.of(context).pop();
-        if (irPerfil == true && mounted) {
-          await Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => const TaxiComisionPendienteScreen(),
-            ),
-          );
-        }
-        return;
-      }
+    setState(() => _busy = true);
+    final res = await TaxiChoferService.instance.completar(_oferta.id);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (!res.ok) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            res.gananciaUsd != null
-                ? 'Viaje completado · +\$${res.gananciaUsd!.toStringAsFixed(2)} USD'
-                : 'Viaje completado',
-          ),
-          backgroundColor: const Color(0xFF4CAF50),
+          content: Text(res.err ?? 'No se pudo completar'),
+          backgroundColor: AppColors.error,
         ),
       );
+      return;
+    }
+    if (res.esCash || _oferta.esPagoCash) {
+      final total = _oferta.precioUsd ?? _oferta.gananciaUsd;
+      final comision = res.comisionUsd ?? _oferta.comisionViajeUsd;
+      final irPerfil = await TaxiCashComisionAvisoModal.show(
+        context,
+        totalViajeUsd: total,
+        comisionUsd: comision,
+        topeDeudaUsd: _oferta.topeDeudaUsd,
+        comisionPct: _oferta.comisionPct,
+        gananciaChoferUsd: res.gananciaUsd ?? _oferta.gananciaUsd,
+        tituloAccion: 'Ir a pagar',
+        mostrarCancelar: true,
+      );
+      if (!mounted) return;
       await _pedirValoracionPasajero();
       if (!mounted) return;
       Navigator.of(context).pop();
+      if (irPerfil == true && mounted) {
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => const TaxiComisionPendienteScreen(),
+          ),
+        );
+      }
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          res.gananciaUsd != null
+              ? 'Viaje completado · +\$${res.gananciaUsd!.toStringAsFixed(2)} USD'
+              : 'Viaje completado',
+        ),
+        backgroundColor: const Color(0xFF4CAF50),
+      ),
+    );
+    await _pedirValoracionPasajero();
+    if (!mounted) return;
+    Navigator.of(context).pop();
+  }
+
+  Future<void> _accionPrincipal() async {
+    if (_busy) return;
+
+    final legs = _legs;
+    final leg = _legActual;
+    final haySiguiente = _legIndex < legs.length - 1;
+
+    // Parada intermedia: persistir antes de mostrar el siguiente tramo.
+    if (_faseParada && !_faseEspera) {
+      final indiceAnterior = _legIndex;
+      setState(() {
+        _busy = true;
+        _avanzarLeg();
+      });
+      final guardado = await _guardarProgreso();
+      if (!mounted) return;
+      setState(() => _busy = false);
+      if (!guardado) {
+        setState(() => _legIndex = indiceAnterior);
+        return;
+      }
+      unawaited(_actualizarRutaReal(forzar: true));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Parada marcada. Continúa al siguiente punto.'),
+          backgroundColor: Color(0xFF37474F),
+        ),
+      );
+      return;
+    }
+
+    // Destino intermedio (viaje compartido con 2 bajadas).
+    if (_faseDestino &&
+        haySiguiente &&
+        legs[_legIndex + 1].esDestino &&
+        !_faseEspera) {
+      final indiceAnterior = _legIndex;
+      setState(() {
+        _busy = true;
+        _avanzarLeg();
+      });
+      final guardado = await _guardarProgreso();
+      if (!mounted) return;
+      setState(() => _busy = false);
+      if (!guardado) {
+        setState(() => _legIndex = indiceAnterior);
+        return;
+      }
+      unawaited(_actualizarRutaReal(forzar: true));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Pasajero bajó. Navegando al siguiente destino.',
+          ),
+          backgroundColor: Color(0xFF37474F),
+        ),
+      );
+      return;
+    }
+
+    // Último destino → completar.
+    if (_faseDestino && !_faseEspera) {
+      await _completarViajeFinal();
       return;
     }
 
     setState(() => _busy = true);
 
     if (_faseEspera) {
+      final quedanRecogidas =
+          legs.skip(_legIndex + 1).any((e) => e.esRecogida);
+
+      // Compartido: tras abordar A, ir a recoger B (aún no inicia trayecto final).
+      if (quedanRecogidas) {
+        final indiceAnterior = _legIndex;
+        setState(() {
+          _avanzarLeg();
+        });
+        final guardado = await _guardarProgreso();
+        if (!mounted) return;
+        setState(() => _busy = false);
+        if (!guardado) {
+          setState(() {
+            _legIndex = indiceAnterior;
+            _awaitingBoard = true;
+          });
+          return;
+        }
+        unawaited(_actualizarRutaReal(forzar: true));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Pasajero a bordo. Ahora recoge al siguiente pasajero.',
+            ),
+            backgroundColor: Color(0xFF37474F),
+          ),
+        );
+        return;
+      }
+
+      // Última recogida → iniciar viaje y ordenar destinos (Uber Share).
       final res = await TaxiChoferService.instance.iniciarViaje(_oferta.id);
       if (!mounted) return;
-      setState(() => _busy = false);
       if (!res.ok || res.oferta == null) {
+        setState(() => _busy = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(res.err ?? 'No se pudo iniciar el viaje'),
@@ -484,38 +771,80 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
         );
         return;
       }
-      setState(() => _oferta = res.oferta!);
+      setState(() {
+        _oferta = res.oferta!;
+        _prepararLegsTrasIniciar();
+      });
+      final guardado = await _guardarProgreso();
+      if (!mounted) return;
+      setState(() => _busy = false);
+      if (!guardado) return;
       unawaited(_actualizarRutaReal(forzar: true));
+      final msg = _multiTramo
+          ? 'Viaje iniciado. Sigue el itinerario (paradas / destinos en orden).'
+          : 'Ruta al destino cargada. ¡Buen viaje!';
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Ruta al destino cargada. ¡Buen viaje!'),
-          backgroundColor: Color(0xFF37474F),
+        SnackBar(
+          content: Text(msg),
+          backgroundColor: const Color(0xFF37474F),
         ),
       );
       return;
     }
 
-    // Fase 1 → llegada al punto A
-    final res = await TaxiChoferService.instance.lleguePasajero(_oferta.id);
-    if (!mounted) return;
-    setState(() => _busy = false);
-    if (!res.ok || res.oferta == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(res.err ?? 'No se pudo marcar la llegada'),
-          backgroundColor: AppColors.error,
-        ),
-      );
-      return;
+    // Llegada a recogida.
+    final esPrimeraRecogida = leg == null ||
+        legs.take(_legIndex + 1).where((e) => e.esRecogida).length <= 1;
+
+    if (esPrimeraRecogida && !_oferta.esperandoPasajero) {
+      final res = await TaxiChoferService.instance.lleguePasajero(_oferta.id);
+      if (!mounted) return;
+      if (!res.ok || res.oferta == null) {
+        setState(() => _busy = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(res.err ?? 'No se pudo marcar la llegada'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+        return;
+      }
+      setState(() {
+        _oferta = res.oferta!;
+        _awaitingBoard = true;
+      });
+      final guardado = await _guardarProgreso();
+      if (!mounted) return;
+      if (!guardado) {
+        setState(() => _busy = false);
+        return;
+      }
+    } else {
+      final esperandoAnterior = _awaitingBoard;
+      setState(() {
+        _awaitingBoard = true;
+      });
+      final guardado = await _guardarProgreso();
+      if (!mounted) return;
+      if (!guardado) {
+        setState(() {
+          _busy = false;
+          _awaitingBoard = esperandoAnterior;
+        });
+        return;
+      }
     }
-    setState(() => _oferta = res.oferta!);
+    setState(() => _busy = false);
     unawaited(_actualizarRutaReal(forzar: true));
+    final quedanMas = legs.skip(_legIndex + 1).any((e) => e.esRecogida);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
+      SnackBar(
         content: Text(
-          'Aviso enviado al pasajero. Cuando aborde, pulsa «Iniciar viaje».',
+          quedanMas
+              ? 'Llegaste a la recogida. Cuando aborde, ve al siguiente pasajero.'
+              : 'Aviso enviado. Cuando aborde, pulsa «Iniciar viaje».',
         ),
-        backgroundColor: Color(0xFF37474F),
+        backgroundColor: const Color(0xFF37474F),
       ),
     );
   }
@@ -533,8 +862,8 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       builder: (ctx) => Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
         child: _TaxiChoferChatSheet(
-          solicitudId: _oferta.id,
-          pasajeroNombre: _oferta.pasajeroNombre,
+          solicitudId: _solicitudPasajeroActual,
+          pasajeroNombre: _pasajeroActualNombre,
         ),
       ),
     );
@@ -542,13 +871,19 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     if (!mounted) return;
     // Al cerrar el chat, todo lo visto cuenta como leído.
     final list =
-        await TaxiChoferService.instance.listarMensajes(_oferta.id);
+        await TaxiChoferService.instance.listarMensajes(
+      _solicitudPasajeroActual,
+    );
     final cliente =
         list.where((m) => m.autorRol == 'cliente').toList();
     if (cliente.isNotEmpty) {
       _ultimoClienteMsgIdLeido = cliente.last.id;
     }
-    unawaited(TaxiChoferService.instance.marcarChatTaxiLeido(_oferta.id));
+    unawaited(
+      TaxiChoferService.instance.marcarChatTaxiLeido(
+        _solicitudPasajeroActual,
+      ),
+    );
     if (mounted) setState(() => _chatNoLeidos = 0);
   }
 
@@ -556,7 +891,9 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
   Future<void> _actualizarBadgeChat() async {
     if (!mounted || !_faseEspera || _chatSheetAbierto) return;
     final list =
-        await TaxiChoferService.instance.listarMensajes(_oferta.id);
+        await TaxiChoferService.instance.listarMensajes(
+      _solicitudPasajeroActual,
+    );
     if (!mounted || _chatSheetAbierto) return;
     final cliente =
         list.where((m) => m.autorRol == 'cliente').toList();
@@ -576,7 +913,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
 
   Future<void> _confirmarCancelarChofer() async {
     // Tras iniciar trayecto a B el socio no puede cancelar.
-    if (_busy || _faseDestino) return;
+    if (_busy || _faseDestino || _oferta.esCompartido) return;
     final esCash = _oferta.esPagoCash;
     final esReserva = _oferta.esReserva;
     final go = await showDialog<bool>(
@@ -677,10 +1014,13 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
 
   @override
   Widget build(BuildContext context) {
-    final foto = _oferta.pasajeroFotoUrl?.trim();
-    final nombre = _oferta.pasajeroNombre.trim().isEmpty
+    final foto = _pasajeroActualEsCompanero
+        ? null
+        : _oferta.pasajeroFotoUrl?.trim();
+    final actual = _pasajeroActualNombre.trim();
+    final nombre = actual.isEmpty
         ? 'Pasajero'
-        : _oferta.pasajeroNombre.trim();
+        : actual;
     final inicial =
         nombre.isNotEmpty ? nombre.substring(0, 1).toUpperCase() : '?';
 
@@ -701,12 +1041,14 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
             IconButton(
               tooltip: 'Abrir en Maps / Waze',
               onPressed: () async {
-                final dest = _faseDestino ? _puntoB : _puntoA;
+                final dest = _navTarget;
+                final leg = _legActual;
                 await abrirNavegacionExterna(
                   context: context,
                   lat: dest.latitude,
                   lng: dest.longitude,
-                  etiqueta: _faseDestino ? 'destino' : 'recogida',
+                  etiqueta: leg?.etiqueta ??
+                      (_faseDestino ? 'destino' : 'recogida'),
                 );
               },
               icon: const Icon(Icons.directions),
@@ -726,7 +1068,16 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                         pickup: _puntoA,
                         destination: _puntoB,
                         routePoints: _rutaReal,
-                        showDestination: _faseDestino,
+                        showDestination: true,
+                        stops: _legs
+                            .map((e) => e.latLng)
+                            .whereType<LatLng>()
+                            .toList(),
+                        overviewPoints: _legs
+                            .map((e) => e.latLng)
+                            .whereType<LatLng>()
+                            .toList(),
+                        activeTarget: _navTarget,
                       ),
                       // Foto del pasajero: esquina inferior izquierda del mapa.
                       Positioned(
@@ -918,7 +1269,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                               ),
                       ),
                     ),
-                    if (!_faseDestino) ...[
+                    if (!_faseDestino && !_oferta.esCompartido) ...[
                       const SizedBox(height: 10),
                       SizedBox(
                         width: double.infinity,
@@ -1077,160 +1428,14 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     );
   }
 
-  /// Origen → destino con símbolos y rayitas (estilo itinerario).
-  /// En trayecto a B solo se muestra el destino.
+  /// Itinerario completo (paradas + compartido) con tramo activo.
   Widget _buildRutaDirecciones() {
-    final origen = _oferta.origenTexto.trim().isEmpty
-        ? 'Punto de recogida'
-        : _oferta.origenTexto.trim();
-    final destino = _oferta.destinoTexto.trim().isEmpty
-        ? 'Destino'
-        : _oferta.destinoTexto.trim();
-
-    if (_faseDestino) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(12, 12, 14, 12),
-        decoration: BoxDecoration(
-          color: const Color(0xFF252A35),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Padding(
-              padding: EdgeInsets.only(top: 2),
-              child: Icon(Icons.flag, size: 18, color: Color(0xFFDC2626)),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Destino',
-                    style: TextStyle(
-                      color: Color(0xFF9CA3AF),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    destino,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFFECEFF1),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      height: 1.3,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 12, 14, 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF252A35),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 22,
-            child: Column(
-              children: [
-                Container(
-                  width: 12,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: const Color(0xFF4CAF50),
-                    border: Border.all(color: Colors.white, width: 1.5),
-                  ),
-                ),
-                ...List.generate(
-                  5,
-                  (_) => Container(
-                    margin: const EdgeInsets.symmetric(vertical: 2),
-                    width: 2,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF9CA3AF).withValues(alpha: 0.55),
-                      borderRadius: BorderRadius.circular(1),
-                    ),
-                  ),
-                ),
-                const Icon(
-                  Icons.flag,
-                  size: 16,
-                  color: Color(0xFFDC2626),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Recogida',
-                  style: TextStyle(
-                    color: Color(0xFF9CA3AF),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  origen,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFFECEFF1),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    height: 1.3,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'Destino',
-                  style: TextStyle(
-                    color: Color(0xFF9CA3AF),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  destino,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFFECEFF1),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    height: 1.3,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+    return TaxiItinerarioChoferPanel(
+      oferta: _oferta,
+      legs: _legs,
+      activoOrden: _legIndex,
+      compact: true,
+      dark: true,
     );
   }
 
