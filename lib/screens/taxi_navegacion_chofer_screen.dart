@@ -37,6 +37,10 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
   Timer? _pingTimer;
   bool _busy = false;
   List<LatLng> _rutaReal = const [];
+  /// Overview por calles A→paradas→B (gris), aparte del tramo activo (azul).
+  List<LatLng> _rutaOverview = const [];
+  int? _overviewEtaSegundos;
+  bool _cargandoOverview = false;
   bool _cargandoRuta = false;
   DateTime? _ultimaRutaAt;
   LatLng? _ultimoOrigenRuta;
@@ -470,6 +474,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       });
       await _enviarUbicacion();
       unawaited(_actualizarRutaReal(forzar: true));
+    unawaited(_cargarOverviewItinerario(forzar: true));
 
       _posSub = Geolocator.getPositionStream(
         locationSettings: const LocationSettings(
@@ -485,6 +490,47 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
         unawaited(_actualizarRutaReal());
       });
     } catch (_) {}
+  }
+
+
+  List<LatLng> get _paradasIntermedias {
+    final fromOferta = _oferta.paradasLatLng;
+    if (fromOferta.isNotEmpty) return fromOferta;
+    // Fallback: legs marcados como parada
+    return _legs
+        .where((e) => e.esParada)
+        .map((e) => e.latLng)
+        .whereType<LatLng>()
+        .toList();
+  }
+
+  /// Ruta completa del viaje (calles) para que el chofer vea A→C→B como Uber.
+  Future<void> _cargarOverviewItinerario({bool forzar = false}) async {
+    if (_cargandoOverview) return;
+    if (!forzar && _rutaOverview.length >= 3) return;
+    _cargandoOverview = true;
+    try {
+      final paradas = _paradasIntermedias;
+      final result = await TaxiDirectionsService.instance.rutaItinerario(
+        origen: _puntoA,
+        destino: _puntoB,
+        paradas: paradas,
+      );
+      if (!mounted) return;
+      setState(() {
+        _rutaOverview = result.points.length >= 2
+            ? result.points
+            : [_puntoA, ...paradas, _puntoB];
+        _overviewEtaSegundos = result.durationS;
+        _cargandoOverview = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _rutaOverview = [_puntoA, ..._paradasIntermedias, _puntoB];
+        _cargandoOverview = false;
+      });
+    }
   }
 
   /// Trayecto por calles + ETA (Google Directions con tráfico; fallback OSRM).
@@ -1079,15 +1125,17 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                         destination: _puntoB,
                         routePoints: _rutaReal,
                         showDestination: true,
-                        stops: _legs
-                            .map((e) => e.latLng)
-                            .whereType<LatLng>()
-                            .toList(),
-                        overviewPoints: _legs
-                            .map((e) => e.latLng)
-                            .whereType<LatLng>()
-                            .toList(),
+                        stops: _paradasIntermedias,
+                        overviewPoints: _rutaOverview.length >= 2
+                            ? _rutaOverview
+                            : [_puntoA, ..._paradasIntermedias, _puntoB],
                         activeTarget: _navTarget,
+                        totalTripEtaLabel: _overviewEtaSegundos != null &&
+                                _overviewEtaSegundos! > 0
+                            ? TaxiDirectionsService.formatDuracionCorta(
+                                _overviewEtaSegundos,
+                              )
+                            : null,
                       ),
                       // Foto del pasajero: esquina inferior izquierda del mapa.
                       Positioned(

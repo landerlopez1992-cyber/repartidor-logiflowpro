@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 import '../config/app_colors.dart';
 import '../navigation/repartidor_navigator.dart';
 import '../services/taxi_chofer_service.dart';
+import '../services/taxi_directions_service.dart';
+import 'package:latlong2/latlong.dart';
+import '../widgets/taxi_chofer_maplibre.dart';
 import '../services/taxi_llamada_persistente_service.dart';
 import '../widgets/taxi_cash_comision_aviso_modal.dart';
 import '../widgets/taxi_itinerario_chofer_panel.dart';
@@ -62,6 +65,8 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
   bool _busy = false;
   late final AnimationController _pulse;
   Timer? _pollUi;
+  List<LatLng> _rutaOverview = const [];
+  String? _viajeEtaLabel;
 
   @override
   void initState() {
@@ -142,6 +147,28 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
     } catch (_) {}
   }
 
+
+  Future<void> _cargarRutaOverview(TaxiOfertaChofer o) async {
+    try {
+      final origen = LatLng(o.origenLat, o.origenLng);
+      final destino = LatLng(o.destinoLat, o.destinoLng);
+      final paradas = o.paradasLatLng;
+      final r = await TaxiDirectionsService.instance.rutaItinerario(
+        origen: origen,
+        destino: destino,
+        paradas: paradas,
+      );
+      if (!mounted) return;
+      setState(() {
+        _rutaOverview = r.points.length >= 2
+            ? r.points
+            : [origen, ...paradas, destino];
+        final t = TaxiDirectionsService.formatDuracionCorta(r.durationS);
+        _viajeEtaLabel = t.isEmpty ? null : t;
+      });
+    } catch (_) {}
+  }
+
   Future<void> _cargar() async {
     setState(() {
       _loading = true;
@@ -168,6 +195,7 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
         _oferta = conR;
         _loading = false;
       });
+      unawaited(_cargarRutaOverview(conR));
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -549,10 +577,11 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                   label: o.esCompartido
                       ? 'Trayecto compartido (aprox.)'
                       : (o.tieneParadas
-                          ? 'Trayecto con paradas'
+                          ? 'Trayecto A → paradas → B'
                           : 'Trayecto A → B'),
                   value:
                       '${o.distanciaKm.toStringAsFixed(2)} km · ${o.distanciaMi.toStringAsFixed(2)} mi'
+                      '${_viajeEtaLabel != null ? ' · $_viajeEtaLabel' : ''}'
                       '${o.ofertaTipoEtiqueta != '—' ? ' · ${o.ofertaTipoEtiqueta}' : ''}',
                 ),
                 if (distA != null) ...[
@@ -564,6 +593,26 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                   ),
                 ],
                 const SizedBox(height: 10),
+                if (_rutaOverview.length >= 2) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: SizedBox(
+                      height: 150,
+                      width: double.infinity,
+                      child: TaxiChoferMapLibre(
+                        driver: null,
+                        pickup: LatLng(o.origenLat, o.origenLng),
+                        destination: LatLng(o.destinoLat, o.destinoLng),
+                        showDestination: true,
+                        stops: o.paradasLatLng,
+                        overviewPoints: _rutaOverview,
+                        routePoints: _rutaOverview,
+                        totalTripEtaLabel: _viajeEtaLabel,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
                 TaxiItinerarioChoferPanel(
                   oferta: o,
                   compact: true,

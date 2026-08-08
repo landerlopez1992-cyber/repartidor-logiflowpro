@@ -24,6 +24,7 @@ class TaxiChoferMapLibre extends StatefulWidget {
     this.overviewPoints = const [],
     this.activeTarget,
     this.tenantId,
+    this.totalTripEtaLabel,
   });
 
   final LatLng? driver;
@@ -38,6 +39,8 @@ class TaxiChoferMapLibre extends StatefulWidget {
   /// Punto al que navega ahora (naranja).
   final LatLng? activeTarget;
   final String? tenantId;
+  /// Etiqueta de tiempo total del viaje (A→paradas→B), estilo Uber.
+  final String? totalTripEtaLabel;
 
   @override
   State<TaxiChoferMapLibre> createState() => _TaxiChoferMapLibreState();
@@ -228,8 +231,8 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
       polylines.add(
         Polyline(
           points: widget.overviewPoints,
-          color: const Color(0xFF37474F).withValues(alpha: 0.7),
-          strokeWidth: 3,
+          color: const Color(0xFF607D8B).withValues(alpha: 0.85),
+          strokeWidth: 4,
         ),
       );
     }
@@ -242,34 +245,39 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
         ),
       );
     }
+    final eta = (widget.totalTripEtaLabel ?? '').trim();
     final markers = <Marker>[
       Marker(
         point: widget.pickup,
-        width: 40,
-        height: 40,
-        child: const Icon(
-          Icons.person_pin_circle,
-          color: Color(0xFF4CAF50),
-          size: 36,
+        width: eta.isNotEmpty ? 110 : 44,
+        height: eta.isNotEmpty ? 56 : 44,
+        child: _PinLabeled(
+          letter: 'A',
+          color: const Color(0xFF4CAF50),
+          topLabel: eta.isNotEmpty ? eta : null,
         ),
       ),
-      for (var i = 0; i < widget.stops.length; i++)
+      for (var i = 0; i < widget.stops.length && i < 2; i++)
         Marker(
           point: widget.stops[i],
-          width: 34,
-          height: 34,
-          child: const Icon(
-            Icons.add_location_alt,
-            color: Color(0xFFFF9800),
-            size: 30,
+          width: 44,
+          height: 52,
+          child: _PinLabeled(
+            letter: widget.stops.length == 1 ? 'C' : 'C${i + 1}',
+            color: const Color(0xFFDC2626),
+            isFlag: true,
           ),
         ),
       if (widget.showDestination && widget.destination != null)
         Marker(
           point: widget.destination!,
-          width: 40,
-          height: 40,
-          child: const Icon(Icons.flag, color: Color(0xFFDC2626), size: 34),
+          width: 44,
+          height: 52,
+          child: const _PinLabeled(
+            letter: 'B',
+            color: Color(0xFFDC2626),
+            isFlag: true,
+          ),
         ),
       if (widget.activeTarget != null)
         Marker(
@@ -467,4 +475,111 @@ map.on('load', function() {
 ''';
   }
 
+}
+
+class _PinLabeled extends StatelessWidget {
+  const _PinLabeled({
+    required this.letter,
+    required this.color,
+    this.topLabel,
+    this.isFlag = false,
+  });
+
+  final String letter;
+  final Color color;
+  final String? topLabel;
+  final bool isFlag;
+
+  @override
+  Widget build(BuildContext context) {
+    final pin = isFlag
+        ? Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 18,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(2),
+                    topRight: Radius.circular(2),
+                    bottomRight: Radius.circular(2),
+                  ),
+                ),
+              ),
+              Container(width: 2, height: 8, color: const Color(0xFF1A1A1A)),
+              const SizedBox(height: 2),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: const Color(0xFFDDDDDD)),
+                ),
+                child: Text(
+                  letter,
+                  style: const TextStyle(
+                    color: Color(0xFF1A1A1A),
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    height: 1,
+                  ),
+                ),
+              ),
+            ],
+          )
+        : Container(
+            width: 28,
+            height: 28,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x40000000),
+                  blurRadius: 3,
+                  offset: Offset(0, 1),
+                ),
+              ],
+            ),
+            child: Text(
+              letter,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: 13,
+              ),
+            ),
+          );
+
+    final label = (topLabel ?? '').trim();
+    if (label.isEmpty) return pin;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+          decoration: BoxDecoration(
+            color: const Color(0xFF37474F),
+            borderRadius: BorderRadius.circular(5),
+          ),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        pin,
+      ],
+    );
+  }
 }

@@ -84,12 +84,17 @@ class TaxiDirectionsService {
   }
 
   /// Ruta + duración (preferencia: Google Directions con tráfico vía Edge, o OSRM).
+  /// [waypoints] = paradas intermedias (máx. 2), estilo Uber A→C→B.
   /// Sin red o con timeout → geometría local inmediata (nunca cuelga).
   Future<TaxiDirectionsResult> rutaConEta({
     required LatLng origen,
     required LatLng destino,
+    List<LatLng> waypoints = const [],
   }) async {
-    final local = offlineHaversine(origen, destino);
+    final vias = waypoints.take(2).toList();
+    final local = vias.isEmpty
+        ? offlineHaversine(origen, destino)
+        : _offlineMulti(origen, destino, vias);
     if (_pareceOffline) return local;
 
     final tid = await _resolveTenantId();
@@ -105,9 +110,14 @@ class TaxiDirectionsService {
                 'origin_lng': origen.longitude,
                 'dest_lat': destino.latitude,
                 'dest_lng': destino.longitude,
+                if (vias.isNotEmpty)
+                  'waypoints': [
+                    for (final w in vias)
+                      {'lat': w.latitude, 'lng': w.longitude},
+                  ],
               },
             )
-            .timeout(const Duration(seconds: 5));
+            .timeout(const Duration(seconds: 8));
         final data = res.data;
         if (res.status == 200 && data is Map && data['ok'] == true) {
           final pts = <LatLng>[];
@@ -137,22 +147,76 @@ class TaxiDirectionsService {
       } catch (_) {}
     }
 
-    // Fallback OSRM (timeout corto; si falla → local).
+    // Fallback OSRM multi-punto (timeout corto; si falla → local).
     try {
       final geom = await RutaGeometriaOsrmService.obtenerGeometriaConduccion([
         origen,
+        ...vias,
         destino,
-      ]).timeout(const Duration(seconds: 6), onTimeout: () => [origen, destino]);
+      ]).timeout(
+        const Duration(seconds: 8),
+        onTimeout: () => [origen, ...vias, destino],
+      );
+      // ETA OSRM no viene en este helper: estimar por distancia de polyline.
+      var distM = 0.0;
+      for (var i = 0; i < geom.length - 1; i++) {
+        distM += _haversineM(geom[i], geom[i + 1]);
+      }
+      final etaS = (distM / 1000.0 / 32.0 * 3600.0).round().clamp(60, 24 * 3600);
       return TaxiDirectionsResult(
         points: geom.length >= 2 ? geom : local.points,
-        durationS: local.durationS,
-        distanceM: local.distanceM,
+        durationS: etaS,
+        distanceM: distM.round(),
         traffic: false,
         provider: geom.length >= 2 ? 'osrm_local' : 'offline_haversine',
       );
     } catch (_) {
       return local;
     }
+  }
+
+  /// Overview completo del viaje: A → paradas → B (ruta por calles + tiempo total).
+  Future<TaxiDirectionsResult> rutaItinerario({
+    required LatLng origen,
+    required LatLng destino,
+    List<LatLng> paradas = const [],
+  }) {
+    return rutaConEta(
+      origen: origen,
+      destino: destino,
+      waypoints: paradas,
+    );
+  }
+
+  static TaxiDirectionsResult _offlineMulti(
+    LatLng origen,
+    LatLng destino,
+    List<LatLng> vias,
+  ) {
+    final pts = [origen, ...vias, destino];
+    var distM = 0.0;
+    for (var i = 0; i < pts.length - 1; i++) {
+      distM += _haversineM(pts[i], pts[i + 1]);
+    }
+    final etaS = (distM / 1000.0 / 32.0 * 3600.0).round().clamp(60, 24 * 3600);
+    return TaxiDirectionsResult(
+      points: pts,
+      durationS: etaS,
+      distanceM: distM.round(),
+      traffic: false,
+      provider: 'offline_haversine',
+    );
+  }
+
+  /// Solo tiempo (pin / overview), sin "al destino".
+  static String formatDuracionCorta(int? durationS) {
+    if (durationS == null || durationS <= 0) return '';
+    if (durationS < 60) return 'menos de 1 min';
+    final min = (durationS / 60).ceil();
+    if (min < 60) return '$min min';
+    final h = min ~/ 60;
+    final m = min % 60;
+    return m == 0 ? '$h h' : '$h h $m min';
   }
 
   /// Texto ETA para UI del chofer.
