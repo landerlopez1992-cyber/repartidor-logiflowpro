@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -53,6 +54,9 @@ class RepartidorKmTrayectoria {
 class RepartidorJornadaService {
   RepartidorJornadaService._();
 
+  static const _prefsJornada = 'rep_jornada_abierta_';
+  static const _prefsRequiere = 'rep_requiere_jornada_';
+
   static bool _ok(dynamic v) => v == true || v == 'true' || v == 1;
 
   static double _d(dynamic v) {
@@ -71,6 +75,24 @@ class RepartidorJornadaService {
     return <String, dynamic>{};
   }
 
+  static Future<void> _setRequiere(String repartidorId, bool requiere) async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setBool('$_prefsRequiere$repartidorId', requiere);
+    } catch (_) {}
+  }
+
+  static Future<void> _setJornadaLocal(String repartidorId, String? jornadaId) async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      if (jornadaId == null || jornadaId.isEmpty) {
+        await p.remove('$_prefsJornada$repartidorId');
+      } else {
+        await p.setString('$_prefsJornada$repartidorId', jornadaId);
+      }
+    } catch (_) {}
+  }
+
   static Future<RepartidorJornadaInfo> jornadaActiva(String repartidorId) async {
     final raw = await supabase.rpc(
       'repartidor_jornada_activa',
@@ -83,7 +105,7 @@ class RepartidorJornadaService {
     DateTime? inicio;
     final s = m['inicio_at']?.toString();
     if (s != null && s.isNotEmpty) inicio = DateTime.tryParse(s);
-    return RepartidorJornadaInfo(
+    final info = RepartidorJornadaInfo(
       activa: m['activa'] == true,
       requiereJornada: m['requiere_jornada'] == true,
       metodoPago: m['metodo_pago']?.toString() ?? 'por_orden',
@@ -93,62 +115,68 @@ class RepartidorJornadaService {
       origenValido: m['origen_valido'] == true,
       anclaFuente: m['ancla_fuente']?.toString(),
     );
+    await _setRequiere(repartidorId, info.requiereJornada || info.esPorDistancia);
+    if (info.activa && info.jornadaId != null) {
+      await _setJornadaLocal(repartidorId, info.jornadaId);
+    }
+    return info;
   }
 
-  /// true si puede marcar entregado/recogido.
+  /// Gate de jornada para entregar/recoger.
+  ///
+  /// **Offline (`offline: true`): NUNCA bloquea** — preserva el flujo offline-first.
+  /// Online + `por_distancia`: exige jornada abierta.
   static Future<({bool permitido, String? mensaje})> gateEntrega(
-    String repartidorId,
-  ) async {
+    String repartidorId, {
+    bool offline = false,
+  }) async {
+    // Offline-first: no cortar entregas / recogidas existentes.
+    if (offline) {
+      return (permitido: true, mensaje: null);
+    }
+
     try {
-      final raw = await supabase.rpc(
-        'repartidor_gate_entrega_jornada',
-        params: {'p_repartidor_id': repartidorId},
-      );
+      final raw = await supabase
+          .rpc(
+            'repartidor_gate_entrega_jornada',
+            params: {'p_repartidor_id': repartidorId},
+          )
+          .timeout(const Duration(seconds: 4));
       final m = _map(raw);
+
+      // Respuesta inválida / error blando → no tumbar el flujo (puede ser red inestable).
       if (!_ok(m['ok'])) {
-        return (permitido: false, mensaje: 'No se pudo verificar la jornada');
+        return (permitido: true, mensaje: null);
       }
+
       final requiere = m['requiere_jornada'] == true;
-      try {
-        final p = await SharedPreferences.getInstance();
-        await p.setBool('rep_requiere_jornada_$repartidorId', requiere);
-      } catch (_) {}
+      await _setRequiere(repartidorId, requiere);
 
       if (m['permitido'] == true) {
         if (requiere) {
-          try {
-            final p = await SharedPreferences.getInstance();
-            await p.setString(
-              'rep_jornada_abierta_$repartidorId',
-              m['jornada_id']?.toString() ?? '1',
-            );
-          } catch (_) {}
+          await _setJornadaLocal(
+            repartidorId,
+            m['jornada_id']?.toString() ?? '1',
+          );
         }
         return (permitido: true, mensaje: null);
       }
-      try {
-        final p = await SharedPreferences.getInstance();
-        await p.remove('rep_jornada_abierta_$repartidorId');
-      } catch (_) {}
-      return (
-        permitido: false,
-        mensaje: m['mensaje']?.toString() ?? 'Inicia tu jornada para continuar',
-      );
+
+      // Solo bloquear en firme cuando el servidor confirma que falta jornada.
+      if (requiere) {
+        await _setJornadaLocal(repartidorId, null);
+        return (
+          permitido: false,
+          mensaje: m['mensaje']?.toString() ?? 'Inicia tu jornada para continuar',
+        );
+      }
+      return (permitido: true, mensaje: null);
+    } on TimeoutException {
+      // Red lenta: no bloquear entregas.
+      return (permitido: true, mensaje: null);
     } catch (_) {
-      // Offline: solo bloquear si sabemos que el método exige jornada.
-      try {
-        final p = await SharedPreferences.getInstance();
-        final requiere = p.getBool('rep_requiere_jornada_$repartidorId') ?? false;
-        if (!requiere) {
-          return (permitido: true, mensaje: null);
-        }
-        final local = await tieneJornadaLocal(repartidorId);
-        if (local) return (permitido: true, mensaje: null);
-      } catch (_) {}
-      return (
-        permitido: false,
-        mensaje: 'Inicia tu jornada para continuar',
-      );
+      // Sin RPC: no bloquear (offline-first / fallo de red).
+      return (permitido: true, mensaje: null);
     }
   }
 
@@ -169,10 +197,8 @@ class RepartidorJornadaService {
     );
     final map = _map(raw);
     if (_ok(map['ok'])) {
-      try {
-        final p = await SharedPreferences.getInstance();
-        await p.setString('rep_jornada_abierta_$repartidorId', map['jornada_id']?.toString() ?? '1');
-      } catch (_) {}
+      await _setRequiere(repartidorId, true);
+      await _setJornadaLocal(repartidorId, map['jornada_id']?.toString() ?? '1');
     }
     return map;
   }
@@ -189,18 +215,14 @@ class RepartidorJornadaService {
       },
     );
     final map = _map(raw);
-    try {
-      final p = await SharedPreferences.getInstance();
-      await p.remove('rep_jornada_abierta_$repartidorId');
-    } catch (_) {}
+    await _setJornadaLocal(repartidorId, null);
     return map;
   }
 
-  /// Gate offline: si el método es por_distancia y no hay marca local de jornada.
   static Future<bool> tieneJornadaLocal(String repartidorId) async {
     try {
       final p = await SharedPreferences.getInstance();
-      final v = p.getString('rep_jornada_abierta_$repartidorId');
+      final v = p.getString('$_prefsJornada$repartidorId');
       return v != null && v.isNotEmpty;
     } catch (_) {
       return false;
@@ -211,13 +233,19 @@ class RepartidorJornadaService {
     required String jornadaId,
     required double kmGps,
   }) async {
-    await supabase.rpc(
-      'repartidor_actualizar_km_gps_jornada',
-      params: {
-        'p_jornada_id': jornadaId,
-        'p_km_gps': kmGps,
-      },
-    );
+    try {
+      await supabase
+          .rpc(
+            'repartidor_actualizar_km_gps_jornada',
+            params: {
+              'p_jornada_id': jornadaId,
+              'p_km_gps': kmGps,
+            },
+          )
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {
+      // Offline / fallo: el odómetro local sigue; se reintentará después.
+    }
   }
 
   static Future<RepartidorKmTrayectoria?> calcularKm(String repartidorId) async {

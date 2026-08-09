@@ -33,41 +33,48 @@ class RepartidorGpsOdometroService {
     required String jornadaId,
     double? seedKm,
   }) async {
-    await stop(sync: false);
-    _repartidorId = repartidorId;
-    _jornadaId = jornadaId;
-    _kmAcumulado = seedKm ?? await _loadLocal(jornadaId);
-    _last = null;
-    _enRuta = true;
+    try {
+      await stop(sync: false);
+      _repartidorId = repartidorId;
+      _jornadaId = jornadaId;
+      _kmAcumulado = seedKm ?? await _loadLocal(jornadaId);
+      _last = null;
+      _enRuta = true;
 
-    final enabled = await Geolocator.isLocationServiceEnabled();
-    if (!enabled) return;
+      final enabled = await Geolocator.isLocationServiceEnabled();
+      if (!enabled) return;
 
-    var perm = await Geolocator.checkPermission();
-    if (perm == LocationPermission.denied) {
-      perm = await Geolocator.requestPermission();
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied ||
+          perm == LocationPermission.deniedForever) {
+        return;
+      }
+
+      _sub = Geolocator.getPositionStream(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+          distanceFilter: 15,
+        ),
+      ).listen(_onPosition, onError: (_) {});
+    } catch (_) {
+      // Sin GPS / permisos: la app sigue; odómetro queda en 0 local.
     }
-    if (perm == LocationPermission.denied ||
-        perm == LocationPermission.deniedForever) {
-      return;
-    }
-
-    _sub = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 10,
-      ),
-    ).listen(_onPosition, onError: (_) {});
   }
 
   /// Pausar acumulación (idle / no navegando). No detiene el stream.
   void setEnRuta(bool value) => _enRuta = value;
 
   Future<void> stop({bool sync = true}) async {
-    await _sub?.cancel();
+    try {
+      await _sub?.cancel();
+    } catch (_) {}
     _sub = null;
     if (sync && _jornadaId != null) {
-      await _syncRemote(force: true);
+      // No await largo: no bloquear UI offline.
+      unawaited(_syncRemote(force: true));
     }
     if (_jornadaId != null) {
       await _saveLocal(_jornadaId!, _kmAcumulado);

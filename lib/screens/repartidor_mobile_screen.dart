@@ -7218,9 +7218,13 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       return;
     }
 
+    // Offline: no aplicar gate (flujo offline intacto). Online: timeout + no tumbar si falla red.
     if (_repartidorId != null && !repartidorSinInternet()) {
       try {
-        final gate = await RepartidorJornadaService.gateEntrega(_repartidorId!);
+        final gate = await RepartidorJornadaService.gateEntrega(
+          _repartidorId!,
+          offline: false,
+        );
         if (!gate.permitido) {
           _mostrarMensaje(gate.mensaje ?? 'Inicia tu jornada para continuar');
           return;
@@ -7243,12 +7247,15 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         try {
           final pos = await Geolocator.getCurrentPosition(
             locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.high,
+              accuracy: LocationAccuracy.medium,
+              timeLimit: Duration(seconds: 5),
             ),
           );
           latGps = pos.latitude;
           lngGps = pos.longitude;
-        } catch (_) {}
+        } catch (_) {
+          // Sin GPS: la recogida offline sigue; coords opcionales para nómina.
+        }
 
         final ordenActualizada = Orden(
           id: orden.id,
@@ -7289,8 +7296,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           firmaUrl: orden.firmaUrl,
           itemsAdicionales: orden.itemsAdicionales,
           tenantId: orden.tenantId,
-          latitudEntrega: latGps ?? orden.latitudEntrega,
-          longitudEntrega: lngGps ?? orden.longitudEntrega,
+          latitudEntrega: orden.latitudEntrega ?? latGps,
+          longitudEntrega: orden.longitudEntrega ?? lngGps,
         );
         final result = await OrdenEstadoSyncHelper.persistirCambioEstado(
           ordenId: orden.id,
@@ -7298,7 +7305,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           updateData: {
             'estado': 'RECOGIDO',
             'fecha_entrega': fechaEntregaDt.toIso8601String(),
-            if (latGps != null && lngGps != null) ...{
+            if (orden.latitudEntrega == null &&
+                orden.longitudEntrega == null &&
+                latGps != null &&
+                lngGps != null) ...{
               'latitud_entrega': latGps,
               'longitud_entrega': lngGps,
             },

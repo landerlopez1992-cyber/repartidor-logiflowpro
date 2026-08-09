@@ -3780,35 +3780,48 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     
     print('🔍 ====== INICIO MARCAR COMO ENTREGADO ======');
 
-    // Gate jornada (solo método por_distancia): no entregar sin turno iniciado.
+    // Gate jornada: SOLO con internet real. Offline = flujo de entrega intacto.
     try {
-      final user = supabase.auth.currentUser;
-      if (user != null && !repartidorSinInternet()) {
-        final row = await supabase
-            .from('usuarios')
-            .select('id')
-            .eq('auth_id', user.id)
-            .maybeSingle();
-        final repId = row?['id']?.toString();
-        if (repId != null && repId.isNotEmpty) {
-          final gate = await RepartidorJornadaService.gateEntrega(repId);
-          if (!gate.permitido) {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(gate.mensaje ?? 'Inicia tu jornada para continuar'),
-                  backgroundColor: const Color(0xFFDC2626),
-                ),
-              );
-            }
-            return;
+      if (!repartidorSinInternet()) {
+        final user = supabase.auth.currentUser;
+        if (user != null) {
+          Map<String, dynamic>? row;
+          try {
+            row = await supabase
+                .from('usuarios')
+                .select('id')
+                .eq('auth_id', user.id)
+                .maybeSingle()
+                .timeout(const Duration(seconds: 3));
+          } catch (_) {
+            row = null;
           }
-          // Acumular GPS auditoría mientras entrega.
-          RepartidorGpsOdometroService.instance.setEnRuta(true);
+          final repId = row?['id']?.toString();
+          if (repId != null && repId.isNotEmpty) {
+            final gate = await RepartidorJornadaService.gateEntrega(
+              repId,
+              offline: false,
+            );
+            if (!gate.permitido) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      gate.mensaje ?? 'Inicia tu jornada para continuar',
+                    ),
+                    backgroundColor: const Color(0xFFDC2626),
+                  ),
+                );
+              }
+              return;
+            }
+            RepartidorGpsOdometroService.instance.setEnRuta(true);
+          }
         }
       }
     } catch (e) {
       print('⚠️ gate jornada entrega: $e');
+      // Nunca bloquear entrega por fallo del gate.
     }
     
     // Feedback inmediato + validar geo ANTES de recargar/foto/firma
@@ -4401,8 +4414,11 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             _firmaUrl!.isNotEmpty && 
             !_firmaUrl!.startsWith('local://')) 
           'firma_url': _firmaUrl,
-        // Persistir punto de parada real si aún no hay coords (o refuerzo GPS).
-        if (latGps != null && lngGps != null) ...{
+        // Persistir GPS solo si la orden aún no tiene coords (no pisar destino geocodificado).
+        if (latGps != null &&
+            lngGps != null &&
+            (_ordenActual.latitudEntrega == null ||
+                _ordenActual.longitudEntrega == null)) ...{
           'latitud_entrega': latGps,
           'longitud_entrega': lngGps,
         },
