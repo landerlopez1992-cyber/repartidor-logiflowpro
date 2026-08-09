@@ -43,6 +43,7 @@ import 'taxi_chofer_mapa_screen.dart';
 import '../services/taxi_chofer_service.dart';
 import '../services/repartidor_suspension_service.dart';
 import '../widgets/repartidor_viajes_suspendido_panel.dart';
+import '../widgets/repartidor_viajes_tab_chip.dart';
 import '../services/taxi_tarifas_chofer_service.dart';
 import '../services/taxi_buscando_prefs.dart';
 import '../services/taxi_llamada_persistente_service.dart';
@@ -173,10 +174,14 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   /// Pestaña home: false = Repartidor (órdenes), true = Viajes (taxi).
   bool _pestanaHomeViajes = false;
+  /// Carrera taxi aceptada / en curso (chip Viajes parpadea y abre el mapa).
+  bool _taxiViajeActivo = false;
+  Timer? _taxiViajeActivoPollTimer;
   Timer? _suspensionPollTimer;
   RealtimeChannel? _suspensionChannel;
   /// Solo bloquea Viajes / taxi; no echa de la app.
   bool _cuentaSuspendida = false;
+  String? _cuentaSuspendidaMotivo;
   
   // Cache para órdenes filtradas (evitar recalcular en cada rebuild)
   List<Orden>? _ordenesFiltradasCache;
@@ -344,6 +349,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         );
         unawaited(_refrescarTaxiBuscandoActivo());
         unawaited(_refrescarTaxiSocioConfigurado());
+        unawaited(_refrescarTaxiViajeActivo());
+        _iniciarPollTaxiViajeActivo();
         unawaited(_abrirViajeTaxiActivoSiHay());
       }());
       _suscribirseANotificaciones();
@@ -424,6 +431,63 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     } catch (_) {}
   }
 
+  void _iniciarPollTaxiViajeActivo() {
+    _taxiViajeActivoPollTimer?.cancel();
+    _taxiViajeActivoPollTimer =
+        Timer.periodic(const Duration(seconds: 12), (_) {
+      unawaited(_refrescarTaxiViajeActivo());
+    });
+  }
+
+  Future<void> _refrescarTaxiViajeActivo() async {
+    try {
+      if (_cuentaSuspendida) {
+        if (mounted && _taxiViajeActivo) {
+          setState(() => _taxiViajeActivo = false);
+        }
+        return;
+      }
+      final oferta = await TaxiChoferService.instance.viajeActivo();
+      if (!mounted) return;
+      final est = (oferta?.estado ?? '').toLowerCase();
+      final activo = oferta != null &&
+          (est == 'aceptado' || est == 'en_camino' || est == 'en_viaje');
+      if (activo != _taxiViajeActivo) {
+        setState(() => _taxiViajeActivo = activo);
+      }
+    } catch (_) {}
+  }
+
+  /// Abre el mapa del viaje en curso (sin diálogo).
+  Future<void> _abrirMapaViajeTaxiActivoDirecto() async {
+    try {
+      if (await _verificarSuspensionYBloquear()) return;
+      final oferta = await TaxiChoferService.instance.viajeActivo();
+      if (oferta == null || !mounted) {
+        if (mounted && _taxiViajeActivo) {
+          setState(() => _taxiViajeActivo = false);
+        }
+        return;
+      }
+      final est = oferta.estado.toLowerCase();
+      if (est != 'aceptado' && est != 'en_camino' && est != 'en_viaje') {
+        if (mounted) setState(() => _taxiViajeActivo = false);
+        return;
+      }
+      if (mounted && !_taxiViajeActivo) {
+        setState(() => _taxiViajeActivo = true);
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => TaxiNavegacionChoferScreen(oferta: oferta),
+        ),
+      );
+      if (mounted) unawaited(_refrescarTaxiViajeActivo());
+    } catch (e) {
+      print('⚠️ abrir mapa viaje taxi: $e');
+    }
+  }
+
   void _iniciarVigilanciaSuspension() {
     _suspensionPollTimer?.cancel();
     _suspensionPollTimer = Timer.periodic(const Duration(seconds: 12), (_) {
@@ -456,12 +520,16 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   /// Retorna `true` si la cuenta está suspendida.
   Future<bool> _verificarSuspensionYBloquear() async {
     if (!mounted) return false;
-    final suspendido =
-        await RepartidorSuspensionService.instance.estaSuspendidoAhora();
-    final flag = suspendido == true;
+    final det =
+        await RepartidorSuspensionService.instance.detalleSuspensionAhora();
+    final flag = det?.suspendido == true;
+    final motivo = det?.motivo;
     if (!mounted) return flag;
-    if (_cuentaSuspendida != flag) {
-      setState(() => _cuentaSuspendida = flag);
+    if (_cuentaSuspendida != flag || _cuentaSuspendidaMotivo != motivo) {
+      setState(() {
+        _cuentaSuspendida = flag;
+        _cuentaSuspendidaMotivo = flag ? motivo : null;
+      });
     }
     if (!flag) return false;
 
@@ -473,6 +541,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     } catch (_) {}
     if (mounted && _taxiBuscandoActivo) {
       setState(() => _taxiBuscandoActivo = false);
+    }
+    if (mounted && _taxiViajeActivo) {
+      setState(() => _taxiViajeActivo = false);
     }
     return true;
   }
@@ -486,6 +557,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       final est = oferta.estado.toLowerCase();
       if (est != 'aceptado' && est != 'en_camino' && est != 'en_viaje') {
         return;
+      }
+      if (!_taxiViajeActivo) {
+        setState(() => _taxiViajeActivo = true);
       }
 
       final ir = await showDialog<bool>(
@@ -543,6 +617,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           builder: (_) => TaxiNavegacionChoferScreen(oferta: oferta),
         ),
       );
+      if (mounted) unawaited(_refrescarTaxiViajeActivo());
     } catch (e) {
       print('⚠️ viaje taxi activo: $e');
     }
@@ -755,6 +830,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     _positionStreamSubscription?.cancel();
     _timerUbicacion?.cancel();
     _suspensionPollTimer?.cancel();
+    _taxiViajeActivoPollTimer?.cancel();
     _suspensionChannel?.unsubscribe();
     RepartidorSaldoService.revision.removeListener(_onSaldoRevisionExterna);
     super.dispose();
@@ -775,6 +851,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       // Tras volver de Play: solo quita el modal si la versión instalada ya basta.
       _comprobarActualizacionForzada(forceStoreLookup: true);
       unawaited(_refrescarTaxiBuscandoActivo());
+      unawaited(_refrescarTaxiViajeActivo());
       // CRÍTICO: Reactivar rastreo cuando la app vuelve a estar activa
       _verificarYActivarRastreo();
     } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
@@ -855,7 +932,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   Future<void> _resolverFotoPerfilLocalHeader() async {
     if (_repartidorId == null || _repartidorId!.isEmpty) return;
-    final path = await RepartidorPerfilFotoCacheService.rutaLocal(_repartidorId!);
+    final path = await RepartidorPerfilFotoCacheService.rutaLocal(
+      _repartidorId!,
+      urlEsperada: _fotoPerfilUrl,
+    );
     if (mounted) setState(() => _fotoPerfilLocalPath = path);
   }
 
@@ -872,6 +952,34 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     final inicial = _repartidorNombre != null && _repartidorNombre!.isNotEmpty
         ? _repartidorNombre![0].toUpperCase()
         : 'R';
+    // Online: URL de BD primero (misma cara en home y perfil).
+    if (_fotoPerfilUrl != null && _fotoPerfilUrl!.isNotEmpty) {
+      return Image.network(
+        _fotoPerfilUrl!,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) {
+          if (_fotoPerfilLocalPath != null) {
+            final f = File(_fotoPerfilLocalPath!);
+            if (f.existsSync()) {
+              return Image.file(
+                f,
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+              );
+            }
+          }
+          return Center(
+            child: Text(
+              inicial,
+              style: TextStyle(color: Colors.white, fontSize: size * 0.4),
+            ),
+          );
+        },
+      );
+    }
     if (_fotoPerfilLocalPath != null) {
       final f = File(_fotoPerfilLocalPath!);
       if (f.existsSync()) {
@@ -881,24 +989,19 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           height: size,
           fit: BoxFit.cover,
           errorBuilder: (_, __, ___) => Center(
-            child: Text(inicial, style: TextStyle(color: Colors.white, fontSize: size * 0.4)),
+            child: Text(
+              inicial,
+              style: TextStyle(color: Colors.white, fontSize: size * 0.4),
+            ),
           ),
         );
       }
     }
-    if (_fotoPerfilUrl != null && _fotoPerfilUrl!.isNotEmpty) {
-      return Image.network(
-        _fotoPerfilUrl!,
-        width: size,
-        height: size,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => Center(
-          child: Text(inicial, style: TextStyle(color: Colors.white, fontSize: size * 0.4)),
-        ),
-      );
-    }
     return Center(
-      child: Text(inicial, style: TextStyle(color: Colors.white, fontSize: size * 0.4)),
+      child: Text(
+        inicial,
+        style: TextStyle(color: Colors.white, fontSize: size * 0.4),
+      ),
     );
   }
 
@@ -2790,6 +2893,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         }
         // El dialog ya abre TaxiNavegacionChoferScreen si aceptó.
         if (acepto == true) {
+          if (mounted) setState(() => _taxiViajeActivo = true);
           await _cargarNotificacionesNoLeidas();
         }
         return;
@@ -4465,6 +4569,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 _cuentaSuspendida
                     ? RepartidorViajesSuspendidoPanel(
                         empresaNombre: _nombreEmpresa,
+                        motivo: _cuentaSuspendidaMotivo,
                         onAbrirChat: () {
                           Navigator.of(context).push(
                             MaterialPageRoute<void>(
@@ -4605,14 +4710,13 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                     }
                   },
                 ),
-                chip(
-                  label: 'Viajes',
-                  icon: Icons.local_taxi_outlined,
+                RepartidorViajesTabChip(
                   selected: _pestanaHomeViajes,
-                  // Punto verde = buscando viajes (online taxi).
-                  showDot: !_cuentaSuspendida &&
+                  showOnlineDot: !_cuentaSuspendida &&
                       _taxiBuscandoActivo &&
-                      _taxiSocioConfigurado,
+                      _taxiSocioConfigurado &&
+                      !_taxiViajeActivo,
+                  viajeActivo: !_cuentaSuspendida && _taxiViajeActivo,
                   enabled: _taxiSocioConfigurado || _cuentaSuspendida,
                   onTap: () async {
                     if (_cuentaSuspendida) {
@@ -4632,6 +4736,24 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                           backgroundColor: Color(0xFF37474F),
                         ),
                       );
+                      return;
+                    }
+                    // Viaje en curso → mapa de navegación directo.
+                    if (_taxiViajeActivo) {
+                      await _abrirMapaViajeTaxiActivoDirecto();
+                      return;
+                    }
+                    // Por si el poll aún no marcó el flag.
+                    final oferta =
+                        await TaxiChoferService.instance.viajeActivo();
+                    if (!mounted) return;
+                    final est = (oferta?.estado ?? '').toLowerCase();
+                    if (oferta != null &&
+                        (est == 'aceptado' ||
+                            est == 'en_camino' ||
+                            est == 'en_viaje')) {
+                      setState(() => _taxiViajeActivo = true);
+                      await _abrirMapaViajeTaxiActivoDirecto();
                       return;
                     }
                     if (!_pestanaHomeViajes) {

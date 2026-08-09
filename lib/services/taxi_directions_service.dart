@@ -6,6 +6,54 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'ruta_geometria_osrm_service.dart';
 import 'sync_service.dart';
 
+/// Un paso de navegación (giro / continuar), estilo Google Directions.
+class TaxiNavStep {
+  const TaxiNavStep({
+    required this.instruction,
+    required this.maneuver,
+    required this.lat,
+    required this.lng,
+    this.distanceM = 0,
+    this.distanceText = '',
+  });
+
+  final String instruction;
+  final String maneuver;
+  final double lat;
+  final double lng;
+  final int distanceM;
+  final String distanceText;
+
+  TaxiManeuverIcon get iconKind {
+    final m = maneuver.toLowerCase();
+    if (m.contains('uturn') || m.contains('u-turn')) {
+      return TaxiManeuverIcon.uTurn;
+    }
+    if (m.contains('left')) return TaxiManeuverIcon.left;
+    if (m.contains('right')) return TaxiManeuverIcon.right;
+    if (m.contains('roundabout') || m.contains('rotary')) {
+      return TaxiManeuverIcon.roundabout;
+    }
+    if (m.contains('arrive') || m.contains('destination')) {
+      return TaxiManeuverIcon.arrive;
+    }
+    return TaxiManeuverIcon.straight;
+  }
+
+  factory TaxiNavStep.fromJson(Map<String, dynamic> m) {
+    return TaxiNavStep(
+      instruction: m['instruction']?.toString() ?? '',
+      maneuver: m['maneuver']?.toString() ?? '',
+      lat: (m['lat'] as num?)?.toDouble() ?? 0,
+      lng: (m['lng'] as num?)?.toDouble() ?? 0,
+      distanceM: (m['distance_m'] as num?)?.toInt() ?? 0,
+      distanceText: m['distance_text']?.toString() ?? '',
+    );
+  }
+}
+
+enum TaxiManeuverIcon { left, right, straight, uTurn, roundabout, arrive }
+
 /// Resultado de ruta + ETA (Google Directions con tráfico vía Edge, o OSRM).
 class TaxiDirectionsResult {
   const TaxiDirectionsResult({
@@ -15,6 +63,7 @@ class TaxiDirectionsResult {
     this.durationText = '',
     this.traffic = false,
     this.provider = '',
+    this.steps = const [],
   });
 
   final List<LatLng> points;
@@ -23,6 +72,7 @@ class TaxiDirectionsResult {
   final String durationText;
   final bool traffic;
   final String provider;
+  final List<TaxiNavStep> steps;
 }
 
 /// Directions para navegación taxi del socio (misma Edge que CubaLink).
@@ -83,9 +133,38 @@ class TaxiDirectionsService {
     }
   }
 
+  static List<TaxiNavStep> _parseSteps(dynamic raw) {
+    if (raw is! List) return const [];
+    final out = <TaxiNavStep>[];
+    for (final e in raw) {
+      if (e is Map) {
+        final s = TaxiNavStep.fromJson(Map<String, dynamic>.from(e));
+        if (s.instruction.isNotEmpty) out.add(s);
+      }
+    }
+    return out;
+  }
+
+  /// Próximo giro respecto a la posición del chofer.
+  static TaxiNavStep? proximoPaso({
+    required List<TaxiNavStep> steps,
+    required LatLng yo,
+  }) {
+    if (steps.isEmpty) return null;
+    TaxiNavStep? best;
+    var bestDist = double.infinity;
+    for (final s in steps) {
+      final d = _haversineM(yo, LatLng(s.lat, s.lng));
+      if (d < 25) continue;
+      if (d < bestDist) {
+        bestDist = d;
+        best = s;
+      }
+    }
+    return best ?? steps.last;
+  }
+
   /// Ruta + duración (preferencia: Google Directions con tráfico vía Edge, o OSRM).
-  /// [waypoints] = paradas intermedias (máx. 2), estilo Uber A→C→B.
-  /// Sin red o con timeout → geometría local inmediata (nunca cuelga).
   Future<TaxiDirectionsResult> rutaConEta({
     required LatLng origen,
     required LatLng destino,
@@ -141,13 +220,13 @@ class TaxiDirectionsService {
               durationText: data['duration_text']?.toString() ?? '',
               traffic: data['traffic'] == true,
               provider: data['provider']?.toString() ?? 'google',
+              steps: _parseSteps(data['steps']),
             );
           }
         }
       } catch (_) {}
     }
 
-    // Fallback OSRM multi-punto (timeout corto; si falla → local).
     try {
       final geom = await RutaGeometriaOsrmService.obtenerGeometriaConduccion([
         origen,
@@ -157,12 +236,12 @@ class TaxiDirectionsService {
         const Duration(seconds: 8),
         onTimeout: () => [origen, ...vias, destino],
       );
-      // ETA OSRM no viene en este helper: estimar por distancia de polyline.
       var distM = 0.0;
       for (var i = 0; i < geom.length - 1; i++) {
         distM += _haversineM(geom[i], geom[i + 1]);
       }
-      final etaS = (distM / 1000.0 / 32.0 * 3600.0).round().clamp(60, 24 * 3600);
+      final etaS =
+          (distM / 1000.0 / 32.0 * 3600.0).round().clamp(60, 24 * 3600);
       return TaxiDirectionsResult(
         points: geom.length >= 2 ? geom : local.points,
         durationS: etaS,
@@ -175,7 +254,7 @@ class TaxiDirectionsService {
     }
   }
 
-  /// Overview completo del viaje: A → paradas → B (ruta por calles + tiempo total).
+  /// Overview completo del viaje: A → paradas → B.
   Future<TaxiDirectionsResult> rutaItinerario({
     required LatLng origen,
     required LatLng destino,
@@ -198,7 +277,8 @@ class TaxiDirectionsService {
     for (var i = 0; i < pts.length - 1; i++) {
       distM += _haversineM(pts[i], pts[i + 1]);
     }
-    final etaS = (distM / 1000.0 / 32.0 * 3600.0).round().clamp(60, 24 * 3600);
+    final etaS =
+        (distM / 1000.0 / 32.0 * 3600.0).round().clamp(60, 24 * 3600);
     return TaxiDirectionsResult(
       points: pts,
       durationS: etaS,
@@ -208,7 +288,6 @@ class TaxiDirectionsService {
     );
   }
 
-  /// Solo tiempo (pin / overview), sin "al destino".
   static String formatDuracionCorta(int? durationS) {
     if (durationS == null || durationS <= 0) return '';
     if (durationS < 60) return 'menos de 1 min';
@@ -219,7 +298,6 @@ class TaxiDirectionsService {
     return m == 0 ? '$h h' : '$h h $m min';
   }
 
-  /// Texto ETA para UI del chofer.
   static String formatEtaChofer({
     required bool haciaPasajero,
     required bool haciaDestino,

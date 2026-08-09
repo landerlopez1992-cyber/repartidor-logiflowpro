@@ -209,16 +209,14 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
     if (_busy) return;
     final ofertaActual = _oferta;
     if (ofertaActual != null && ofertaActual.esPagoCash) {
-      final total = ofertaActual.precioUsd ?? ofertaActual.gananciaUsd;
+      final m = ofertaActual.montosCash;
       final okCash = await TaxiCashComisionAvisoModal.show(
         context,
-        totalViajeUsd: total,
-        comisionUsd: ofertaActual.comisionViajeUsd > 0
-            ? ofertaActual.comisionViajeUsd
-            : (total * ofertaActual.comisionPct / 100.0),
+        totalViajeUsd: m.cobrarClienteUsd,
+        comisionUsd: m.empresaUsd,
         topeDeudaUsd: ofertaActual.topeDeudaUsd,
         comisionPct: ofertaActual.comisionPct,
-        gananciaChoferUsd: ofertaActual.gananciaUsd,
+        gananciaChoferUsd: m.quedaChoferUsd,
         tituloAccion: 'Aceptar viaje',
       );
       if (okCash != true || !mounted) return;
@@ -295,7 +293,9 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
         content: const SingleChildScrollView(
           child: Text(
             'Si no puedes atender este viaje ahora, puedes rechazarlo.\n\n'
-            'Recuerda: los rechazos frecuentes pueden limitar tu acceso a nuevas ofertas.',
+            'Importante: ignorar o rechazar viajes afecta la salud de tu cuenta. '
+            'Con 5 viajes ignorados en el mes tu cuenta se suspende hasta que '
+            'la empresa la reactive.',
             style: TextStyle(
               color: Color(0xFF9CA3AF),
               height: 1.4,
@@ -542,22 +542,18 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                   TaxiOfertaTipoBanner(oferta: o),
                   const SizedBox(height: 10),
                 ],
-                if (o.esPagoCash)
-                  _cashMontosCompactos(
-                    cobrar: o.precioUsd ?? o.gananciaUsd,
-                    queda: o.gananciaUsd,
-                    // Comisión nunca puede superar lo que paga el cliente.
-                    empresa: () {
-                      final cobrar = o.precioUsd ?? o.gananciaUsd;
-                      final raw = o.comisionViajeUsd > 0
-                          ? o.comisionViajeUsd
-                          : (o.comisionPct > 0
-                              ? cobrar * o.comisionPct / 100.0
-                              : (cobrar - o.gananciaUsd));
-                      return raw.clamp(0.0, cobrar).toDouble();
-                    }(),
-                  )
-                else ...[
+                if (o.esPagoCash) ...[
+                  Builder(
+                    builder: (_) {
+                      final m = o.montosCash;
+                      return _cashMontosCompactos(
+                        cobrar: m.cobrarClienteUsd,
+                        queda: m.quedaChoferUsd,
+                        empresa: m.empresaUsd,
+                      );
+                    },
+                  ),
+                ] else ...[
                   _infoCard(
                     icon: Icons.payments_outlined,
                     label: 'Tu ganancia',

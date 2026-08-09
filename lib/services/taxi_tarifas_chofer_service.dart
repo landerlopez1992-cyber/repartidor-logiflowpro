@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -326,6 +327,11 @@ class TaxiTarifasChoferService {
             ),
           );
         }
+        // Red de seguridad: si el GPS acaba de publicarse tras activar,
+        // un segundo aviso cubre carreras que ya estaban buscando.
+        if (value) {
+          unawaited(avisarSolicitudesPendientes());
+        }
         return (ok: true, err: null, queued: false);
       }
       final msg = res is Map
@@ -347,6 +353,25 @@ class TaxiTarifasChoferService {
       print('⚠️ setDisponible offline/timeout → cola: $e');
       await TaxiBuscandoPrefs.marcarPendienteSyncDisponible(value);
       return (ok: true, err: null, queued: true);
+    }
+  }
+
+  /// Empuja ofertas de viajes que siguen en buscando_chofer (mismo tenant).
+  /// Útil tras publicar GPS si el chofer ya estaba disponible.
+  Future<void> avisarSolicitudesPendientes() async {
+    try {
+      if (RepartidorConnectivity.online.value == false ||
+          !SyncService().isOnline) {
+        return;
+      }
+      await _db
+          .rpc(
+            'taxi_chofer_avisar_solicitudes_pendientes',
+            params: {'p_chofer_usuario_id': null},
+          )
+          .timeout(const Duration(seconds: 8));
+    } catch (e) {
+      print('⚠️ avisarSolicitudesPendientes: $e');
     }
   }
 

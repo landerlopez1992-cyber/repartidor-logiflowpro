@@ -455,17 +455,21 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
 
   Future<void> _resolverFotoPerfilLocal() async {
     if (_repartidorId == null) return;
-    final path = await RepartidorPerfilFotoCacheService.rutaLocal(_repartidorId!);
+    final path = await RepartidorPerfilFotoCacheService.rutaLocal(
+      _repartidorId!,
+      urlEsperada: _fotoPerfilUrl,
+    );
     if (mounted) setState(() => _fotoPerfilLocalPath = path);
   }
 
   ImageProvider? _imagenPerfilProvider() {
+    // Con red: siempre la URL actual de BD (evita cara vieja en caché).
+    if (_isOnline && _fotoPerfilUrl != null && _fotoPerfilUrl!.isNotEmpty) {
+      return NetworkImage(_fotoPerfilUrl!);
+    }
     if (_fotoPerfilLocalPath != null) {
       final f = File(_fotoPerfilLocalPath!);
       if (f.existsSync()) return FileImage(f);
-    }
-    if (_isOnline && _fotoPerfilUrl != null && _fotoPerfilUrl!.isNotEmpty) {
-      return NetworkImage(_fotoPerfilUrl!);
     }
     return null;
   }

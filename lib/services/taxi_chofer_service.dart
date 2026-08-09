@@ -159,6 +159,31 @@ class TaxiOfertaChofer {
   bool get tieneParadas =>
       paradasCount > 0 || itinerario.any((e) => e.esParada);
 
+  /// Desglose cash coherente: cobrar = precio; empresa = comisión;
+  /// te quedas = cobrar − empresa (nunca igual al bruto si hay comisión).
+  ({double cobrarClienteUsd, double quedaChoferUsd, double empresaUsd})
+      get montosCash {
+    final cobrar = (precioUsd ?? gananciaUsd).clamp(0.0, double.infinity);
+    var empresa = comisionViajeUsd > 0.009
+        ? comisionViajeUsd
+        : (comisionPct > 0 && cobrar > 0
+            ? cobrar * comisionPct / 100.0
+            : (cobrar - gananciaUsd));
+    empresa = empresa.clamp(0.0, cobrar);
+    final neto = (cobrar - empresa).clamp(0.0, cobrar);
+    // ganancia_chofer_usd a veces viene = precio (bruto). No usarla como "te quedas".
+    final gananciaPareceBruto = (gananciaUsd - cobrar).abs() < 0.02;
+    final gananciaYaNeta =
+        !gananciaPareceBruto && (gananciaUsd + empresa - cobrar).abs() < 0.05;
+    final queda =
+        gananciaYaNeta ? gananciaUsd.clamp(0.0, cobrar) : neto;
+    return (
+      cobrarClienteUsd: cobrar,
+      quedaChoferUsd: queda,
+      empresaUsd: empresa,
+    );
+  }
+
   /// Paradas intermedias con coordenadas (mapa).
   List<LatLng> get paradasLatLng => itinerario
       .where((e) => e.esParada)
@@ -514,6 +539,35 @@ class TaxiChoferService {
       return TaxiOfertaChofer.fromJson(Map<String, dynamic>.from(res));
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Reservas confirmadas pendientes del día (tarjeta en Viajes).
+  Future<({List<TaxiReservaChoferItem> items, String? error})>
+      listarReservasConfirmadas() async {
+    try {
+      final res = await _db.rpc('taxi_listar_reservas_chofer');
+      if (res is! Map || res['ok'] != true) {
+        return (
+          items: const <TaxiReservaChoferItem>[],
+          error: res is Map
+              ? (res['error']?.toString() ?? 'No se pudieron cargar')
+              : 'No se pudieron cargar',
+        );
+      }
+      final raw = res['reservas'];
+      if (raw is! List) {
+        return (items: const <TaxiReservaChoferItem>[], error: null);
+      }
+      return (
+        items: raw
+            .whereType<Map>()
+            .map((e) => TaxiReservaChoferItem.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
+        error: null,
+      );
+    } catch (e) {
+      return (items: const <TaxiReservaChoferItem>[], error: e.toString());
     }
   }
 
@@ -982,6 +1036,41 @@ class TaxiDemandaSugerencia {
       pedidosPendientes: (m['pedidos_pendientes'] as num?)?.toInt() ?? 0,
       sociosOnline: (m['socios_online'] as num?)?.toInt() ?? 0,
       mensaje: m['mensaje']?.toString() ?? '',
+    );
+  }
+}
+
+/// Reserva confirmada pendiente del día (listado chofer).
+class TaxiReservaChoferItem {
+  const TaxiReservaChoferItem({
+    required this.id,
+    required this.estado,
+    required this.programadoEn,
+    required this.origenTexto,
+    required this.destinoTexto,
+    this.pasajeroNombre = '',
+    this.precioUsd = 0,
+  });
+
+  final String id;
+  final String estado;
+  final DateTime? programadoEn;
+  final String origenTexto;
+  final String destinoTexto;
+  final String pasajeroNombre;
+  final double precioUsd;
+
+  factory TaxiReservaChoferItem.fromJson(Map<String, dynamic> m) {
+    return TaxiReservaChoferItem(
+      id: m['id']?.toString() ?? '',
+      estado: m['estado']?.toString() ?? '',
+      programadoEn: DateTime.tryParse(m['programado_en']?.toString() ?? ''),
+      origenTexto: m['origen_texto']?.toString() ?? '',
+      destinoTexto: m['destino_texto']?.toString() ?? '',
+      pasajeroNombre: (m['pasajero_nombre_snap'] ?? m['pasajero_nombre'])
+              ?.toString() ??
+          '',
+      precioUsd: (m['precio_usd'] as num?)?.toDouble() ?? 0,
     );
   }
 }

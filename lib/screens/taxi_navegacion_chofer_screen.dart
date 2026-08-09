@@ -8,6 +8,7 @@ import '../config/app_colors.dart';
 import '../services/repartidor_suspension_service.dart';
 import '../services/taxi_chofer_service.dart';
 import '../services/taxi_directions_service.dart';
+import '../services/taxi_voz_navegacion_service.dart';
 import '../widgets/taxi_cash_cobrar_completar_modal.dart';
 import '../widgets/taxi_cash_comision_aviso_modal.dart';
 import '../widgets/taxi_chofer_maplibre.dart';
@@ -49,6 +50,23 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
   bool _etaConTrafico = false;
   /// Velocidad GPS actual (m/s). Null si aún no hay lectura.
   double? _speedMps;
+  /// Rumbo del vehículo (grados).
+  double _headingDeg = 0;
+  /// Pasos de giro del tramo activo (Google/OSRM).
+  List<TaxiNavStep> _navSteps = const [];
+  /// Tras «Iniciar viaje»: guía tipo Google en pantalla + Maps externo.
+  bool _modoGuiaActiva = false;
+  /// Panel inferior compacto para ampliar el mapa (como Google).
+  bool _mapaAmpliado = false;
+  final GlobalKey<TaxiChoferMapLibreState> _mapaKey =
+      GlobalKey<TaxiChoferMapLibreState>();
+  bool _vozMute = false;
+  /// Clave del último anuncio de giro (evitar spam).
+  String? _vozUltimoPasoKey;
+  /// Umbral de distancia ya anunciado para ese paso (metros).
+  int? _vozUltimoUmbralM;
+  /// Umbral ya anunciado para llegada a parada/destino.
+  int? _vozUltimoUmbralDestinoM;
   Timer? _chatBadgeTimer;
   int _chatNoLeidos = 0;
   String? _ultimoClienteMsgIdLeido;
@@ -166,6 +184,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     unawaited(_bloquearSiCuentaSuspendida());
     unawaited(_refrescarFotoPasajero());
     unawaited(_cargarRatingPasajero());
+    unawaited(_initVozGuia());
     _iniciarGps();
     _pingTimer = Timer.periodic(const Duration(seconds: 8), (_) {
       unawaited(_enviarUbicacion());
@@ -178,6 +197,12 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     });
     unawaited(_actualizarBadgeChat());
     unawaited(_pollEstadoViajeRemoto());
+  }
+
+  Future<void> _initVozGuia() async {
+    await TaxiVozNavegacionService.instance.init();
+    if (!mounted) return;
+    setState(() => _vozMute = TaxiVozNavegacionService.instance.isMuted);
   }
 
   /// Alinea el tramo local con el estado del backend (reabrir app a mitad).
@@ -198,6 +223,8 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       final idx = _legs.indexWhere((e) => e.esParada || e.esDestino);
       _legIndex = idx >= 0 ? idx : 0;
       _awaitingBoard = false;
+      _modoGuiaActiva = true;
+      _mapaAmpliado = true;
     } else if (_oferta.esperandoPasajero) {
       _legIndex = 0;
       _awaitingBoard = true;
@@ -466,30 +493,139 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
           perm == LocationPermission.denied) {
         return;
       }
-      final pos = await Geolocator.getCurrentPosition();
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+        ),
+      );
       if (!mounted) return;
       setState(() {
         _yo = LatLng(pos.latitude, pos.longitude);
         _speedMps = pos.speed >= 0 ? pos.speed : null;
+        if (pos.heading >= 0 && pos.heading <= 360) {
+          _headingDeg = pos.heading;
+        }
       });
       await _enviarUbicacion();
       unawaited(_actualizarRutaReal(forzar: true));
-    unawaited(_cargarOverviewItinerario(forzar: true));
+      unawaited(_cargarOverviewItinerario(forzar: true));
 
       _posSub = Geolocator.getPositionStream(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          distanceFilter: 25,
+          accuracy: LocationAccuracy.bestForNavigation,
+          distanceFilter: 8,
         ),
       ).listen((p) {
         if (!mounted) return;
         setState(() {
           _yo = LatLng(p.latitude, p.longitude);
           _speedMps = p.speed >= 0 ? p.speed : null;
+          if (p.heading >= 0 && p.heading <= 360 && (p.speed < 0 || p.speed > 0.8)) {
+            _headingDeg = p.heading;
+          }
         });
         unawaited(_actualizarRutaReal());
+        _evaluarGuiaVoz();
       });
     } catch (_) {}
+  }
+
+  void _evaluarGuiaVoz() {
+    if (!_modoGuiaActiva || _faseEspera || _vozMute) return;
+    final yo = _yo;
+    if (yo == null) return;
+
+    final dest = _navTarget;
+    final distDest = Geolocator.distanceBetween(
+      yo.latitude,
+      yo.longitude,
+      dest.latitude,
+      dest.longitude,
+    );
+    final nombre = _pasajeroActualNombre.trim().isEmpty
+        ? 'el pasajero'
+        : _pasajeroActualNombre.trim();
+
+    int? umbralDest;
+    if (distDest <= 150) {
+      umbralDest = 150;
+    } else if (distDest <= 400) {
+      umbralDest = 400;
+    } else if (distDest <= 1100) {
+      umbralDest = 1100;
+    }
+    if (umbralDest != null &&
+        (_vozUltimoUmbralDestinoM == null ||
+            umbralDest < _vozUltimoUmbralDestinoM!)) {
+      _vozUltimoUmbralDestinoM = umbralDest;
+      final distTxt = TaxiVozNavegacionService.formatDistanciaVoz(distDest);
+      if (_faseParada) {
+        unawaited(TaxiVozNavegacionService.instance.speak(
+          'En $distTxt ya está la parada.',
+        ));
+      } else if (_faseDestino) {
+        unawaited(TaxiVozNavegacionService.instance.speak(
+          'En $distTxt ya está el destino de $nombre.',
+        ));
+      }
+      return; // no solapar con anuncio de giro en el mismo tick
+    }
+
+    final step = TaxiDirectionsService.proximoPaso(steps: _navSteps, yo: yo);
+    if (step == null) return;
+    final distPaso = Geolocator.distanceBetween(
+      yo.latitude,
+      yo.longitude,
+      step.lat,
+      step.lng,
+    );
+    // Si el "paso" es casi el destino final, no repetir.
+    if (distPaso < 80 && distDest < 120) return;
+
+    final pasoKey =
+        '${step.maneuver}|${step.lat.toStringAsFixed(4)}|${step.lng.toStringAsFixed(4)}';
+    if (pasoKey != _vozUltimoPasoKey) {
+      _vozUltimoPasoKey = pasoKey;
+      _vozUltimoUmbralM = null;
+    }
+
+    int? umbral;
+    if (distPaso <= 120) {
+      umbral = 120;
+    } else if (distPaso <= 350) {
+      umbral = 350;
+    } else if (distPaso <= 900) {
+      umbral = 900;
+    } else if (distPaso <= 2000) {
+      umbral = 2000;
+    }
+    if (umbral == null) return;
+    if (_vozUltimoUmbralM != null && umbral >= _vozUltimoUmbralM!) return;
+    _vozUltimoUmbralM = umbral;
+
+    final distTxt = TaxiVozNavegacionService.formatDistanciaVoz(distPaso);
+    final giro = _fraseGiroVoz(step);
+    unawaited(TaxiVozNavegacionService.instance.speak(
+      'En $distTxt, prepárate para $giro.',
+    ));
+  }
+
+  String _fraseGiroVoz(TaxiNavStep step) {
+    final m = step.maneuver.toLowerCase();
+    if (m.contains('uturn') || m.contains('u-turn')) {
+      return 'hacer un retorno';
+    }
+    if (m.contains('left')) return 'doblar a tu izquierda';
+    if (m.contains('right')) return 'doblar a tu derecha';
+    if (m.contains('roundabout') || m.contains('rotary')) {
+      return 'entrar en la rotonda';
+    }
+    if (m.contains('arrive')) return 'llegar';
+    final inst = step.instruction.trim().toLowerCase();
+    if (inst.contains('izquierda')) return 'doblar a tu izquierda';
+    if (inst.contains('derecha')) return 'doblar a tu derecha';
+    if (inst.isNotEmpty) return inst;
+    return 'continuar recto';
   }
 
 
@@ -567,6 +703,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
           _rutaReal = result.points.length >= 2
               ? result.points
               : [origen, previewDest];
+          _navSteps = result.steps;
           _ultimaRutaAt = DateTime.now();
           _ultimoOrigenRuta = origen;
           _etaSegundos = result.durationS;
@@ -578,6 +715,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
         if (!mounted) return;
         setState(() {
           _rutaReal = [origen, previewDest];
+          _navSteps = const [];
           _cargandoRuta = false;
         });
       }
@@ -595,7 +733,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                 yo.latitude,
                 yo.longitude,
               ) <
-              80) {
+              40) {
         return;
       }
     }
@@ -617,17 +755,26 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       setState(() {
         _rutaReal =
             result.points.length >= 2 ? result.points : [origen, destino];
+        _navSteps = result.steps;
         _ultimaRutaAt = DateTime.now();
         _ultimoOrigenRuta = origen;
         _etaSegundos = result.durationS;
         _etaConTrafico = result.traffic;
         _etaLabel = eta;
         _cargandoRuta = false;
+        if (!_faseEspera && (_faseDestino || _faseParada || haciaPasajero)) {
+          _modoGuiaActiva = true;
+          _mapaAmpliado = true;
+        }
       });
+      if (_modoGuiaActiva && !_faseEspera) {
+        _evaluarGuiaVoz();
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _rutaReal = [origen, destino];
+        _navSteps = const [];
         _cargandoRuta = false;
       });
     }
@@ -645,17 +792,12 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
 
   Future<void> _completarViajeFinal() async {
     if (_oferta.esPagoCash) {
-      final totalCobrar = _oferta.precioUsd ?? _oferta.gananciaUsd;
-      final comision = _oferta.comisionViajeUsd > 0
-          ? _oferta.comisionViajeUsd
-          : (totalCobrar > 0 && _oferta.comisionPct > 0
-              ? totalCobrar * _oferta.comisionPct / 100.0
-              : (totalCobrar - _oferta.gananciaUsd).clamp(0.0, totalCobrar));
+      final m = _oferta.montosCash;
       final cobrado = await TaxiCashCobrarCompletarModal.show(
         context,
-        totalCobrarUsd: totalCobrar,
-        gananciaChoferUsd: _oferta.gananciaUsd,
-        comisionEmpresaUsd: comision,
+        totalCobrarUsd: m.cobrarClienteUsd,
+        gananciaChoferUsd: m.quedaChoferUsd,
+        comisionEmpresaUsd: m.empresaUsd,
       );
       if (cobrado != true || !mounted) return;
     }
@@ -674,15 +816,18 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       return;
     }
     if (res.esCash || _oferta.esPagoCash) {
-      final total = _oferta.precioUsd ?? _oferta.gananciaUsd;
-      final comision = res.comisionUsd ?? _oferta.comisionViajeUsd;
+      final m = _oferta.montosCash;
+      final comision = res.comisionUsd ?? m.empresaUsd;
       final irPerfil = await TaxiCashComisionAvisoModal.show(
         context,
-        totalViajeUsd: total,
+        totalViajeUsd: m.cobrarClienteUsd,
         comisionUsd: comision,
         topeDeudaUsd: _oferta.topeDeudaUsd,
         comisionPct: _oferta.comisionPct,
-        gananciaChoferUsd: res.gananciaUsd ?? _oferta.gananciaUsd,
+        // Tras completar cash el RPC devuelve ganancia 0; usar neto cash.
+        gananciaChoferUsd: (m.cobrarClienteUsd - comision)
+            .clamp(0.0, m.cobrarClienteUsd)
+            .toDouble(),
         tituloAccion: 'Ir a pagar',
         mostrarCancelar: true,
       );
@@ -736,6 +881,21 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
         return;
       }
       unawaited(_actualizarRutaReal(forzar: true));
+      final next = _navTarget;
+      unawaited(abrirGoogleNavegacionTurnByTurn(
+        lat: next.latitude,
+        lng: next.longitude,
+      ));
+      setState(() {
+        _vozUltimoPasoKey = null;
+        _vozUltimoUmbralM = null;
+        _vozUltimoUmbralDestinoM = null;
+      });
+      unawaited(TaxiVozNavegacionService.instance.speak(
+        _faseParada
+            ? 'Parada completada. Continúa a la siguiente parada.'
+            : 'Continúa hacia el destino.',
+      ));
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Parada marcada. Continúa al siguiente punto.'),
@@ -830,15 +990,43 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       setState(() {
         _oferta = res.oferta!;
         _prepararLegsTrasIniciar();
+        _modoGuiaActiva = true;
+        _mapaAmpliado = true;
+        _rutaReal = const [];
+        _navSteps = const [];
+        _ultimaRutaAt = null;
+        _vozUltimoPasoKey = null;
+        _vozUltimoUmbralM = null;
+        _vozUltimoUmbralDestinoM = null;
       });
       final guardado = await _guardarProgreso();
       if (!mounted) return;
       setState(() => _busy = false);
       if (!guardado) return;
-      unawaited(_actualizarRutaReal(forzar: true));
+      await _actualizarRutaReal(forzar: true);
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _mapaKey.currentState?.recenter();
+      });
+      final nombre = _pasajeroActualNombre.trim().isEmpty
+          ? 'el pasajero'
+          : _pasajeroActualNombre.trim();
+      final destinoVoz = _faseParada
+          ? 'la parada'
+          : 'el destino de $nombre';
+      unawaited(TaxiVozNavegacionService.instance.speak(
+        'Viaje iniciado. Sigue la ruta hacia $destinoVoz.',
+        forzar: false,
+      ));
+      // Guía externa tipo Google (giros izquierda/derecha) al destino/parada activa.
+      final dest = _navTarget;
+      unawaited(abrirGoogleNavegacionTurnByTurn(
+        lat: dest.latitude,
+        lng: dest.longitude,
+      ));
       final msg = _multiTramo
-          ? 'Viaje iniciado. Sigue el itinerario (paradas / destinos en orden).'
-          : 'Ruta al destino cargada. ¡Buen viaje!';
+          ? 'Viaje iniciado. Mapa ampliado + ruta y giros al siguiente punto.'
+          : 'Viaje iniciado. Mapa ampliado — sigue la ruta y los giros.';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(msg),
@@ -1065,6 +1253,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     _pingTimer?.cancel();
     _chatBadgeTimer?.cancel();
     _estadoPollTimer?.cancel();
+    unawaited(TaxiVozNavegacionService.instance.stop());
     super.dispose();
   }
 
@@ -1114,34 +1303,66 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
       body: Column(
         children: [
           Expanded(
+            flex: (_mapaAmpliado && !_faseEspera) ? 68 : 52,
             child: _faseEspera
                 ? _panelEsperandoPasajero(foto, inicial, nombre)
                 : Stack(
                     fit: StackFit.expand,
                     children: [
                       TaxiChoferMapLibre(
+                        key: _mapaKey,
                         driver: _yo,
                         pickup: _puntoA,
                         destination: _puntoB,
                         routePoints: _rutaReal,
                         showDestination: true,
                         stops: _paradasIntermedias,
-                        overviewPoints: _rutaOverview.length >= 2
-                            ? _rutaOverview
-                            : [_puntoA, ..._paradasIntermedias, _puntoB],
+                        overviewPoints: _modoGuiaActiva
+                            ? const []
+                            : (_rutaOverview.length >= 2
+                                ? _rutaOverview
+                                : [_puntoA, ..._paradasIntermedias, _puntoB]),
                         activeTarget: _navTarget,
-                        totalTripEtaLabel: _overviewEtaSegundos != null &&
+                        focusActiveLeg: true,
+                        streetLevelFollow: _mapaAmpliado && !_faseEspera,
+                        driverHeadingDeg: _headingDeg,
+                        totalTripEtaLabel: !_modoGuiaActiva &&
+                                _overviewEtaSegundos != null &&
                                 _overviewEtaSegundos! > 0
                             ? TaxiDirectionsService.formatDuracionCorta(
                                 _overviewEtaSegundos,
                               )
                             : null,
                       ),
+                      // Banner de próximo giro (tipo Google).
+                      if (_modoGuiaActiva && !_faseEspera)
+                        Positioned(
+                          left: 12,
+                          right: 12,
+                          top: 12,
+                          child: _buildManeuverBanner(),
+                        ),
                       // Foto del pasajero: esquina inferior izquierda del mapa.
                       Positioned(
                         left: 14,
                         bottom: 14,
                         child: _pasajeroAvatar(foto, inicial),
+                      ),
+                      // Mi ubicación + velocímetro digital (esquina inferior derecha).
+                      Positioned(
+                        right: 12,
+                        bottom: 12,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            _buildBotonVozMute(),
+                            const SizedBox(height: 10),
+                            _buildBotonMiUbicacion(),
+                            const SizedBox(height: 10),
+                            _buildVelocimetroDigital(),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -1153,15 +1374,55 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
               top: false,
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  final maxPanel = MediaQuery.sizeOf(context).height * 0.48;
+                  final h = MediaQuery.sizeOf(context).height;
+                  // Al iniciar viaje: panel compacto → mapa amplio (como captura).
+                  final maxPanel = _mapaAmpliado && !_faseEspera
+                      ? h * 0.34
+                      : h * 0.48;
                   return ConstrainedBox(
                     constraints: BoxConstraints(maxHeight: maxPanel),
                     child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                    // Tirador para ampliar/reducir mapa.
+                    if (!_faseEspera)
+                      Center(
+                        child: GestureDetector(
+                          onTap: () {
+                            setState(() => _mapaAmpliado = !_mapaAmpliado);
+                          },
+                          behavior: HitTestBehavior.opaque,
+                          child: Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Column(
+                              children: [
+                                Container(
+                                  width: 40,
+                                  height: 4,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.28),
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _mapaAmpliado
+                                      ? 'Mapa ampliado · toca para ver más detalle'
+                                      : 'Toca para ampliar el mapa',
+                                  style: const TextStyle(
+                                    color: Color(0xFF9CA3AF),
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
                     Text(
                       nombre,
                       textAlign: TextAlign.center,
@@ -1222,8 +1483,11 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                         ),
                       ),
                     ],
-                    const SizedBox(height: 10),
-                    _panelPagoYGanancia(),
+                    // En guía ampliada: ocultar panel de pago para ganar mapa.
+                    if (!_mapaAmpliado || _faseEspera) ...[
+                      const SizedBox(height: 10),
+                      _panelPagoYGanancia(),
+                    ],
                     const SizedBox(height: 14),
                     if (_faseEspera) ...[
                       Stack(
@@ -1380,6 +1644,245 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     );
   }
 
+  Widget _buildBotonVozMute() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () async {
+          final mute = await TaxiVozNavegacionService.instance.toggleMute();
+          if (!mounted) return;
+          setState(() => _vozMute = mute);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                mute
+                    ? 'Guía por voz silenciada'
+                    : 'Guía por voz activada',
+              ),
+              backgroundColor: const Color(0xFF37474F),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        },
+        borderRadius: BorderRadius.circular(28),
+        child: Ink(
+          width: 52,
+          height: 52,
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E232E),
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.14),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.28),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Icon(
+            _vozMute ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+            color: _vozMute
+                ? const Color(0xFF9CA3AF)
+                : const Color(0xFFFF9800),
+            size: 26,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBotonMiUbicacion() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          _mapaKey.currentState?.recenter();
+          if (_yo == null) {
+            unawaited(_iniciarGps());
+          }
+        },
+        borderRadius: BorderRadius.circular(28),
+        child: Ink(
+          width: 52,
+          height: 52,
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E232E),
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.14),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.28),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: const Icon(
+            Icons.my_location,
+            color: Color(0xFFFF9800),
+            size: 26,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Contador de velocidad digital (km/h) — esquina inferior derecha.
+  Widget _buildVelocimetroDigital() {
+    final kmh = (_speedMps != null && _speedMps! >= 0)
+        ? (_speedMps! * 3.6).round().clamp(0, 240)
+        : 0;
+    return Container(
+      width: 78,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF12151C).withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: const Color(0xFFFF9800).withValues(alpha: 0.55),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.35),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '$kmh',
+            style: const TextStyle(
+              color: Color(0xFFECEFF1),
+              fontSize: 28,
+              fontWeight: FontWeight.w900,
+              height: 1.0,
+              letterSpacing: -0.5,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'km/h',
+            style: TextStyle(
+              color: const Color(0xFFFF9800).withValues(alpha: 0.95),
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.6,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildManeuverBanner() {
+    final yo = _yo;
+    final step = yo == null
+        ? (_navSteps.isNotEmpty ? _navSteps.first : null)
+        : TaxiDirectionsService.proximoPaso(steps: _navSteps, yo: yo);
+    final instruction = (step?.instruction.trim().isNotEmpty == true)
+        ? step!.instruction.trim()
+        : (_faseParada
+            ? 'Sigue la ruta azul hasta la parada'
+            : 'Sigue la ruta azul hasta el destino');
+    final dist = step == null
+        ? ''
+        : (step.distanceText.trim().isNotEmpty
+            ? step.distanceText.trim()
+            : (step.distanceM > 0
+                ? (step.distanceM >= 1000
+                    ? '${(step.distanceM / 1000).toStringAsFixed(1)} km'
+                    : '${step.distanceM} m')
+                : ''));
+    final icon = _iconoManeuver(step?.iconKind ?? TaxiManeuverIcon.straight);
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A73E8),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.25),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: Colors.white, size: 28),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (dist.isNotEmpty)
+                    Text(
+                      'En $dist',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.9),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  Text(
+                    instruction,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
+                      height: 1.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  IconData _iconoManeuver(TaxiManeuverIcon kind) {
+    switch (kind) {
+      case TaxiManeuverIcon.left:
+        return Icons.turn_left;
+      case TaxiManeuverIcon.right:
+        return Icons.turn_right;
+      case TaxiManeuverIcon.uTurn:
+        return Icons.u_turn_left;
+      case TaxiManeuverIcon.roundabout:
+        return Icons.roundabout_left;
+      case TaxiManeuverIcon.arrive:
+        return Icons.flag;
+      case TaxiManeuverIcon.straight:
+        return Icons.arrow_upward;
+    }
+  }
+
   /// Banner claro: tiempo hasta el pasajero (A) o hasta el destino (B).
   Widget _buildEtaBanner() {
     final label = _etaLabel ??
@@ -1500,10 +2003,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
   /// Ganancia + indicador cash/empresa (compacto, montos claros).
   Widget _panelPagoYGanancia() {
     final esCash = _oferta.esPagoCash;
-    final totalCobrar = _oferta.precioUsd ?? _oferta.gananciaUsd;
-    final empresa = _oferta.comisionViajeUsd > 0
-        ? _oferta.comisionViajeUsd
-        : (totalCobrar - _oferta.gananciaUsd).clamp(0.0, totalCobrar).toDouble();
+    final m = _oferta.montosCash;
     final accent = esCash ? const Color(0xFF4CAF50) : const Color(0xFF64B5F6);
 
     return Container(
@@ -1547,11 +2047,23 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
           ),
           const SizedBox(height: 8),
           if (esCash) ...[
-            _filaMonto('Cobrar al cliente', totalCobrar, const Color(0xFF4CAF50)),
+            _filaMonto(
+              'Cobrar al cliente',
+              m.cobrarClienteUsd,
+              const Color(0xFF4CAF50),
+            ),
             const SizedBox(height: 4),
-            _filaMonto('Te quedas', _oferta.gananciaUsd, const Color(0xFFECEFF1)),
+            _filaMonto(
+              'Te quedas',
+              m.quedaChoferUsd,
+              const Color(0xFFECEFF1),
+            ),
             const SizedBox(height: 4),
-            _filaMonto('Dar a la empresa', empresa, const Color(0xFFFF9800)),
+            _filaMonto(
+              'Dar a la empresa',
+              m.empresaUsd,
+              const Color(0xFFFF9800),
+            ),
           ] else
             _filaMonto(
               'Tu ganancia',
@@ -1892,13 +2404,42 @@ class _TaxiChoferChatSheetState extends State<_TaxiChoferChatSheet> {
                     Expanded(
                       child: TextField(
                         controller: _ctrl,
+                        style: const TextStyle(
+                          color: Color(0xFF2C2C2C),
+                          fontSize: 15,
+                        ),
+                        cursorColor: Color(0xFFFF9800),
+                        textInputAction: TextInputAction.send,
                         decoration: InputDecoration(
                           hintText: 'Escribe un mensaje…',
+                          hintStyle: const TextStyle(
+                            color: Color(0xFF666666),
+                            fontSize: 15,
+                          ),
                           filled: true,
-                          fillColor: const Color(0xFFF5F5F5),
+                          fillColor: const Color(0xFFFFFFFF),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 12,
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(22),
+                            borderSide: const BorderSide(
+                              color: Color(0xFFE0E0E0),
+                            ),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(22),
+                            borderSide: const BorderSide(
+                              color: Color(0xFFFF9800),
+                              width: 1.5,
+                            ),
+                          ),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(22),
-                            borderSide: BorderSide.none,
+                            borderSide: const BorderSide(
+                              color: Color(0xFFE0E0E0),
+                            ),
                           ),
                         ),
                         onSubmitted: (_) => unawaited(_enviar()),

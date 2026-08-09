@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'services/repartidor_telemetry_service.dart';
 import 'services/firebase_messaging_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -25,6 +26,7 @@ import 'widgets/volonex_dialog.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  tzdata.initializeTimeZones();
   RepartidorConnectivity.bindNavigatorKey(RepartidorNavigator.key);
   RepartidorConnectivity.startWatching();
 

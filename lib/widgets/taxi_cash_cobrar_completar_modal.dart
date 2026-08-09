@@ -13,11 +13,20 @@ class TaxiCashCobrarCompletarModal {
     required double gananciaChoferUsd,
     double comisionEmpresaUsd = 0,
   }) {
+    final cobrar = totalCobrarUsd.clamp(0.0, double.infinity);
+    final empresa = comisionEmpresaUsd.clamp(0.0, cobrar);
+    final neto = (cobrar - empresa).clamp(0.0, cobrar).toDouble();
+    final g = gananciaChoferUsd;
+    final queda = (g < 0.009 || (g - cobrar).abs() < 0.02)
+        ? neto
+        : ((g + empresa - cobrar).abs() < 0.05
+            ? g.clamp(0.0, cobrar).toDouble()
+            : neto);
     return TaxiCashMontosModal.show(
       context,
-      cobrarClienteUsd: totalCobrarUsd,
-      quedaChoferUsd: gananciaChoferUsd,
-      empresaUsd: comisionEmpresaUsd,
+      cobrarClienteUsd: cobrar,
+      quedaChoferUsd: queda,
+      empresaUsd: empresa,
       titulo: 'Cobrar en cash',
       botonTexto: 'Ya cobré — completar',
       mostrarCancelar: true,

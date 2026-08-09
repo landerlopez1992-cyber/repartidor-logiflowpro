@@ -7,10 +7,12 @@ class RepartidorViajesSuspendidoPanel extends StatelessWidget {
   const RepartidorViajesSuspendidoPanel({
     super.key,
     this.empresaNombre,
+    this.motivo,
     this.onAbrirChat,
   });
 
   final String? empresaNombre;
+  final String? motivo;
   final VoidCallback? onAbrirChat;
 
   @override
@@ -64,6 +66,29 @@ class RepartidorViajesSuspendidoPanel extends StatelessWidget {
                       height: 1.35,
                     ),
                   ),
+                  if ((motivo ?? '').trim().isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFDC2626).withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: const Color(0xFFDC2626).withValues(alpha: 0.35),
+                        ),
+                      ),
+                      child: Text(
+                        motivo!.trim(),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: AppColors.darkText,
+                          fontSize: 13,
+                          height: 1.35,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 14),
                   Container(
                     width: double.infinity,

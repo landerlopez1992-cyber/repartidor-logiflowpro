@@ -33,30 +33,37 @@ class RepartidorSuspensionService {
 
   /// Consulta BD. `null` = no se pudo verificar (offline / error).
   Future<bool?> estaSuspendidoAhora() async {
+    final d = await detalleSuspensionAhora();
+    return d?.suspendido;
+  }
+
+  /// Incluye motivo (p. ej. auto por viajes ignorados).
+  Future<({bool suspendido, String? motivo})?> detalleSuspensionAhora() async {
     try {
       final user = supabase.auth.currentUser;
       if (user == null) return null;
-      final row = await supabase
+      Map<String, dynamic>? row = await supabase
           .from('usuarios')
-          .select('cuenta_suspendida')
+          .select('cuenta_suspendida, cuenta_suspendida_motivo')
           .eq('auth_id', user.id)
           .maybeSingle();
       if (row == null) {
         final email = user.email;
         if (email == null || email.isEmpty) return null;
-        final byEmail = await supabase
+        row = await supabase
             .from('usuarios')
-            .select('cuenta_suspendida')
+            .select('cuenta_suspendida, cuenta_suspendida_motivo')
             .eq('email', email)
             .maybeSingle();
-        if (byEmail == null) return null;
-        final flag = esSuspendidoFlag(byEmail['cuenta_suspendida']);
-        await marcarSuspendidoEnCache(flag);
-        return flag;
+        if (row == null) return null;
       }
       final flag = esSuspendidoFlag(row['cuenta_suspendida']);
       await marcarSuspendidoEnCache(flag);
-      return flag;
+      final motivo = row['cuenta_suspendida_motivo']?.toString().trim();
+      return (
+        suspendido: flag,
+        motivo: (motivo == null || motivo.isEmpty) ? null : motivo,
+      );
     } catch (_) {
       return null;
     }

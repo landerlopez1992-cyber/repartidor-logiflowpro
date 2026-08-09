@@ -171,6 +171,7 @@ Future<void> abrirNavegacionExterna({
   final gmaps = Uri.parse(
     'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=driving',
   );
+  final gNav = Uri.parse('google.navigation:q=$lat,$lng&mode=d');
   final waze = Uri.parse('https://waze.com/ul?ll=$lat,$lng&navigate=yes');
   await showModalBottomSheet<void>(
     context: context,
@@ -196,12 +197,16 @@ Future<void> abrirNavegacionExterna({
             ListTile(
               leading: const Icon(Icons.map, color: Color(0xFF9CA3AF)),
               title: const Text(
-                'Google Maps',
+                'Google Maps (navegación)',
                 style: TextStyle(color: Color(0xFFECEFF1)),
               ),
               onTap: () async {
                 Navigator.pop(ctx);
-                await launchUrl(gmaps, mode: LaunchMode.externalApplication);
+                if (await canLaunchUrl(gNav)) {
+                  await launchUrl(gNav, mode: LaunchMode.externalApplication);
+                } else {
+                  await launchUrl(gmaps, mode: LaunchMode.externalApplication);
+                }
               },
             ),
             ListTile(
@@ -220,4 +225,22 @@ Future<void> abrirNavegacionExterna({
       ),
     ),
   );
+}
+
+/// Abre Google Maps en modo navegación (giros izquierda/derecha) sin sheet.
+Future<void> abrirGoogleNavegacionTurnByTurn({
+  required double lat,
+  required double lng,
+}) async {
+  final gNav = Uri.parse('google.navigation:q=$lat,$lng&mode=d');
+  final gmaps = Uri.parse(
+    'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=driving',
+  );
+  try {
+    if (await canLaunchUrl(gNav)) {
+      await launchUrl(gNav, mode: LaunchMode.externalApplication);
+      return;
+    }
+  } catch (_) {}
+  await launchUrl(gmaps, mode: LaunchMode.externalApplication);
 }

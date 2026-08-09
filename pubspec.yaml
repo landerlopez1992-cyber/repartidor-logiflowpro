@@ -51,12 +51,15 @@ dependencies:
   flutter_map: ^7.0.2
   latlong2: ^0.9.1
   webview_flutter: ^4.7.0
+  # Guía por voz al chofer (turnos / destino), estilo Google Maps.
+  flutter_tts: ^4.2.3
   
   # QR Code Scanner
   mobile_scanner: ^7.1.3
   
   # Notificaciones push locales
   flutter_local_notifications: ^17.2.2
+  timezone: ^0.9.4
   vibration: ^3.1.4
   audioplayers: ^6.1.0
   # 6.x: alinea record_linux con record_platform_interface (evita error de build macOS).

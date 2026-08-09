@@ -17,6 +17,7 @@ import '../utils/repartidor_connectivity.dart';
 import '../utils/taxi_nearby_fleet_util.dart';
 import '../utils/taxi_road_fleet_util.dart';
 import '../widgets/repartidor_map_tile_layer.dart';
+import '../widgets/taxi_reservas_chofer_panel.dart';
 import '../widgets/taxi_uber_map_car.dart';
 import '../widgets/volonex_dialog.dart';
 
@@ -289,6 +290,13 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
         _map.move(yo, zoom);
       } catch (_) {}
       _iniciarPublicacionGpsPeriodica();
+      // GPS ya en BD: si hay pasajeros buscando, avisar ahora (no esperar
+      // a que el pasajero cancele y reintente).
+      if (_buscando) {
+        unawaited(
+          TaxiTarifasChoferService.instance.avisarSolicitudesPendientes(),
+        );
+      }
       _posSub?.cancel();
       _posSub = Geolocator.getPositionStream(
         locationSettings: const LocationSettings(
@@ -825,6 +833,7 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
                         ],
                       ),
                     ),
+                    const TaxiReservasChoferPanel(),
                     const Spacer(),
                     LayoutBuilder(
                       builder: (context, panelConstraints) {

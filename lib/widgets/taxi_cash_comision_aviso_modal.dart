@@ -17,13 +17,23 @@ class TaxiCashComisionAvisoModal {
     String tituloAccion = 'Entendido',
     bool mostrarCancelar = true,
   }) {
-    final queda = gananciaChoferUsd ??
-        (totalViajeUsd - comisionUsd).clamp(0.0, totalViajeUsd).toDouble();
+    final cobrar = totalViajeUsd.clamp(0.0, double.infinity);
+    final empresa = comisionUsd.clamp(0.0, cobrar);
+    final neto = (cobrar - empresa).clamp(0.0, cobrar).toDouble();
+    // Si viene ganancia = total (bruto) o 0 tras completar cash, usar neto.
+    final g = gananciaChoferUsd;
+    final queda = (g == null ||
+            g < 0.009 ||
+            (g - cobrar).abs() < 0.02)
+        ? neto
+        : ((g + empresa - cobrar).abs() < 0.05
+            ? g.clamp(0.0, cobrar).toDouble()
+            : neto);
     return TaxiCashMontosModal.show(
       context,
-      cobrarClienteUsd: totalViajeUsd,
+      cobrarClienteUsd: cobrar,
       quedaChoferUsd: queda,
-      empresaUsd: comisionUsd,
+      empresaUsd: empresa,
       titulo: 'Pago en cash',
       botonTexto: tituloAccion,
       mostrarCancelar: mostrarCancelar,

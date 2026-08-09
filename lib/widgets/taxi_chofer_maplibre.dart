@@ -23,6 +23,9 @@ class TaxiChoferMapLibre extends StatefulWidget {
     this.stops = const [],
     this.overviewPoints = const [],
     this.activeTarget,
+    this.focusActiveLeg = true,
+    this.driverHeadingDeg = 0,
+    this.streetLevelFollow = false,
     this.tenantId,
     this.totalTripEtaLabel,
   });
@@ -38,21 +41,30 @@ class TaxiChoferMapLibre extends StatefulWidget {
   final List<LatLng> overviewPoints;
   /// Punto al que navega ahora (naranja).
   final LatLng? activeTarget;
+  /// Si true y hay [activeTarget], la cámara encuadra solo el tramo activo
+  /// (chofer → parada/destino actual), no todo A→Miami.
+  final bool focusActiveLeg;
+  /// Rumbo GPS del vehículo (grados; 0 = norte).
+  final double driverHeadingDeg;
+  /// Tras iniciar viaje: zoom calle (chofer + tramo cercano), no toda la ruta.
+  final bool streetLevelFollow;
   final String? tenantId;
   /// Etiqueta de tiempo total del viaje (A→paradas→B), estilo Uber.
   final String? totalTripEtaLabel;
 
   @override
-  State<TaxiChoferMapLibre> createState() => _TaxiChoferMapLibreState();
+  State<TaxiChoferMapLibre> createState() => TaxiChoferMapLibreState();
 }
 
-class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
+class TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
   WebViewController? _web;
   bool _webReady = false;
   bool _useFallback = false;
   bool _resolviendoOffline = true;
   Timer? _bootTimeout;
   final MapController _map = MapController();
+  /// Si el chofer movió el mapa a mano, no re-encuadrar hasta «Mi ubicación».
+  bool _seguimientoPausado = false;
 
   bool get _preferMapLibre {
     if (kIsWeb) return false;
@@ -61,6 +73,16 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
   }
 
   LatLng get _center => widget.driver ?? widget.pickup;
+
+  /// Recentrar en chofer / tramo activo (botón «Mi ubicación»).
+  void recenter() {
+    _seguimientoPausado = false;
+    if (_useFallback) {
+      _fitFallback();
+    } else if (_webReady) {
+      unawaited(_syncWeb(fit: true));
+    }
+  }
 
   @override
   void initState() {
@@ -87,9 +109,9 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
   void didUpdateWidget(covariant TaxiChoferMapLibre oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (_useFallback) {
-      _fitFallback();
+      if (!_seguimientoPausado) _fitFallback();
     } else if (_webReady) {
-      unawaited(_syncWeb());
+      unawaited(_syncWeb(fit: !_seguimientoPausado));
     }
   }
 
@@ -162,40 +184,104 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
     }
 
     if (fit) {
-      final pts = <List<double>>[];
-      if (d != null) pts.add([d.longitude, d.latitude]);
-      pts.add([widget.pickup.longitude, widget.pickup.latitude]);
-      if (widget.showDestination && widget.destination != null) {
-        pts.add([widget.destination!.longitude, widget.destination!.latitude]);
-      }
-      for (final p in widget.routePoints) {
-        pts.add([p.longitude, p.latitude]);
-      }
+      final pts = _fitPointsLngLat();
       await _runJs(
         'window.fitPoints && window.fitPoints(${jsonEncode(pts)},48,48,48,48,15.5);',
       );
     }
   }
 
-  void _fitFallback() {
-    try {
+  bool get _debeEnfocarTramoActivo =>
+      widget.focusActiveLeg && widget.activeTarget != null;
+
+  List<List<double>> _fitPointsLngLat() {
+    if (_debeEnfocarTramoActivo) {
+      final t = widget.activeTarget!;
+      final pts = <List<double>>[
+        if (widget.driver != null)
+          [widget.driver!.longitude, widget.driver!.latitude],
+        [t.longitude, t.latitude],
+        for (final p in widget.routePoints) [p.longitude, p.latitude],
+      ];
+      if (pts.length >= 2) return pts;
+    }
+    final pts = <List<double>>[];
+    if (widget.driver != null) {
+      pts.add([widget.driver!.longitude, widget.driver!.latitude]);
+    }
+    pts.add([widget.pickup.longitude, widget.pickup.latitude]);
+    if (widget.showDestination && widget.destination != null) {
+      pts.add([
+        widget.destination!.longitude,
+        widget.destination!.latitude,
+      ]);
+    }
+    for (final p in widget.routePoints) {
+      pts.add([p.longitude, p.latitude]);
+    }
+    return pts;
+  }
+
+  List<LatLng> _fitPointsLatLng() {
+    // Guía activa: encuadre calle (chofer + tramo próximo), no Miami entero.
+    if (widget.streetLevelFollow && widget.driver != null) {
+      final d = widget.driver!;
+      final pts = <LatLng>[d];
+      final route = widget.routePoints;
+      if (route.length >= 2) {
+        const distCalc = Distance();
+        var acc = 0.0;
+        for (var i = 0; i < route.length; i++) {
+          pts.add(route[i]);
+          if (i > 0) {
+            acc += distCalc.as(LengthUnit.Meter, route[i - 1], route[i]);
+            if (acc >= 1200) break;
+          }
+          if (pts.length >= 24) break;
+        }
+      } else if (widget.activeTarget != null) {
+        pts.add(widget.activeTarget!);
+      }
+      if (pts.length >= 2) return pts;
+    }
+    if (_debeEnfocarTramoActivo) {
+      final t = widget.activeTarget!;
       final pts = <LatLng>[
         if (widget.driver != null) widget.driver!,
-        widget.pickup,
-        if (widget.showDestination && widget.destination != null)
-          widget.destination!,
-        ...widget.stops,
-        ...widget.overviewPoints,
-        if (widget.activeTarget != null) widget.activeTarget!,
+        t,
         ...widget.routePoints,
       ];
+      if (pts.length >= 2) return pts;
+    }
+    return <LatLng>[
+      if (widget.driver != null) widget.driver!,
+      widget.pickup,
+      if (widget.showDestination && widget.destination != null)
+        widget.destination!,
+      ...widget.stops,
+      ...widget.overviewPoints,
+      if (widget.activeTarget != null) widget.activeTarget!,
+      ...widget.routePoints,
+    ];
+  }
+
+  void _fitFallback() {
+    try {
+      final pts = _fitPointsLatLng();
       if (pts.length < 2) {
-        _map.move(pts.isEmpty ? widget.pickup : pts.first, 14);
+        _map.move(
+          pts.isEmpty ? widget.pickup : pts.first,
+          widget.streetLevelFollow ? 16.5 : 14,
+        );
         return;
       }
       final bounds = LatLngBounds.fromPoints(pts);
       _map.fitCamera(
-        CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(48)),
+        CameraFit.bounds(
+          bounds: bounds,
+          padding: EdgeInsets.all(widget.streetLevelFollow ? 56 : 48),
+          maxZoom: widget.streetLevelFollow ? 17.2 : (_debeEnfocarTramoActivo ? 16 : 15),
+        ),
       );
     } catch (_) {}
   }
@@ -227,12 +313,23 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
 
   Widget _buildFallback() {
     final polylines = <Polyline>[];
-    if (widget.overviewPoints.length >= 2) {
+    // Overview completo (A→paradas→B) solo como guía tenue; el trazo azul
+    // del tramo activo (p. ej. hacia la parada) es el que manda en cámara.
+    if (widget.overviewPoints.length >= 2 &&
+        !_debeEnfocarTramoActivo) {
       polylines.add(
         Polyline(
           points: widget.overviewPoints,
           color: const Color(0xFF607D8B).withValues(alpha: 0.85),
           strokeWidth: 4,
+        ),
+      );
+    } else if (widget.overviewPoints.length >= 2) {
+      polylines.add(
+        Polyline(
+          points: widget.overviewPoints,
+          color: const Color(0xFF607D8B).withValues(alpha: 0.28),
+          strokeWidth: 2.5,
         ),
       );
     }
@@ -241,7 +338,7 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
         Polyline(
           points: widget.routePoints,
           color: const Color(0xFF1A73E8),
-          strokeWidth: 5,
+          strokeWidth: 5.5,
         ),
       );
     }
@@ -300,9 +397,12 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
       if (widget.driver != null)
         Marker(
           point: widget.driver!,
-          width: 40,
-          height: 40,
-          child: const TaxiUberMapCar(size: 40),
+          width: 44,
+          height: 44,
+          child: TaxiUberMapCar(
+            size: 44,
+            headingDeg: widget.driverHeadingDeg,
+          ),
         ),
     ];
     return FlutterMap(
@@ -317,6 +417,11 @@ class _TaxiChoferMapLibreState extends State<TaxiChoferMapLibre> {
           flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
         ),
         onMapReady: _fitFallback,
+        onPositionChanged: (camera, hasGesture) {
+          if (hasGesture && !_seguimientoPausado) {
+            _seguimientoPausado = true;
+          }
+        },
       ),
       children: [
         RepartidorMapTileLayer(
