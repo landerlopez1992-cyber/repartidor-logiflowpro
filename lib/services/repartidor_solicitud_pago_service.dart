@@ -205,6 +205,7 @@ class RepartidorSolicitudPagoService {
     List<String> ordenesIds = const [],
     double? kilometrosRecorridos,
     int? diasTrabajados,
+    double? kmGps,
   }) async {
     final raw = await supabase.rpc(
       'repartidor_crear_solicitud_pago',
@@ -218,6 +219,7 @@ class RepartidorSolicitudPagoService {
         'p_repartidor_nombre': repartidorNombre,
         'p_tenant_id': tenantId,
         'p_dias_trabajados': diasTrabajados,
+        'p_km_gps': kmGps,
       },
     );
     return raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};

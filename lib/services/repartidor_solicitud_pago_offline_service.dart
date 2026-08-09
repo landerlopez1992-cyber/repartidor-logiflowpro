@@ -176,6 +176,7 @@ class RepartidorSolicitudPagoOfflineService {
     List<String> ordenesIds = const [],
     double? kilometrosRecorridos,
     int? diasTrabajados,
+    double? kmGps,
     String metodoPago = 'por_orden',
   }) async {
     final localId = 'local_${DateTime.now().millisecondsSinceEpoch}';
@@ -190,6 +191,7 @@ class RepartidorSolicitudPagoOfflineService {
       'total_ordenes_entregadas': totalOrdenes,
       'ordenes_incluidas': ordenesIds,
       'kilometros_recorridos': kilometrosRecorridos,
+      'km_gps': kmGps,
       'dias_trabajados': diasTrabajados,
       'metodo_pago_solicitud': metodoPago,
       'pendiente_sync': true,
@@ -224,6 +226,7 @@ class RepartidorSolicitudPagoOfflineService {
         'total_ordenes': totalOrdenes,
         'ordenes_incluidas': ordenesIds,
         'kilometros_recorridos': kilometrosRecorridos,
+        'km_gps': kmGps,
         'dias_trabajados': diasTrabajados,
         'local_id': localId,
       },

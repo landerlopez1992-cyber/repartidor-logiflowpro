@@ -899,6 +899,7 @@ class SyncService {
               'p_repartidor_nombre': data['repartidor_nombre'],
               'p_tenant_id': data['tenant_id'],
               'p_dias_trabajados': data['dias_trabajados'],
+              'p_km_gps': data['km_gps'],
             },
           );
           final map = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};

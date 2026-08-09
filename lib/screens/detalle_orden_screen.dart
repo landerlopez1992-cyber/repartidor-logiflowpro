@@ -35,6 +35,8 @@ import '../services/entrega_progreso_service.dart';
 import '../widgets/entrega_progreso_panel.dart';
 import '../widgets/boton_ver_productos_orden_tienda.dart';
 import '../services/repartidor_seguridad_service.dart';
+import '../services/repartidor_jornada_service.dart';
+import '../services/repartidor_gps_odometro_service.dart';
 import '../utils/repartidor_requires_online.dart';
 
 class DetalleOrdenScreen extends StatefulWidget {
@@ -3777,6 +3779,37 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
     if (!mounted) return;
     
     print('🔍 ====== INICIO MARCAR COMO ENTREGADO ======');
+
+    // Gate jornada (solo método por_distancia): no entregar sin turno iniciado.
+    try {
+      final user = supabase.auth.currentUser;
+      if (user != null && !repartidorSinInternet()) {
+        final row = await supabase
+            .from('usuarios')
+            .select('id')
+            .eq('auth_id', user.id)
+            .maybeSingle();
+        final repId = row?['id']?.toString();
+        if (repId != null && repId.isNotEmpty) {
+          final gate = await RepartidorJornadaService.gateEntrega(repId);
+          if (!gate.permitido) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(gate.mensaje ?? 'Inicia tu jornada para continuar'),
+                  backgroundColor: const Color(0xFFDC2626),
+                ),
+              );
+            }
+            return;
+          }
+          // Acumular GPS auditoría mientras entrega.
+          RepartidorGpsOdometroService.instance.setEnRuta(true);
+        }
+      }
+    } catch (e) {
+      print('⚠️ gate jornada entrega: $e');
+    }
     
     // Feedback inmediato + validar geo ANTES de recargar/foto/firma
     // (evita esperar muchos segundos para luego fallar por coordenadas)
@@ -4343,6 +4376,15 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       }
       
       final syncService = SyncService();
+      // Coordenadas GPS al entregar: necesarias para nómina por trayectoria (km_ruta).
+      try {
+        if (_ubicacionActual == null) {
+          await _obtenerUbicacionActual();
+        }
+      } catch (_) {}
+      final latGps = _ubicacionActual?.latitude;
+      final lngGps = _ubicacionActual?.longitude;
+
       final updateData = {
         'estado': 'ENTREGADO',
         'fecha_entrega': DateTime.now().toIso8601String(),
@@ -4359,6 +4401,11 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             _firmaUrl!.isNotEmpty && 
             !_firmaUrl!.startsWith('local://')) 
           'firma_url': _firmaUrl,
+        // Persistir punto de parada real si aún no hay coords (o refuerzo GPS).
+        if (latGps != null && lngGps != null) ...{
+          'latitud_entrega': latGps,
+          'longitud_entrega': lngGps,
+        },
       };
       
       print('📸 DEBUG - Foto que se enviará: $_fotoEntregaUrl');

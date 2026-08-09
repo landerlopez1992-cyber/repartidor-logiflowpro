@@ -49,79 +49,103 @@ class RepartidorSolicitudPagoDialogs {
     );
   }
 
-  static Future<({double distancia, double monto})?> modalPorDistancia(
+  /// Confirmación de nómina por trayectoria (km calculados; sin input manual).
+  static Future<({double distancia, double monto, double kmGps})?> modalPorDistancia(
     BuildContext context,
-    RepartidorSolicitudPreview preview,
-  ) async {
-    final distanciaCtrl = TextEditingController();
-    double montoCalc = 0;
-    double distanciaFinal = 0;
+    RepartidorSolicitudPreview preview, {
+    required double kmRuta,
+    double kmGps = 0,
+    int ordenes = 0,
+    int tramos = 0,
+  }) async {
     final unidadLabel = preview.unidadEsMilla ? 'millas' : 'km';
     final unidadCorto = preview.unidadEsMilla ? 'mi' : 'km';
+    final montoCalc = RepartidorSolicitudPagoService.calcularMontoDistancia(
+      tarifa: preview.tarifa,
+      distancia: kmRuta,
+    );
+    final discrepancia = kmRuta > 0 && kmGps > 0
+        ? ((kmGps - kmRuta).abs() / kmRuta) > 0.25
+        : false;
+
+    if (kmRuta <= 0 || montoCalc <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No hay trayecto facturable. Entrega órdenes con jornada iniciada.',
+          ),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return null;
+    }
 
     final ok = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       barrierColor: Colors.black54,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSt) {
-          final dist = double.tryParse(distanciaCtrl.text.trim()) ?? 0;
-          montoCalc = RepartidorSolicitudPagoService.calcularMontoDistancia(
-            tarifa: preview.tarifa,
-            distancia: dist,
-          );
-          return VolonexDialog(
-            title: 'Recorrido del período',
-            leading: const Icon(Icons.route, color: AppColors.botonPrincipal, size: 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Tarifa: ${preview.tarifa.toStringAsFixed(2)} ${preview.moneda} por $unidadLabel.',
-                  style: const TextStyle(color: AppColors.darkTextMuted, fontSize: 13),
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: distanciaCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  style: const TextStyle(color: AppColors.darkText),
-                  onChanged: (_) => setSt(() {}),
-                  decoration: _campoOscuro(
-                    label: 'Total $unidadLabel recorridos',
-                    hint: preview.unidadEsMilla ? 'Ej: 45.5' : 'Ej: 100',
-                    suffix: unidadCorto,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _cajaDestacada(
-                  'Total a solicitar: ${montoCalc.toStringAsFixed(2)} ${preview.moneda}',
-                ),
-              ],
+      builder: (ctx) => VolonexDialog(
+        title: 'Recorrido del período',
+        leading: const Icon(Icons.route, color: AppColors.botonPrincipal, size: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Tarifa: ${preview.tarifa.toStringAsFixed(2)} ${preview.moneda} por $unidadLabel.',
+              style: const TextStyle(color: AppColors.darkTextMuted, fontSize: 13),
             ),
-            actions: _accionesEnviar(
-              ctx,
-              onEnviar: () {
-                if (dist <= 0) {
-                  _snack(ctx, 'Ingresa la distancia recorrida');
-                  return;
-                }
-                if (montoCalc <= 0) {
-                  _snack(ctx, 'No se pudo calcular el monto');
-                  return;
-                }
-                distanciaFinal = dist;
-                Navigator.pop(ctx, true);
-              },
+            const SizedBox(height: 12),
+            Text(
+              'Trayecto facturable (ruta de órdenes): '
+              '${kmRuta.toStringAsFixed(2)} $unidadCorto',
+              style: const TextStyle(
+                color: AppColors.darkText,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          );
-        },
+            if (ordenes > 0 || tramos > 0) ...[
+              const SizedBox(height: 6),
+              Text(
+                '$ordenes entregas · $tramos tramos',
+                style: const TextStyle(color: AppColors.darkTextMuted, fontSize: 12),
+              ),
+            ],
+            if (kmGps > 0) ...[
+              const SizedBox(height: 6),
+              Text(
+                'GPS (auditoría): ${kmGps.toStringAsFixed(2)} $unidadCorto',
+                style: const TextStyle(color: AppColors.darkTextMuted, fontSize: 12),
+              ),
+            ],
+            if (discrepancia) ...[
+              const SizedBox(height: 10),
+              _cajaDestacada(
+                'Hay diferencia notable entre ruta y GPS. La empresa revisará la solicitud.',
+                color: AppColors.botonPrincipal,
+              ),
+            ],
+            const SizedBox(height: 12),
+            _cajaDestacada(
+              'Total a solicitar: ${montoCalc.toStringAsFixed(2)} ${preview.moneda}',
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'El monto se calcula por la ruta de tus entregas, no por km escritos a mano.',
+              style: TextStyle(color: AppColors.darkTextMuted, fontSize: 12),
+            ),
+          ],
+        ),
+        actions: _accionesEnviar(
+          ctx,
+          onEnviar: () => Navigator.pop(ctx, true),
+        ),
       ),
     );
 
-    distanciaCtrl.dispose();
-    if (ok == true && montoCalc > 0 && distanciaFinal > 0) {
-      return (distancia: distanciaFinal, monto: montoCalc);
+    if (ok == true) {
+      return (distancia: kmRuta, monto: montoCalc, kmGps: kmGps);
     }
     return null;
   }

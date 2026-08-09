@@ -19,8 +19,11 @@ import '../services/repartidor_saldo_offline_service.dart';
 import '../services/repartidor_perfil_foto_cache_service.dart';
 import '../services/repartidor_solicitud_pago_offline_service.dart';
 import '../services/repartidor_solicitud_pago_service.dart';
+import '../services/repartidor_jornada_service.dart';
+import '../services/repartidor_gps_odometro_service.dart';
 import '../services/repartidor_transfer_wallet_cliente_service.dart';
 import '../widgets/repartidor_solicitud_pago_dialogs.dart';
+import 'package:geolocator/geolocator.dart';
 import '../services/repartidor_historial_pago_service.dart';
 import '../widgets/historial_pago_detalle_card.dart';
 import '../widgets/repartidor_saldo_desglose_modal.dart';
@@ -78,6 +81,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   String _monedaSaldo = 'USD';
   String _metodoPago = 'por_orden';
   RepartidorSolicitudPreview? _previewPago;
+  RepartidorJornadaInfo? _jornadaInfo;
+  bool _jornadaBusy = false;
   RealtimeChannel? _channelPagos;
 
   /// Destino billetera cliente (mismo email + tenant). Null mientras detecta / sin red.
@@ -922,6 +927,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                           const SizedBox(height: 24),
                         ],
                         _buildBotonSolicitarPago(),
+                        const SizedBox(height: 12),
+                        _buildBotonJornada(),
                         const SizedBox(height: 12),
                         _buildBotonTransferirWalletCliente(),
                         const SizedBox(height: 24),
@@ -2259,6 +2266,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
 
   Future<void> _cargarPreviewPago() async {
     if (_repartidorId == null) return;
+    await _cargarJornada();
 
     if (!_isOnline) {
       final saldoR = await RepartidorSaldoService.cargarSaldo(_repartidorId!);
@@ -2338,6 +2346,176 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           _solicitudPendiente = pCache.solicitudPendiente;
         });
       }
+    }
+  }
+
+  Future<void> _cargarJornada() async {
+    if (_repartidorId == null || !_isOnline) return;
+    try {
+      final info = await RepartidorJornadaService.jornadaActiva(_repartidorId!);
+      if (!mounted) return;
+      setState(() => _jornadaInfo = info);
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(
+          'rep_requiere_jornada_${_repartidorId!}',
+          info.requiereJornada || info.esPorDistancia,
+        );
+      } catch (_) {}
+      if (info.activa && info.jornadaId != null) {
+        await RepartidorGpsOdometroService.instance.start(
+          repartidorId: _repartidorId!,
+          jornadaId: info.jornadaId!,
+          seedKm: info.kmGpsAcumulado,
+        );
+      }
+    } catch (e) {
+      print('⚠️ cargar jornada: $e');
+    }
+  }
+
+  Widget _buildBotonJornada() {
+    final p = _previewPago;
+    final info = _jornadaInfo;
+    final mostrar = p?.esPorDistancia == true || info?.requiereJornada == true;
+    if (!mostrar) return const SizedBox.shrink();
+
+    final activa = info?.activa == true;
+    return Center(
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 300),
+        child: Column(
+          children: [
+            if (activa)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Jornada activa · GPS auditoría '
+                  '${RepartidorGpsOdometroService.instance.kmAcumulado.toStringAsFixed(1)} km',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF4CAF50),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _jornadaBusy
+                    ? null
+                    : (activa ? _cerrarJornada : _iniciarJornada),
+                icon: Icon(activa ? Icons.stop_circle_outlined : Icons.play_circle_outline),
+                label: Text(activa ? 'Cerrar jornada' : 'Iniciar jornada'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF37474F),
+                  foregroundColor: const Color(0xFFECEFF1),
+                  padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Con pago por trayectoria debes iniciar jornada cerca de la bodega '
+              'antes de entregar. El pago usa la ruta de órdenes, no km a mano.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 11),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _iniciarJornada() async {
+    if (_repartidorId == null || _tenantId == null) return;
+    if (!_isOnline) {
+      _mostrarMensaje('Necesitas conexión para iniciar la jornada', Colors.orange);
+      return;
+    }
+    setState(() => _jornadaBusy = true);
+    try {
+      final enabled = await Geolocator.isLocationServiceEnabled();
+      if (!enabled) {
+        _mostrarMensaje('Activa la ubicación para iniciar jornada', Colors.red);
+        return;
+      }
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied ||
+          perm == LocationPermission.deniedForever) {
+        _mostrarMensaje('Permiso de ubicación requerido', Colors.red);
+        return;
+      }
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      );
+      final r = await RepartidorJornadaService.iniciar(
+        repartidorId: _repartidorId!,
+        tenantId: _tenantId!,
+        lat: pos.latitude,
+        lng: pos.longitude,
+      );
+      if (r['ok'] != true) {
+        final err = r['error']?.toString() ?? 'error';
+        if (err == 'fuera_de_zona_ancla') {
+          final d = r['distancia_km'];
+          final radio = r['radio_km'];
+          _mostrarMensaje(
+            'Debes iniciar cerca de la bodega / punto de partida'
+            '${d != null ? ' (a ${d} km, radio ${radio ?? 2.5} km)' : ''}',
+            Colors.red,
+          );
+        } else if (err == 'jornada_ya_abierta') {
+          _mostrarMensaje('Ya tienes una jornada abierta', Colors.orange);
+        } else {
+          _mostrarMensaje(r['mensaje']?.toString() ?? 'No se pudo iniciar jornada', Colors.red);
+        }
+        return;
+      }
+      final jid = r['jornada_id']?.toString();
+      if (jid != null) {
+        await RepartidorGpsOdometroService.instance.start(
+          repartidorId: _repartidorId!,
+          jornadaId: jid,
+          seedKm: 0,
+        );
+      }
+      _mostrarMensaje('Jornada iniciada', const Color(0xFF4CAF50));
+      await _cargarJornada();
+    } catch (e) {
+      _mostrarMensaje('Error al iniciar jornada: $e', Colors.red);
+    } finally {
+      if (mounted) setState(() => _jornadaBusy = false);
+    }
+  }
+
+  Future<void> _cerrarJornada() async {
+    if (_repartidorId == null) return;
+    setState(() => _jornadaBusy = true);
+    try {
+      final km = RepartidorGpsOdometroService.instance.kmAcumulado;
+      await RepartidorGpsOdometroService.instance.stop(sync: true);
+      final r = await RepartidorJornadaService.cerrar(
+        repartidorId: _repartidorId!,
+        kmGps: km,
+      );
+      if (r['ok'] != true) {
+        _mostrarMensaje('No se pudo cerrar la jornada', Colors.red);
+        return;
+      }
+      _mostrarMensaje('Jornada cerrada', const Color(0xFF4CAF50));
+      await _cargarJornada();
+    } catch (e) {
+      _mostrarMensaje('Error al cerrar jornada: $e', Colors.red);
+    } finally {
+      if (mounted) setState(() => _jornadaBusy = false);
     }
   }
 
@@ -2533,6 +2711,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     List<String> ordenesIds = const [],
     double? kilometros,
     int? diasTrabajados,
+    double? kmGps,
   }) async {
     if (_repartidorId == null || _tenantId == null) return;
 
@@ -2549,6 +2728,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           ordenesIds: ordenesIds,
           kilometrosRecorridos: kilometros,
           diasTrabajados: diasTrabajados,
+          kmGps: kmGps,
           metodoPago: _previewPago?.metodoPago ?? 'por_orden',
         );
         _mostrarMensaje(
@@ -2572,6 +2752,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         ordenesIds: ordenesIds,
         kilometrosRecorridos: kilometros,
         diasTrabajados: diasTrabajados,
+        kmGps: kmGps,
       );
 
       if (map['ok'] != true) {
@@ -2586,8 +2767,12 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           _mostrarMensaje(deudaMsg, Colors.red);
         } else if (err == 'solicitud_pendiente_existe') {
           _mostrarMensaje('Ya tienes una solicitud pendiente', Colors.orange);
-        } else if (err == 'kilometros_requeridos') {
-          _mostrarMensaje('Debes indicar el recorrido total', Colors.red);
+        } else if (err == 'kilometros_requeridos' || err == 'sin_trayecto_facturable') {
+          _mostrarMensaje(
+            map['mensaje']?.toString() ??
+                'No hay trayecto facturable. Entrega con jornada iniciada.',
+            Colors.red,
+          );
         } else if (err == 'sin_dias_trabajados') {
           _mostrarMensaje('No hay días nuevos desde la última nómina', Colors.orange);
         } else if (err == 'tarifa_no_configurada') {
@@ -2684,11 +2869,26 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     }
 
     if (preview.esPorDistancia) {
-      final r = await RepartidorSolicitudPagoDialogs.modalPorDistancia(context, preview);
+      final calc = await RepartidorJornadaService.calcularKm(_repartidorId!);
+      if (calc == null || !mounted) {
+        _mostrarMensaje('No se pudo calcular el trayecto', Colors.red);
+        return;
+      }
+      final r = await RepartidorSolicitudPagoDialogs.modalPorDistancia(
+        context,
+        preview,
+        kmRuta: calc.kmRuta,
+        kmGps: calc.kmGps > 0
+            ? calc.kmGps
+            : RepartidorGpsOdometroService.instance.kmAcumulado,
+        ordenes: calc.ordenes,
+        tramos: calc.tramos,
+      );
       if (r == null || !mounted) return;
       await _enviarSolicitudPago(
         moneda: preview.moneda,
         kilometros: r.distancia,
+        kmGps: r.kmGps,
       );
       return;
     }

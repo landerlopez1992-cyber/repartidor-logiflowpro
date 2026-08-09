@@ -74,6 +74,7 @@ import '../utils/repartidor_master_util.dart';
 import '../services/repartidor_seguridad_service.dart';
 import '../widgets/repartidor_master_badge.dart';
 import '../services/repartidor_saldo_service.dart';
+import '../services/repartidor_jornada_service.dart';
 import '../services/repartidor_perfil_cache_service.dart';
 import '../services/repartidor_perfil_foto_cache_service.dart';
 import '../services/repartidor_foto_perfil_prompt_service.dart';
@@ -7216,6 +7217,18 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       _mostrarMensaje('Solo puedes marcar como "Recogido" desde órdenes en "EN CAMINO"');
       return;
     }
+
+    if (_repartidorId != null && !repartidorSinInternet()) {
+      try {
+        final gate = await RepartidorJornadaService.gateEntrega(_repartidorId!);
+        if (!gate.permitido) {
+          _mostrarMensaje(gate.mensaje ?? 'Inicia tu jornada para continuar');
+          return;
+        }
+      } catch (e) {
+        print('⚠️ gate jornada recogido: $e');
+      }
+    }
     
     final confirmado = await _mostrarConfirmacion(
       'Marcar Recogido',
@@ -7225,6 +7238,18 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     if (confirmado) {
       try {
         final fechaEntregaDt = DateTime.now();
+        double? latGps;
+        double? lngGps;
+        try {
+          final pos = await Geolocator.getCurrentPosition(
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.high,
+            ),
+          );
+          latGps = pos.latitude;
+          lngGps = pos.longitude;
+        } catch (_) {}
+
         final ordenActualizada = Orden(
           id: orden.id,
           numeroOrden: orden.numeroOrden,
@@ -7264,6 +7289,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           firmaUrl: orden.firmaUrl,
           itemsAdicionales: orden.itemsAdicionales,
           tenantId: orden.tenantId,
+          latitudEntrega: latGps ?? orden.latitudEntrega,
+          longitudEntrega: lngGps ?? orden.longitudEntrega,
         );
         final result = await OrdenEstadoSyncHelper.persistirCambioEstado(
           ordenId: orden.id,
@@ -7271,6 +7298,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           updateData: {
             'estado': 'RECOGIDO',
             'fecha_entrega': fechaEntregaDt.toIso8601String(),
+            if (latGps != null && lngGps != null) ...{
+              'latitud_entrega': latGps,
+              'longitud_entrega': lngGps,
+            },
           },
           syncGoodBarber: false,
         );
