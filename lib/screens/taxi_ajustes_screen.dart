@@ -24,9 +24,9 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
   String _unidad = 'km';
   int _capacidad = 4;
   int _incluidos = 2;
-  /// Radio de trabajo en metros (default 150 km).
-  int _radioTrabajoM = 150000;
-  /// Tope A→B en metros; null = sin límite.
+  /// Radio de trabajo en metros; null = sin límite (default).
+  int? _radioTrabajoM;
+  /// Tope A→B en metros; null = sin límite (default).
   int? _distanciaMaxViajeM;
   String? _marca;
   int? _anio;
@@ -40,7 +40,8 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
 
   static const double _ejemploDistancia = 20;
   static const int _maxPlazas = 20;
-  static const List<int> _radiosKm = [30, 50, 80, 150, 250];
+  /// null = Sin límite (activo por defecto en cuentas nuevas).
+  static const List<int?> _radiosKm = [null, 30, 50, 80, 150, 250];
   static const List<int?> _maxViajeKm = [null, 50, 100, 200, 500];
   static const List<int> _destinoRadiosKm = [10, 25, 50, 100];
 
@@ -122,8 +123,10 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
       } else {
         _recargoCtrl.text = '0';
       }
-      _radioTrabajoM = t.radioTrabajoM.clamp(5000, 500000);
-      _distanciaMaxViajeM = t.distanciaMaxViajeM;
+      _radioTrabajoM = t.radioTrabajoSinLimite
+          ? null
+          : t.radioTrabajoM.clamp(5000, 500000);
+      _distanciaMaxViajeM = t.distanciaMaxSinLimite ? null : t.distanciaMaxViajeM;
       _marca = t.vehiculoMarca.isNotEmpty ? t.vehiculoMarca : null;
       _modeloCtrl.text = t.vehiculoModelo;
       _placaCtrl.text = t.vehiculoPlaca;
@@ -138,7 +141,11 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
     });
   }
 
-  int get _radioKm => (_radioTrabajoM / 1000).round();
+  String get _radioLabel {
+    final m = _radioTrabajoM;
+    if (m == null || m <= 0) return 'Sin límite';
+    return '${(m / 1000).round()} km';
+  }
 
   String get _maxViajeLabel {
     final m = _distanciaMaxViajeM;
@@ -190,7 +197,7 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
             '(precio base del trayecto).\n\n'
             'Plazas: $_capacidad. Incluidos en la base: $_incluidos. '
             'Recargo por persona extra: \$${recargo.toStringAsFixed(2)}.\n\n'
-            'Radio de trabajo: $_radioKm km. '
+            'Zona de recogida: $_radioLabel. '
             'Viaje máximo: $_maxViajeLabel.\n\n'
             'Si tu precio queda muy alto frente a otros socios, '
             'recibirás menos viajes.',
@@ -239,7 +246,9 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
       capacidadPasajeros: _capacidad,
       pasajerosIncluidos: _incluidos,
       recargoPorPasajeroUsd: recargo,
-      radioTrabajoM: _radioTrabajoM,
+      radioTrabajoM: (_radioTrabajoM == null || _radioTrabajoM! <= 0)
+          ? 0
+          : _radioTrabajoM!,
       distanciaMaxViajeM: _distanciaMaxViajeM,
       vehiculoMarca: _marca,
       vehiculoModelo: _modeloCtrl.text.trim(),
@@ -674,7 +683,7 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
                       const SizedBox(height: 6),
                       const Text(
                         'Hasta qué lejos del pasajero aceptas ir a recogerlo. '
-                        'Si el origen está más lejos, no te mostrarán el viaje.',
+                        '«Sin límite» = te pueden ofrecer recogidas a cualquier distancia.',
                         style: TextStyle(
                           color: AppColors.darkTextMuted,
                           fontSize: 12,
@@ -686,13 +695,17 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
                         spacing: 8,
                         runSpacing: 8,
                         children: _radiosKm.map((km) {
-                          final selected = _radioKm == km;
+                          final selected = km == null
+                              ? (_radioTrabajoM == null || _radioTrabajoM! <= 0)
+                              : (_radioTrabajoM != null &&
+                                  _radioTrabajoM! > 0 &&
+                                  (_radioTrabajoM! / 1000).round() == km);
                           return _labelChip(
-                            label: '$km km',
+                            label: km == null ? 'Sin límite' : '$km km',
                             selected: selected,
-                            onTap: () => setState(
-                              () => _radioTrabajoM = km * 1000,
-                            ),
+                            onTap: () => setState(() {
+                              _radioTrabajoM = km == null ? null : km * 1000;
+                            }),
                           );
                         }).toList(),
                       ),
@@ -707,8 +720,8 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
                       ),
                       const SizedBox(height: 6),
                       const Text(
-                        'Tope del trayecto completo. Útil si no quieres '
-                        'viajes muy largos (ej. entre ciudades).',
+                        'Tope del trayecto completo. «Sin límite» = aceptas '
+                        'viajes de cualquier longitud (ej. entre ciudades).',
                         style: TextStyle(
                           color: AppColors.darkTextMuted,
                           fontSize: 12,

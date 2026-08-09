@@ -34,6 +34,7 @@ import '../widgets/repartidor_master_badge.dart';
 import '../services/paises_service.dart';
 import '../utils/moneda_tenant_util.dart';
 import 'taxi_ajustes_screen.dart';
+import 'taxi_chofer_contactos_confianza_screen.dart';
 import 'taxi_comision_pendiente_screen.dart';
 import 'taxi_ganancias_screen.dart';
 import 'repartidor_metodo_cobro_screen.dart';
@@ -3040,6 +3041,22 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             Navigator.of(context).push(
               MaterialPageRoute<void>(
                 builder: (_) => const TaxiAjustesScreen(),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 8),
+        _tileTaxiOpcion(
+          icon: Icons.sos,
+          titulo: 'Contactos de confianza (SOS)',
+          subtitulo: _cuentaSuspendida
+              ? 'Deshabilitado — cuenta suspendida'
+              : 'Email, app y teléfono para emergencias en viaje',
+          enabled: !_cuentaSuspendida,
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const TaxiChoferContactosConfianzaScreen(),
               ),
             );
           },

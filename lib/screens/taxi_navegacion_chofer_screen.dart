@@ -5,15 +5,19 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../config/app_colors.dart';
+import '../services/paises_service.dart';
 import '../services/repartidor_suspension_service.dart';
 import '../services/taxi_chofer_service.dart';
+import '../services/taxi_chofer_sos_service.dart';
 import '../services/taxi_directions_service.dart';
 import '../services/taxi_voz_navegacion_service.dart';
+import '../utils/emergencia_pais_util.dart';
 import '../widgets/taxi_cash_cobrar_completar_modal.dart';
 import '../widgets/taxi_cash_comision_aviso_modal.dart';
 import '../widgets/taxi_chofer_maplibre.dart';
 import '../widgets/taxi_itinerario_chofer_panel.dart';
 import 'repartidor_mobile_screen.dart';
+import 'taxi_chofer_contactos_confianza_screen.dart';
 import 'taxi_comision_pendiente_screen.dart';
 import 'taxi_ganancias_screen.dart';
 
@@ -292,73 +296,385 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     });
   }
 
+  Future<void> _llamarFamiliarSos(
+    List<TaxiChoferContactoConfianza> items,
+  ) async {
+    final conTel = items.where((c) => c.tieneTelefono).toList();
+    if (conTel.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Ningún contacto tiene teléfono. Agrégalo en Administrar contactos.',
+          ),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      return;
+    }
+    TaxiChoferContactoConfianza? elegido = conTel.first;
+    if (conTel.length > 1 && mounted) {
+      elegido = await showModalBottomSheet<TaxiChoferContactoConfianza>(
+        context: context,
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        builder: (sheetCtx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Llamar a familiar',
+                  style: TextStyle(
+                    color: AppColors.textOnLight,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...conTel.map(
+                  (c) => ListTile(
+                    leading: const Icon(Icons.phone, color: Color(0xFF37474F)),
+                    title: Text(
+                      c.nombre,
+                      style: const TextStyle(
+                        color: AppColors.textOnLight,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      c.telefono!.trim(),
+                      style: const TextStyle(color: Color(0xFF666666)),
+                    ),
+                    onTap: () => Navigator.pop(sheetCtx, c),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    if (elegido == null || !elegido.tieneTelefono) return;
+    final r = await TaxiChoferSosService.instance.llamarTelefono(
+      elegido.telefono!,
+    );
+    if (!mounted || r.ok) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(r.err ?? 'No se pudo llamar'),
+        backgroundColor: const Color(0xFFDC2626),
+      ),
+    );
+  }
+
+  Future<void> _llamarEmergenciaPais(String? pais) async {
+    final e = EmergenciaPaisUtil.paraPais(pais);
+    final r = await TaxiChoferSosService.instance.llamarTelefono(e.numero);
+    if (!mounted || r.ok) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(r.err ?? 'No se pudo llamar a ${e.etiqueta}'),
+        backgroundColor: const Color(0xFFDC2626),
+      ),
+    );
+  }
+
+  Future<void> _mostrarSosChofer() async {
+    final contactos = await TaxiChoferSosService.instance.listarContactos();
+    final pais =
+        await PaisesService.obtenerPaisOperacionActual() ?? 'Cuba';
+    final emergencia = EmergenciaPaisUtil.paraPais(pais);
+    if (!mounted) return;
+    final items =
+        contactos.ok ? contactos.items : const <TaxiChoferContactoConfianza>[];
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Emergencia',
+                  style: TextStyle(
+                    color: AppColors.textOnLight,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Se enviará tu ubicación por email, push a usuarios de la app '
+                  'y SMS a tus contactos de confianza.',
+                  style: TextStyle(color: Color(0xFF455A64), height: 1.35),
+                ),
+                if (items.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  ...items.map(
+                    (c) => Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '• ${c.nombre} — ${c.subtitulo}',
+                        style: const TextStyle(
+                          color: AppColors.textOnLight,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    if (!mounted) return;
+                    showDialog<void>(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (_) => const Center(
+                        child: CircularProgressIndicator(
+                          color: Color(0xFFFF9800),
+                        ),
+                      ),
+                    );
+                    final r =
+                        await TaxiChoferSosService.instance.enviarUbicacion(
+                      solicitudId: _oferta.id,
+                      latFallback: _yo?.latitude,
+                      lngFallback: _yo?.longitude,
+                    );
+                    if (mounted) Navigator.of(context).pop();
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          r.ok
+                              ? 'Ubicación enviada a tus contactos.'
+                              : (r.err ?? 'No se pudo enviar'),
+                        ),
+                        backgroundColor: r.ok
+                            ? const Color(0xFF4CAF50)
+                            : const Color(0xFFDC2626),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.share_location),
+                  label: const Text('Enviar ubicación'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFDC2626),
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    await _llamarFamiliarSos(items);
+                  },
+                  icon: const Icon(Icons.phone_in_talk),
+                  label: const Text('Llamar a familiar'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF37474F),
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    await _llamarEmergenciaPais(pais);
+                  },
+                  icon: const Icon(Icons.emergency),
+                  label: Text(
+                    'Llamada de emergencia (${emergencia.etiqueta})',
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFB71C1C),
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'País de operación: $pais',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF78909C),
+                    fontSize: 11,
+                  ),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) =>
+                            const TaxiChoferContactosConfianzaScreen(),
+                      ),
+                    );
+                  },
+                  child: const Text(
+                    'Administrar contactos',
+                    style: TextStyle(color: Color(0xFF455A64)),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text(
+                    'Cerrar',
+                    style: TextStyle(color: Color(0xFF78909C)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _pedirValoracionPasajero() async {
     if (!mounted) return;
     var estrellas = 5;
+    final nombre = _oferta.pasajeroNombre.trim().isEmpty
+        ? 'Pasajero'
+        : _oferta.pasajeroNombre.trim();
+    final foto = _oferta.pasajeroFotoUrl?.trim();
     final ok = await showDialog<bool>(
       context: context,
       barrierDismissible: true,
+      barrierColor: Colors.black.withValues(alpha: 0.45),
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setLocal) {
+            // Fondo claro: el mapa es oscuro; texto oscuro aquí sí es legible.
             return AlertDialog(
+              backgroundColor: Colors.white,
+              surfaceTintColor: Colors.white,
               constraints: const BoxConstraints(maxWidth: 400),
               insetPadding:
                   const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
               title: const Text(
                 '¿Cómo fue el pasajero?',
+                textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: Color(0xFF2C2C2C),
+                  color: AppColors.textOnLight,
                   fontWeight: FontWeight.w700,
+                  fontSize: 18,
                 ),
               ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _oferta.pasajeroNombre.trim().isEmpty
-                        ? 'Pasajero'
-                        : _oferta.pasajeroNombre.trim(),
-                    style: const TextStyle(
-                      color: Color(0xFF666666),
-                      fontSize: 14,
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircleAvatar(
+                      radius: 28,
+                      backgroundColor: const Color(0xFFECEFF1),
+                      backgroundImage:
+                          (foto != null && foto.isNotEmpty)
+                              ? NetworkImage(foto)
+                              : null,
+                      child: (foto == null || foto.isEmpty)
+                          ? const Icon(
+                              Icons.person,
+                              color: Color(0xFF78909C),
+                              size: 32,
+                            )
+                          : null,
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: List.generate(5, (i) {
-                      final n = i + 1;
-                      return IconButton(
-                        onPressed: () => setLocal(() => estrellas = n),
-                        icon: Icon(
-                          n <= estrellas
-                              ? Icons.star_rounded
-                              : Icons.star_outline_rounded,
-                          color: const Color(0xFFFF9800),
-                          size: 32,
-                        ),
-                      );
-                    }),
-                  ),
-                ],
+                    const SizedBox(height: 10),
+                    Text(
+                      nombre,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Color(0xFF455A64),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Tu valoración ayuda a cuidar la seguridad de los socios.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Color(0xFF78909C),
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: List.generate(5, (i) {
+                        final n = i + 1;
+                        return IconButton(
+                          padding: const EdgeInsets.all(4),
+                          constraints: const BoxConstraints(
+                            minWidth: 40,
+                            minHeight: 40,
+                          ),
+                          onPressed: () => setLocal(() => estrellas = n),
+                          icon: Icon(
+                            n <= estrellas
+                                ? Icons.star_rounded
+                                : Icons.star_outline_rounded,
+                            color: AppColors.botonPrincipal,
+                            size: 36,
+                          ),
+                        );
+                      }),
+                    ),
+                  ],
+                ),
               ),
+              actionsAlignment: MainAxisAlignment.center,
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(ctx, false),
                   child: const Text(
                     'Omitir',
-                    style: TextStyle(color: Color(0xFF666666)),
+                    style: TextStyle(
+                      color: Color(0xFF78909C),
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF37474F),
+                    backgroundColor: AppColors.header,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                   onPressed: () => Navigator.pop(ctx, true),
                   child: const Text(
                     'Enviar',
-                    style: TextStyle(color: Colors.white),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ],
@@ -1162,13 +1478,17 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
     final esReserva = _oferta.esReserva;
     final go = await showDialog<bool>(
       context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.45),
       builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
         constraints: const BoxConstraints(maxWidth: 400),
         insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text(
           esReserva ? '¿Liberar esta reserva?' : '¿Cancelar este viaje?',
           style: const TextStyle(
-            color: Color(0xFF2C2C2C),
+            color: AppColors.textOnLight,
             fontWeight: FontWeight.w700,
           ),
         ),
@@ -1186,7 +1506,7 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
                       'y el importe se devuelve completo al pasajero.\n\n'
                       'No recibirás ganancia por este viaje.',
           style: const TextStyle(
-            color: Color(0xFF666666),
+            color: Color(0xFF455A64),
             height: 1.4,
             fontSize: 14,
           ),
@@ -1282,6 +1602,11 @@ class _TaxiNavegacionChoferScreenState extends State<TaxiNavegacionChoferScreen>
           ),
         ),
         actions: [
+          IconButton(
+            tooltip: 'SOS',
+            onPressed: _mostrarSosChofer,
+            icon: const Icon(Icons.sos, color: Color(0xFFDC2626)),
+          ),
           if (!_faseEspera)
             IconButton(
               tooltip: 'Abrir en Maps / Waze',

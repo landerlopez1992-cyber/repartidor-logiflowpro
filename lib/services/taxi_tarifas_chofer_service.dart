@@ -19,7 +19,8 @@ class TaxiTarifaChofer {
     this.capacidadPasajeros = 4,
     this.pasajerosIncluidos = 2,
     this.recargoPorPasajeroUsd = 0,
-    this.radioTrabajoM = 150000,
+    /// 0 = sin límite de recogida.
+    this.radioTrabajoM = 0,
     this.distanciaMaxViajeM,
     this.vehiculoMarca = '',
     this.vehiculoModelo = '',
@@ -41,10 +42,14 @@ class TaxiTarifaChofer {
   final int capacidadPasajeros;
   final int pasajerosIncluidos;
   final double recargoPorPasajeroUsd;
-  /// Radio máximo desde tu ubicación hasta el origen del pasajero.
+  /// Radio máximo chofer→origen (metros). 0 = sin límite.
   final int radioTrabajoM;
   /// Tope A→B en metros; null = sin límite.
   final int? distanciaMaxViajeM;
+
+  bool get radioTrabajoSinLimite => radioTrabajoM <= 0;
+  bool get distanciaMaxSinLimite =>
+      distanciaMaxViajeM == null || distanciaMaxViajeM! <= 0;
   final String vehiculoMarca;
   final String vehiculoModelo;
   final int? vehiculoAnio;
@@ -75,7 +80,7 @@ class TaxiTarifaChofer {
       pasajerosIncluidos: (m['pasajeros_incluidos'] as num?)?.toInt() ?? 2,
       recargoPorPasajeroUsd:
           (m['recargo_por_pasajero_usd'] as num?)?.toDouble() ?? 0,
-      radioTrabajoM: (m['radio_trabajo_m'] as num?)?.toInt() ?? 150000,
+      radioTrabajoM: (m['radio_trabajo_m'] as num?)?.toInt() ?? 0,
       distanciaMaxViajeM: (m['distancia_max_viaje_m'] as num?)?.toInt(),
       vehiculoMarca: m['vehiculo_marca']?.toString() ?? '',
       vehiculoModelo: m['vehiculo_modelo']?.toString() ?? '',
@@ -193,7 +198,7 @@ class TaxiTarifasChoferService {
     int capacidadPasajeros = 4,
     int pasajerosIncluidos = 2,
     double recargoPorPasajeroUsd = 0,
-    int radioTrabajoM = 150000,
+    int radioTrabajoM = 0,
     int? distanciaMaxViajeM,
     String? vehiculoMarca,
     String? vehiculoModelo,
@@ -217,7 +222,9 @@ class TaxiTarifasChoferService {
               'p_capacidad_pasajeros': capacidadPasajeros.clamp(1, 20),
               'p_pasajeros_incluidos': pasajerosIncluidos.clamp(1, 20),
               'p_recargo_por_pasajero_usd': recargoPorPasajeroUsd.clamp(0, 500),
-              'p_radio_trabajo_m': radioTrabajoM.clamp(5000, 500000),
+              'p_radio_trabajo_m': radioTrabajoM <= 0
+                  ? 0
+                  : radioTrabajoM.clamp(5000, 500000),
               'p_distancia_max_viaje_m': distanciaMaxViajeM,
               'p_vehiculo_marca': vehiculoMarca,
               'p_vehiculo_modelo': vehiculoModelo,
