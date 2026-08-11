@@ -3,12 +3,16 @@
 <plist version="1.0">
 <dict>
 	<key>method</key>
-	<string>ad-hoc</string>
+	<string>app-store-connect</string>
+	<key>teamID</key>
+	<string>3W458J4W4W</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>uploadSymbols</key>
+	<true/>
 	<key>compileBitcode</key>
 	<false/>
-	<key>uploadSymbols</key>
-	<false/>
-	<key>signingStyle</key>
-	<string>manual</string>
+	<key>destination</key>
+	<string>export</string>
 </dict>
 </plist>
