@@ -1,0 +1,12 @@
+GoogleService-Info.plist — YA INSTALADO
+======================================
+
+Archivo en: ios/Runner/GoogleService-Info.plist
+Bundle ID: com.logiflowpro.repartidor
+Proyecto Firebase: volonex-repartidor
+GOOGLE_APP_ID: 1:1002825569697:ios:9235a37771d112ff86e7e0
+
+Siguiente (en Firebase Console, misma pantalla):
+1) ID de App Store → 6800047504
+2) ID de equipo → 3W458J4W4W
+3) Cloud Messaging → clave APNs (.p8) de Apple Developer
