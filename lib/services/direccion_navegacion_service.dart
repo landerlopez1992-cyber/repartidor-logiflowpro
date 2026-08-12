@@ -260,15 +260,15 @@ class DireccionNavegacionService {
     );
   }
 
-  /// True si el placemark coincide con provincia/municipio elegidos en la orden.
+  /// True si el placemark coincide con provincia elegida en la orden.
+  /// Si el reverse no trae datos útiles, no rechaza (evita dejar la orden sin pin).
   static bool _coincideZonaEsperada(
     Placemark place, {
     String? provinciaEsperada,
     String? municipioEsperado,
   }) {
     final hayProv = !_esVacio(provinciaEsperada);
-    final hayMun = !_esVacio(municipioEsperado);
-    if (!hayProv && !hayMun) return true;
+    if (!hayProv) return true;
 
     final blob = [
       place.administrativeArea,
@@ -277,50 +277,86 @@ class DireccionNavegacionService {
       place.subLocality,
       place.name,
       place.thoroughfare,
-    ].whereType<String>().join(' ').toLowerCase();
+    ].whereType<String>().map((s) => s.trim()).where((s) => s.isNotEmpty).join(' ');
 
-    if (hayProv) {
-      final p = provinciaEsperada!.trim().toLowerCase();
-      // Exigir provincia: evita Cienfuegos → Matanzas por calle homónima.
-      if (!_textoContiene(blob, p)) return false;
+    // Reverse vacío / genérico: no descartar (señal mala o platform sin datos).
+    if (blob.isEmpty) return true;
+
+    final p = provinciaEsperada!.trim().toLowerCase();
+    final lower = blob.toLowerCase();
+    if (_textoContiene(lower, p)) return true;
+
+    // Variantes cortas: "Cienfuegos" vs "Provincia de Cienfuegos".
+    final tokens = p.split(RegExp(r'\s+')).where((t) => t.length >= 4);
+    if (tokens.any((t) => lower.contains(t))) return true;
+
+    // Si el reverse nombra OTRA provincia cubana conocida, sí rechazar.
+    const provinciasCu = [
+      'pinar del río',
+      'pinar del rio',
+      'artemisa',
+      'la habana',
+      'habana',
+      'mayabeque',
+      'matanzas',
+      'villa clara',
+      'cienfuegos',
+      'sancti spíritus',
+      'sancti spiritus',
+      'ciego de ávila',
+      'ciego de avila',
+      'camagüey',
+      'camaguey',
+      'las tunas',
+      'holguín',
+      'holguin',
+      'granma',
+      'santiago de cuba',
+      'guantánamo',
+      'guantanamo',
+      'isla de la juventud',
+    ];
+    for (final otra in provinciasCu) {
+      if (otra == p || p.contains(otra) || otra.contains(p)) continue;
+      if (lower.contains(otra)) return false;
     }
-    if (hayMun) {
-      final m = municipioEsperado!.trim().toLowerCase();
-      // Municipio es soft-check: si aparece, bien; si no, igual aceptamos
-      // si la provincia ya encaja (poblado a veces no trae municipio en Google).
-      if (blob.isNotEmpty &&
-          !_textoContiene(blob, m) &&
-          !_textoContiene(m, blob)) {
-        // No rechazar solo por municipio: Google a veces omite el nombre.
-      }
-    }
+    // No está claro → aceptar (mejor pin en zona aproximada que ningún pin).
     return true;
   }
 
   /// Geocodifica: poblado → municipio → provincia → calle (última).
-  /// Si un resultado cae fuera de la provincia elegida, se descarta y se prueba el siguiente.
+  /// Tolera señal mala: timeouts cortos, no bloquea si reverse falla.
   static Future<({double lat, double lon, String queryUsada})?>
       geocodificarConFallback(
     DireccionNavegacionResultado res, {
-    Duration timeout = const Duration(seconds: 5),
+    Duration timeout = const Duration(seconds: 4),
   }) async {
     final queries = res.candidatosMapa.isNotEmpty
         ? res.candidatosMapa
         : (res.tieneMapa ? [res.direccionMapa] : <String>[]);
+    if (queries.isEmpty) return null;
+
+    // Tope global: no colgar la UI con N candidatos × reverse en red mala.
+    final deadline = DateTime.now().add(const Duration(seconds: 12));
+
     for (final q in queries) {
+      if (DateTime.now().isAfter(deadline)) break;
       try {
         print('📍 Geocode intento: $q');
         final locations = await locationFromAddress(q).timeout(timeout);
         if (locations.isEmpty) continue;
 
-        for (final loc in locations.take(3)) {
+        for (final loc in locations.take(2)) {
           var aceptado = true;
-          if (!_esVacio(res.provinciaEsperada)) {
+          final queryYaAnclaProvincia = !_esVacio(res.provinciaEsperada) &&
+              _textoContiene(q, res.provinciaEsperada!);
+
+          if (!_esVacio(res.provinciaEsperada) && !queryYaAnclaProvincia) {
             try {
               final marks = await placemarkFromCoordinates(
                 loc.latitude,
                 loc.longitude,
-              ).timeout(timeout);
+              ).timeout(const Duration(seconds: 3));
               if (marks.isNotEmpty) {
                 aceptado = _coincideZonaEsperada(
                   marks.first,
@@ -335,10 +371,11 @@ class DireccionNavegacionService {
                 }
               }
             } catch (_) {
-              // Sin reverse: si la query ya incluye provincia, aceptar.
-              aceptado = _textoContiene(q, res.provinciaEsperada ?? '');
+              // Sin reverse: aceptar si la query lleva municipio/poblado.
+              aceptado = true;
             }
           }
+
           if (!aceptado) continue;
 
           print(

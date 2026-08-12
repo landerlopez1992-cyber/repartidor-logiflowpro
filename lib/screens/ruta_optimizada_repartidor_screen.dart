@@ -12,6 +12,7 @@ import '../services/direccion_navegacion_service.dart';
 import '../services/orden_estado_sync_helper.dart';
 import '../services/sync_service.dart';
 import '../services/taxi_directions_service.dart';
+import '../services/taxi_voz_navegacion_service.dart';
 import '../main.dart';
 import 'detalle_orden_screen.dart';
 import '../config/app_colors.dart';
@@ -70,6 +71,23 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
   final Map<String, double> _kmHastaOrden = {};
   int? _etaTotalRutaS;
   double? _kmTotalRuta;
+
+  // —— Guía viva (mismo nivel que chofer taxi) ——
+  bool _modoGuiaActiva = false;
+  bool _seguirCamara = true;
+  bool _vozMute = false;
+  List<TaxiNavStep> _navSteps = const [];
+  List<LatLng> _rutaLegActiva = [];
+  double? _speedMps;
+  double? _headingDeg;
+  StreamSubscription<Position>? _gpsStream;
+  DateTime? _ultimaRutaLegAt;
+  LatLng? _ultimoOrigenLeg;
+  bool _cargandoLeg = false;
+  String? _ultimaClaveVoz;
+  DateTime? _ultimoVozAt;
+  double _millasRecorridasSesion = 0;
+  LatLng? _ultimoPuntoOdometro;
 
   bool get _sinInternet {
     try {
@@ -162,6 +180,24 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
     _inicializarRegionMapa();
     _obtenerUbicacionRepartidor();
     _geocodificarOrdenesSinCoordenadas();
+    unawaited(() async {
+      await TaxiVozNavegacionService.instance.init();
+      if (mounted) {
+        setState(() => _vozMute = TaxiVozNavegacionService.instance.isMuted);
+      }
+    }());
+  }
+
+  String _formatMillas(double? km) {
+    if (km == null || km <= 0) return '';
+    final mi = km * 0.621371;
+    if (mi < 0.1) return '${(mi * 5280).round()} ft';
+    return '${mi.toStringAsFixed(mi < 10 ? 1 : 0)} mi';
+  }
+
+  String _formatMillasDesdeMetros(num? metros) {
+    if (metros == null || metros <= 0) return '';
+    return _formatMillas(metros / 1000.0);
   }
 
   Future<void> _inicializarRegionMapa() async {
@@ -566,13 +602,19 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
     
     print('🔍 Geocodificando ${ordenesSinCoords.length} órdenes sin coordenadas...');
     
+    final deadline = DateTime.now().add(const Duration(seconds: 28));
     for (var orden in ordenesSinCoords) {
+      if (!mounted) return;
+      if (DateTime.now().isAfter(deadline)) {
+        print('⏱️ Geocode inicial truncado (señal lenta)');
+        break;
+      }
       try {
         final suc = widget.sucursalesPorOrdenId?[orden.id];
         final res = await DireccionNavegacionService.resolverConPaisOrden(
           orden,
           sucursal: suc,
-        );
+        ).timeout(const Duration(seconds: 6));
         if (!res.esValida && !res.tieneMapa) {
           print('   ⚠️ Sin dirección completa para orden #${orden.numeroOrden}');
           continue;
@@ -582,8 +624,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
           'mapa="${res.direccionMapa}" | display="${res.direccionCompleta}"',
         );
 
-        final geo =
-            await DireccionNavegacionService.geocodificarConFallback(res);
+        final geo = await DireccionNavegacionService.geocodificarConFallback(res)
+            .timeout(const Duration(seconds: 10));
         if (geo != null) {
           _coordenadasGeocodificadas[orden.id] = LatLng(geo.lat, geo.lon);
           print(
@@ -625,6 +667,13 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
   @override
   void dispose() {
     _timerUbicacion?.cancel();
+    try {
+      unawaited(_gpsStream?.cancel() ?? Future<void>.value());
+    } catch (_) {}
+    _gpsStream = null;
+    try {
+      unawaited(TaxiVozNavegacionService.instance.stop());
+    } catch (_) {}
     super.dispose();
   }
 
@@ -656,22 +705,143 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
   
   // Método para centrar el mapa en la ubicación del repartidor (llamado por el botón)
   void _centrarEnRepartidor() {
+    _seguirCamara = true;
     if (_ubicacionRepartidor != null) {
-      _mapController.move(_ubicacionRepartidor!, 15.0);
+      try {
+        final zoom = _modoGuiaActiva ? 17.0 : 15.0;
+        _mapController.move(_ubicacionRepartidor!, zoom);
+      } catch (_) {}
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Mapa centrado en tu ubicación'),
+          content: Text('Te ubiqué en el mapa'),
           duration: Duration(seconds: 2),
+          backgroundColor: Color(0xFF37474F),
         ),
       );
     } else {
+      unawaited(_iniciarGpsStream(forzar: true));
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Ubicación no disponible'),
+          content: Text('Buscando tu ubicación…'),
           duration: Duration(seconds: 2),
         ),
       );
     }
+  }
+
+  /// GPS continuo (como el chofer taxi) para guía, millas y voz.
+  Future<void> _iniciarGpsStream({bool forzar = false}) async {
+    if (_gpsStream != null && !forzar) return;
+    try {
+      await _gpsStream?.cancel();
+    } catch (_) {}
+    _gpsStream = null;
+    try {
+      final enabled = await Geolocator.isLocationServiceEnabled();
+      if (!enabled) {
+        print('⚠️ GPS apagado en el dispositivo');
+        return;
+      }
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied ||
+          perm == LocationPermission.deniedForever) {
+        return;
+      }
+      _gpsStream = Geolocator.getPositionStream(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          distanceFilter: 8,
+        ),
+      ).listen(
+        (pos) {
+          if (!mounted) return;
+          try {
+            final nuevo = LatLng(pos.latitude, pos.longitude);
+            final prev = _ultimoPuntoOdometro ?? _ubicacionRepartidor;
+            if (prev != null) {
+              final d = Geolocator.distanceBetween(
+                prev.latitude,
+                prev.longitude,
+                nuevo.latitude,
+                nuevo.longitude,
+              );
+              if (d > 2 && d < 2000) {
+                _millasRecorridasSesion += d * 0.000621371;
+              }
+            }
+            _ultimoPuntoOdometro = nuevo;
+            setState(() {
+              _ubicacionRepartidor = nuevo;
+              _speedMps = pos.speed >= 0 ? pos.speed : _speedMps;
+              if (pos.heading >= 0 && pos.speed > 1.5) {
+                _headingDeg = pos.heading;
+              }
+            });
+            if (_seguirCamara && _modoGuiaActiva) {
+              try {
+                _mapController.move(nuevo, 17.0);
+              } catch (_) {}
+            }
+            if (_modoGuiaActiva) {
+              // Throttle interno en _actualizarLegActivo; no spamea red.
+              unawaited(_actualizarLegActivo());
+              _evaluarGuiaVoz();
+            }
+          } catch (e) {
+            print('⚠️ Error procesando GPS: $e');
+          }
+        },
+        onError: (Object e) {
+          print('⚠️ GPS stream error: $e');
+          // No tumbar la pantalla: reintentar en unos segundos.
+          if (!mounted) return;
+          Future<void>.delayed(const Duration(seconds: 5), () {
+            if (mounted && _modoGuiaActiva) {
+              unawaited(_iniciarGpsStream(forzar: true));
+            }
+          });
+        },
+        cancelOnError: false,
+      );
+    } catch (e) {
+      print('⚠️ GPS stream ruta: $e');
+    }
+  }
+
+  /// Cadena vecino más cercano: parada 1 = más cerca de ti, luego la más cerca
+  /// de esa, … hasta la más lejana (última).
+  List<Orden> _ordenarNearestNeighbor(
+    List<Orden> origenes,
+    LatLng desde,
+  ) {
+    final remaining = List<Orden>.from(origenes);
+    final out = <Orden>[];
+    var cur = desde;
+    while (remaining.isNotEmpty) {
+      remaining.sort((a, b) {
+        final ca = _obtenerCoordenadas(a);
+        final cb = _obtenerCoordenadas(b);
+        final da = ca == null
+            ? double.infinity
+            : _calcularDistanciaHaversine(
+                cur.latitude, cur.longitude, ca.latitude, ca.longitude);
+        final db = cb == null
+            ? double.infinity
+            : _calcularDistanciaHaversine(
+                cur.latitude, cur.longitude, cb.latitude, cb.longitude);
+        return da.compareTo(db);
+      });
+      final next = remaining.removeAt(0);
+      out.add(next);
+      final c = _obtenerCoordenadas(next);
+      if (c != null) cur = c;
+    }
+    return out;
   }
 
   // Obtener lista base de órdenes (sin ordenar)
@@ -807,52 +977,47 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
     print('📦 Total órdenes para optimizar: ${todasLasOrdenes.length}');
     print('📦 Órdenes recoger en sucursal: ${ordenesRecogerEnSucursal.length}');
     
-    // Calcular distancias desde el repartidor a todas las órdenes
-    final Map<String, double> distanciasDesdeRepartidor = {};
-    
-    print('📍 Calculando distancias desde repartidor...');
-    for (var orden in todasLasOrdenes) {
-      final coords = await _obtenerCoordenadasOrden(orden);
-      if (coords != null) {
-        final distancia = _calcularDistanciaHaversine(
-          _ubicacionRepartidor!.latitude,
-          _ubicacionRepartidor!.longitude,
-          coords.latitude,
-          coords.longitude,
-        );
-        distanciasDesdeRepartidor[orden.id] = distancia;
-        print('   - Orden #${orden.numeroOrden}: ${distancia.toStringAsFixed(2)} km');
-      } else {
-        distanciasDesdeRepartidor[orden.id] = double.infinity;
-        print('   - Orden #${orden.numeroOrden}: Sin coordenadas');
+    // Asegurar coordenadas (geocode con tope de tiempo; offline = solo BD/caché).
+    if (!_sinInternet) {
+      final deadline = DateTime.now().add(const Duration(seconds: 22));
+      for (final orden in todasLasOrdenes) {
+        if (!mounted) return;
+        if (DateTime.now().isAfter(deadline)) {
+          print('⏱️ Geocode truncado por tiempo (señal lenta)');
+          break;
+        }
+        try {
+          await _obtenerCoordenadasOrden(orden)
+              .timeout(const Duration(seconds: 8));
+        } catch (_) {}
       }
+    } else {
+      print('📴 Offline: ordenando solo con coordenadas ya guardadas');
     }
-    
-    // Ordenar TODAS las órdenes por distancia (más cerca primero)
-    // NO priorizar urgentes - entregar por distancia pura
-    todasLasOrdenes.sort((a, b) {
-      final distA = distanciasDesdeRepartidor[a.id] ?? double.infinity;
-      final distB = distanciasDesdeRepartidor[b.id] ?? double.infinity;
-      return distA.compareTo(distB);
-    });
-    
-    print('📍 Órdenes ordenadas por distancia desde repartidor (SIN priorizar urgentes):');
-    for (int i = 0; i < todasLasOrdenes.length; i++) {
-      final orden = todasLasOrdenes[i];
-      final dist = distanciasDesdeRepartidor[orden.id] ?? double.infinity;
+
+    if (!mounted || _ubicacionRepartidor == null) return;
+
+    // Vecino más cercano: 1ª = más cerca de ti → … → última = más lejos en cadena.
+    print('📍 Ordenando paradas (nearest-neighbor desde tu ubicación)…');
+    final List<Orden> ordenadasPorCercania =
+        _ordenarNearestNeighbor(todasLasOrdenes, _ubicacionRepartidor!);
+
+    print('📍 Órdenes en secuencia de entrega:');
+    for (int i = 0; i < ordenadasPorCercania.length; i++) {
+      final orden = ordenadasPorCercania[i];
       final esPrioritaria = _esOrdenPrioritaria(orden);
       final tipo = esPrioritaria ? '🔴 PRIORITARIA' : '⚪ NORMAL';
-      print('   ${i + 1}. Orden #${orden.numeroOrden} ($tipo) - ${dist.toStringAsFixed(2)} km');
+      print('   ${i + 1}. Orden #${orden.numeroOrden} ($tipo)');
     }
     
-    // Construir ruta final: órdenes por distancia + recoger en sucursal al final
+    // Construir ruta final: cadena cercana→lejos + recoger en sucursal al final
     final List<Orden> rutaFinal = [
-      ...todasLasOrdenes,
+      ...ordenadasPorCercania,
       ...ordenesRecogerEnSucursal,
     ];
     
     print('✅ Ruta final construida: ${rutaFinal.length} órdenes');
-    print('   - Órdenes por distancia: ${todasLasOrdenes.length}');
+    print('   - Órdenes por cercanía encadenada: ${ordenadasPorCercania.length}');
     print('   - Recoger en sucursal (al final): ${ordenesRecogerEnSucursal.length}');
     
     // Actualizar la lista (NO activar flag de priorización de urgentes)
@@ -862,14 +1027,17 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
         _ordenesActualizadas = rutaFinal;
         _rutaIniciada = true;
         _ordenActualIndex = 0;
+        _modoGuiaActiva = true;
+        _seguirCamara = true;
+        _millasRecorridasSesion = 0;
       });
       
       // Mostrar mensaje informativo
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Ruta en el mapa de la app: ${todasLasOrdenes.length} paradas. '
-            'Se muestran 1 → 2 → 3… con navegación real.',
+            'Ruta lista: ${ordenadasPorCercania.length} paradas '
+            '(más cerca → más lejos). Guía por voz activa.',
           ),
           backgroundColor: AppColors.exito,
           duration: const Duration(seconds: 4),
@@ -877,17 +1045,28 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
       );
     }
 
-    // Dibujar ruta completa en el mapa interno (sin abrir Google Maps).
+    // Dibujar ruta completa + tramo activo + GPS/voz.
     await _actualizarGeometriaRutaEnMapa();
     if (mounted) _ajustarVistaRutaCompleta();
+    await _iniciarGpsStream();
+    await _actualizarLegActivo(forzar: true);
+    try {
+      unawaited(TaxiVozNavegacionService.instance.speak(
+        'Ruta con ${ordenadasPorCercania.length} paradas. '
+        'Sigue la ruta azul hasta la primera entrega.',
+        forzar: true,
+      ));
+    } catch (_) {}
     
-    // Actualizar ubicación periódicamente
+    // Respaldo de ubicación si el stream falla
     _timerUbicacion?.cancel();
-    _timerUbicacion = Timer.periodic(const Duration(seconds: 10), (timer) {
-      if (mounted) {
-        _obtenerUbicacionRepartidor();
-      } else {
+    _timerUbicacion = Timer.periodic(const Duration(seconds: 20), (timer) {
+      if (!mounted) {
         timer.cancel();
+        return;
+      }
+      if (_gpsStream == null) {
+        unawaited(_obtenerUbicacionRepartidor());
       }
     });
   }
@@ -1042,17 +1221,20 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
     if (_coordenadasGeocodificadas.containsKey(orden.id)) {
       return _coordenadasGeocodificadas[orden.id];
     }
+
+    // Sin red: no geocodificar (evita cuelgues / timeouts en Cuba).
+    if (_sinInternet) return null;
     
     try {
       final suc = widget.sucursalesPorOrdenId?[orden.id];
       final res = await DireccionNavegacionService.resolverConPaisOrden(
         orden,
         sucursal: suc,
-      );
+      ).timeout(const Duration(seconds: 6));
       if (!res.esValida && !res.tieneMapa) return null;
 
-      final geo =
-          await DireccionNavegacionService.geocodificarConFallback(res);
+      final geo = await DireccionNavegacionService.geocodificarConFallback(res)
+          .timeout(const Duration(seconds: 10));
       if (geo != null) {
         final coords = LatLng(geo.lat, geo.lon);
         _coordenadasGeocodificadas[orden.id] = coords;
@@ -1304,6 +1486,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
     if (_ordenActualIndex < _ordenesOrdenadas.length - 1) {
       setState(() {
         _ordenActualIndex++;
+        _navSteps = const [];
+        _rutaLegActiva = [];
       });
 
       final siguienteOrden = _ordenActual;
@@ -1312,12 +1496,21 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
         if (coordenadas != null) {
           _mapController.move(coordenadas, 15.0);
         }
+        unawaited(TaxiVozNavegacionService.instance.speak(
+          'Siguiente parada. Orden ${siguienteOrden.numeroOrden}.',
+          forzar: true,
+        ));
       }
       unawaited(_actualizarGeometriaRutaEnMapa());
+      unawaited(_actualizarLegActivo(forzar: true));
       return;
     }
 
     // Última parada: salir a home (no volver a la orden 1).
+    unawaited(TaxiVozNavegacionService.instance.speak(
+      'Fin de la ruta. Buen trabajo.',
+      forzar: true,
+    ));
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Fin de la ruta'),
@@ -1326,6 +1519,351 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
       ),
     );
     Navigator.of(context).pop();
+  }
+
+  /// Tramo azul activo: tu posición → próxima parada (calles reales + steps).
+  /// Sin señal: línea Haversine inmediata (no bloquea ni crashea).
+  Future<void> _actualizarLegActivo({bool forzar = false}) async {
+    if (!_modoGuiaActiva || _cargandoLeg) return;
+    final yo = _ubicacionRepartidor;
+    final orden = _ordenActual;
+    if (yo == null || orden == null) return;
+    final dest = _obtenerCoordenadas(orden);
+    if (dest == null) return;
+
+    final ahora = DateTime.now();
+    if (!forzar &&
+        _ultimaRutaLegAt != null &&
+        ahora.difference(_ultimaRutaLegAt!) < const Duration(seconds: 12)) {
+      return;
+    }
+    if (!forzar &&
+        _ultimoOrigenLeg != null &&
+        Geolocator.distanceBetween(
+              _ultimoOrigenLeg!.latitude,
+              _ultimoOrigenLeg!.longitude,
+              yo.latitude,
+              yo.longitude,
+            ) <
+            40) {
+      return;
+    }
+
+    // Offline: no llamar Edge; dibuja tramo local ya.
+    if (_sinInternet) {
+      final local = TaxiDirectionsService.offlineHaversine(yo, dest);
+      if (!mounted) return;
+      setState(() {
+        _rutaLegActiva = local.points;
+        _navSteps = const [];
+        _ultimaRutaLegAt = DateTime.now();
+        _ultimoOrigenLeg = yo;
+        if (local.durationS != null) {
+          _etaSegundosHastaOrden[orden.id] = local.durationS!;
+        }
+        if (local.distanceM != null) {
+          _kmHastaOrden[orden.id] = local.distanceM! / 1000.0;
+        }
+      });
+      return;
+    }
+
+    _cargandoLeg = true;
+    try {
+      final result = await TaxiDirectionsService.instance
+          .rutaConEta(origen: yo, destino: dest)
+          .timeout(
+        const Duration(seconds: 12),
+        onTimeout: () => TaxiDirectionsService.offlineHaversine(yo, dest),
+      );
+      if (!mounted) return;
+      setState(() {
+        _rutaLegActiva =
+            result.points.length >= 2 ? result.points : [yo, dest];
+        _navSteps = result.steps;
+        _ultimaRutaLegAt = DateTime.now();
+        _ultimoOrigenLeg = yo;
+        if (result.durationS != null && result.durationS! > 0) {
+          _etaSegundosHastaOrden[orden.id] = result.durationS!;
+        }
+        if (result.distanceM != null && result.distanceM! > 0) {
+          _kmHastaOrden[orden.id] = result.distanceM! / 1000.0;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      final local = TaxiDirectionsService.offlineHaversine(yo, dest);
+      setState(() {
+        _rutaLegActiva = local.points;
+        _navSteps = const [];
+        _ultimaRutaLegAt = DateTime.now();
+        _ultimoOrigenLeg = yo;
+      });
+    } finally {
+      _cargandoLeg = false;
+    }
+  }
+
+  void _evaluarGuiaVoz() {
+    if (!_modoGuiaActiva || _vozMute) return;
+    try {
+      final yo = _ubicacionRepartidor;
+      if (yo == null) return;
+      final orden = _ordenActual;
+      final dest = orden == null ? null : _obtenerCoordenadas(orden);
+      if (dest != null) {
+        final distDest = Geolocator.distanceBetween(
+          yo.latitude,
+          yo.longitude,
+          dest.latitude,
+          dest.longitude,
+        );
+        if (distDest < 80) {
+          final clave = 'llegada_${orden!.id}';
+          if (_ultimaClaveVoz != clave) {
+            _ultimaClaveVoz = clave;
+            unawaited(TaxiVozNavegacionService.instance.speak(
+              'Has llegado a la parada. Orden ${orden.numeroOrden}.',
+              forzar: true,
+            ));
+          }
+          return;
+        }
+        if (distDest < 250) {
+          final clave = 'cerca_${orden!.id}';
+          final ahora = DateTime.now();
+          if (_ultimaClaveVoz != clave ||
+              _ultimoVozAt == null ||
+              ahora.difference(_ultimoVozAt!) > const Duration(seconds: 45)) {
+            _ultimaClaveVoz = clave;
+            _ultimoVozAt = ahora;
+            final distTxt =
+                TaxiVozNavegacionService.formatDistanciaVoz(distDest.round());
+            unawaited(TaxiVozNavegacionService.instance.speak(
+              'En $distTxt llegarás a la entrega.',
+            ));
+          }
+        }
+      }
+
+      final step = TaxiDirectionsService.proximoPaso(steps: _navSteps, yo: yo);
+      if (step == null) return;
+      final distPaso = step.distanceM;
+      if (distPaso > 350) return;
+      final clave =
+          '${step.maneuver}_${step.instruction.hashCode}_${(distPaso / 50).floor()}';
+      final ahora = DateTime.now();
+      if (_ultimaClaveVoz == clave &&
+          _ultimoVozAt != null &&
+          ahora.difference(_ultimoVozAt!) < const Duration(seconds: 20)) {
+        return;
+      }
+      _ultimaClaveVoz = clave;
+      _ultimoVozAt = ahora;
+      final distTxt = TaxiVozNavegacionService.formatDistanciaVoz(distPaso);
+      final instr = step.instruction.trim().isNotEmpty
+          ? step.instruction.trim()
+          : 'Continúa por la ruta';
+      unawaited(TaxiVozNavegacionService.instance.speak(
+        'En $distTxt, $instr',
+      ));
+    } catch (e) {
+      print('⚠️ Guía voz: $e');
+    }
+  }
+
+  IconData _iconoManeuver(TaxiManeuverIcon kind) {
+    switch (kind) {
+      case TaxiManeuverIcon.left:
+        return Icons.turn_left;
+      case TaxiManeuverIcon.right:
+        return Icons.turn_right;
+      case TaxiManeuverIcon.uTurn:
+        return Icons.u_turn_left;
+      case TaxiManeuverIcon.roundabout:
+        return Icons.roundabout_left;
+      case TaxiManeuverIcon.arrive:
+        return Icons.flag;
+      case TaxiManeuverIcon.straight:
+        return Icons.arrow_upward;
+    }
+  }
+
+  Widget _buildManeuverBannerRuta() {
+    final yo = _ubicacionRepartidor;
+    final step = yo == null
+        ? (_navSteps.isNotEmpty ? _navSteps.first : null)
+        : TaxiDirectionsService.proximoPaso(steps: _navSteps, yo: yo);
+    final instruction = (step?.instruction.trim().isNotEmpty == true)
+        ? step!.instruction.trim()
+        : 'Sigue la ruta azul hasta la próxima entrega';
+    final dist = step == null
+        ? ''
+        : (step.distanceText.trim().isNotEmpty
+            ? step.distanceText.trim()
+            : _formatMillasDesdeMetros(step.distanceM));
+    final icon = _iconoManeuver(step?.iconKind ?? TaxiManeuverIcon.straight);
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A73E8),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.25),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: Colors.white, size: 28),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (dist.isNotEmpty)
+                    Text(
+                      'En $dist',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.9),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  Text(
+                    instruction,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
+                      height: 1.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFabNav({
+    required IconData icon,
+    required Color iconColor,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(28),
+        child: Ink(
+          width: 52,
+          height: 52,
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E232E),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.28),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Icon(icon, color: iconColor, size: 26),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContadorMillas() {
+    final miSesion = _millasRecorridasSesion;
+    final mph = (_speedMps != null && _speedMps! >= 0)
+        ? (_speedMps! * 2.23694).round().clamp(0, 150)
+        : 0;
+    final kmProx = _ordenActual != null
+        ? _kmHastaOrden[_ordenActual!.id]
+        : null;
+    final miProx = kmProx != null ? kmProx * 0.621371 : null;
+    return Container(
+      width: 86,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF12151C).withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: const Color(0xFFFF9800).withValues(alpha: 0.55),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.35),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '$mph',
+            style: const TextStyle(
+              color: Color(0xFFFF9800),
+              fontWeight: FontWeight.w900,
+              fontSize: 22,
+              height: 1,
+            ),
+          ),
+          const Text(
+            'mph',
+            style: TextStyle(
+              color: Color(0xFF9CA3AF),
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            miProx != null && miProx > 0
+                ? '${miProx.toStringAsFixed(miProx < 10 ? 1 : 0)} mi'
+                : '${miSesion.toStringAsFixed(1)} mi',
+            style: const TextStyle(
+              color: Color(0xFFECEFF1),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          Text(
+            miProx != null && miProx > 0 ? 'próxima' : 'recorridas',
+            style: const TextStyle(
+              color: Color(0xFF9CA3AF),
+              fontSize: 9,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _marcarComoEntregado(Orden orden) async {
@@ -1501,8 +2039,7 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
     );
   }
 
-  /// Enfoca la parada actual en el mapa. Si está en tránsito, pasa a EN REPARTO
-  /// sin diálogo intermedio (un solo paso).
+  /// Activa guía viva hacia la parada (ruta real + voz + ubicar).
   Future<void> _abrirNavegacion(Orden orden) async {
     if (!mounted) return;
 
@@ -1512,6 +2049,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
       setState(() {
         _rutaIniciada = true;
         _ordenActualIndex = idx;
+        _modoGuiaActiva = true;
+        _seguirCamara = true;
       });
     }
     _enfocarEntregaActual();
@@ -1522,8 +2061,14 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
       unawaited(_marcarOrdenComoEnReparto(orden));
     }
 
-    // Geometría: primero local; si hay red, mejora con timeout.
+    await _iniciarGpsStream();
+    // Overview completa + tramo activo hacia esta parada.
     unawaited(_actualizarGeometriaRutaEnMapa());
+    await _actualizarLegActivo(forzar: true);
+    unawaited(TaxiVozNavegacionService.instance.speak(
+      'Navegando a la orden ${orden.numeroOrden}. Sigue la ruta azul.',
+      forzar: true,
+    ));
   }
 
   @override
@@ -1626,6 +2171,11 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
               minZoom: 3.0,
               maxZoom: 18.0,
               backgroundColor: const Color(0xFFE8EEF4),
+              onPositionChanged: (camera, hasGesture) {
+                if (hasGesture && _seguirCamara) {
+                  _seguirCamara = false;
+                }
+              },
               interactionOptions: const InteractionOptions(
                 flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
               ),
@@ -1642,16 +2192,32 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                         : null),
               ),
 
-              // Ruta real de navegación (no líneas rectas).
+              // Overview de toda la ruta (gris) — calles reales.
               if (_geometriaRutaCarretera.length >= 2)
                 PolylineLayer(
                   polylines: [
                     Polyline(
                       points: _geometriaRutaCarretera,
-                      strokeWidth: 5.5,
-                      color: const Color(0xFF1A73E8),
-                      borderStrokeWidth: 2.0,
+                      strokeWidth: _modoGuiaActiva ? 4.0 : 5.5,
+                      color: _modoGuiaActiva
+                          ? const Color(0xFF90A4AE)
+                          : const Color(0xFF1A73E8),
+                      borderStrokeWidth: _modoGuiaActiva ? 0 : 2.0,
                       borderColor: Colors.white.withValues(alpha: 0.85),
+                    ),
+                  ],
+                ),
+
+              // Tramo activo hacia la próxima parada (azul fuerte).
+              if (_modoGuiaActiva && _rutaLegActiva.length >= 2)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: _rutaLegActiva,
+                      strokeWidth: 6.5,
+                      color: const Color(0xFF1A73E8),
+                      borderStrokeWidth: 2.2,
+                      borderColor: Colors.white.withValues(alpha: 0.9),
                     ),
                   ],
                 ),
@@ -1663,7 +2229,10 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                       point: _ubicacionRepartidor!,
                       width: 44,
                       height: 44,
-                      child: const TaxiUberMapCar(size: 42),
+                      child: TaxiUberMapCar(
+                        size: 42,
+                        headingDeg: _headingDeg ?? 0,
+                      ),
                     ),
                   ],
                 ),
@@ -1757,7 +2326,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
             ),
 
           // Resumen ETA de la ruta / próxima entrega
-          if (!_cargandoGeometriaRuta &&
+          if (!_modoGuiaActiva &&
+              !_cargandoGeometriaRuta &&
               (_etaTotalRutaS != null || _ordenActual != null))
             Positioned(
               top: 12,
@@ -1792,9 +2362,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                             final km = _kmHastaOrden[_ordenActual!.id];
                             final parts = <String>[];
                             if (eta.isNotEmpty) parts.add(eta);
-                            if (km != null && km > 0) {
-                              parts.add('${km.toStringAsFixed(1)} km');
-                            }
+                            final mi = _formatMillas(km);
+                            if (mi.isNotEmpty) parts.add(mi);
                             return parts.isEmpty
                                 ? 'Calculando…'
                                 : parts.join(' · ');
@@ -1821,9 +2390,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                             final parts = <String>[];
                             if (eta.isNotEmpty) parts.add(eta);
                             if (_kmTotalRuta != null && _kmTotalRuta! > 0) {
-                              parts.add(
-                                '${_kmTotalRuta!.toStringAsFixed(1)} km',
-                              );
+                              final mi = _formatMillas(_kmTotalRuta);
+                              if (mi.isNotEmpty) parts.add(mi);
                             }
                             parts.add('${_ordenesOrdenadas.length} paradas');
                             return parts.join(' · ');
@@ -1838,6 +2406,49 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                     ],
                   ),
                 ),
+              ),
+            ),
+
+          // Banner de giro (guía viva como taxi).
+          if (_modoGuiaActiva)
+            Positioned(
+              top: 12,
+              left: 12,
+              right: 78,
+              child: _buildManeuverBannerRuta(),
+            ),
+
+          // Controles: voz, ubicar, millas (como chofer taxi).
+          if (_modoGuiaActiva || _rutaIniciada)
+            Positioned(
+              right: 14,
+              bottom: MediaQuery.of(context).size.height * 0.38,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildFabNav(
+                    icon: _vozMute
+                        ? Icons.volume_off_rounded
+                        : Icons.volume_up_rounded,
+                    iconColor: _vozMute
+                        ? const Color(0xFF9CA3AF)
+                        : const Color(0xFFFF9800),
+                    onTap: () async {
+                      final mute =
+                          await TaxiVozNavegacionService.instance.toggleMute();
+                      if (!mounted) return;
+                      setState(() => _vozMute = mute);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  _buildFabNav(
+                    icon: Icons.my_location,
+                    iconColor: const Color(0xFFFF9800),
+                    onTap: _centrarEnRepartidor,
+                  ),
+                  const SizedBox(height: 10),
+                  _buildContadorMillas(),
+                ],
               ),
             ),
           
@@ -2082,9 +2693,8 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                                   final km = kmNav ?? kmFallback;
                                   final parts = <String>[];
                                   if (eta.isNotEmpty) parts.add(eta);
-                                  if (km != null && km > 0) {
-                                    parts.add('${km.toStringAsFixed(1)} km');
-                                  }
+                                  final mi = _formatMillas(km);
+                                  if (mi.isNotEmpty) parts.add(mi);
                                   if (parts.isEmpty) {
                                     return const SizedBox.shrink();
                                   }
@@ -2137,8 +2747,15 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
                               label: Text(
                                 (_ordenActual!.estado == 'EN TRANSITO' ||
                                         _ordenActual!.estado == 'ATRASADO')
-                                    ? 'Ir a parada (iniciar)'
-                                    : 'Ir a esta parada',
+                                    ? 'Iniciar navegación'
+                                    : (_modoGuiaActiva &&
+                                            _ordenActualIndex ==
+                                                _ordenesOrdenadas.indexWhere(
+                                                    (o) =>
+                                                        o.id ==
+                                                        _ordenActual!.id)
+                                        ? 'Reanudar guía'
+                                        : 'Ir a esta parada'),
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w700,
                                   fontSize: 13,
