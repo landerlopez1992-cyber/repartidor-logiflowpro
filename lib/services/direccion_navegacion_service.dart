@@ -1,5 +1,6 @@
 import 'dart:io' show Platform;
 
+import 'package:geocoding/geocoding.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../main.dart';
 import '../models/orden.dart';
@@ -8,12 +9,30 @@ import 'paises_service.dart';
 
 /// Resultado de armar la dirección postal para navegación (Google Maps, geocoding).
 class DireccionNavegacionResultado {
+  /// Texto completo para mostrar al repartidor (incluye calle escrita a mano).
   final String direccionCompleta;
+
+  /// Query preferida para mapa/GPS (poblado/municipio/provincia; calle al final).
+  final String direccionMapa;
+
+  /// Candidatos en orden: 1 poblado → 2 municipio → 3 provincia → 4 calle.
+  final List<String> candidatosMapa;
+
   final String tipoDestino;
+
+  /// Provincia elegida en la orden (para descartar geocodes de otro estado).
+  final String? provinciaEsperada;
+
+  /// Municipio elegido (ayuda a filtrar resultados ambiguos).
+  final String? municipioEsperado;
 
   const DireccionNavegacionResultado({
     required this.direccionCompleta,
+    required this.direccionMapa,
+    required this.candidatosMapa,
     required this.tipoDestino,
+    this.provinciaEsperada,
+    this.municipioEsperado,
   });
 
   bool get esValida {
@@ -22,9 +41,19 @@ class DireccionNavegacionResultado {
         t.toLowerCase() != 'dirección no especificada' &&
         t.toLowerCase() != 'direccion no especificada';
   }
+
+  bool get tieneMapa {
+    return direccionMapa.trim().isNotEmpty &&
+        direccionMapa.toLowerCase() != 'dirección no especificada';
+  }
 }
 
 /// Construye direcciones completas y abre Google Maps sin errores por campos incompletos.
+///
+/// Prioridad GPS (obligatoria):
+/// 1) poblado (Real Campiña)  2) municipio  3) provincia  4) calle escrita (último).
+/// Así se evita que Google mande a otro estado por una calle homónima
+/// (ej. «Calle 22 Calisto» → Matanzas en vez de Cienfuegos).
 class DireccionNavegacionService {
   DireccionNavegacionService._();
 
@@ -87,6 +116,29 @@ class DireccionNavegacionService {
     partes.add(v);
   }
 
+  static String _unirPartes(List<String?> valores) {
+    final partes = <String>[];
+    for (final v in valores) {
+      _agregarParte(partes, v);
+    }
+    return partes.join(', ');
+  }
+
+  /// Deduplica candidatos preservando el orden.
+  static List<String> _unicos(List<String> raw) {
+    final out = <String>[];
+    final seen = <String>{};
+    for (final s in raw) {
+      final t = s.trim();
+      if (t.isEmpty) continue;
+      final key = t.toLowerCase();
+      if (seen.contains(key)) continue;
+      seen.add(key);
+      out.add(t);
+    }
+    return out;
+  }
+
   static bool _navegarASucursal(Orden orden) {
     if (!orden.recogerEnSucursal) return false;
     final e = orden.estado.trim().toUpperCase();
@@ -105,7 +157,8 @@ class DireccionNavegacionService {
     Map<String, dynamic>? sucursal,
     String? paisOperacion,
   }) {
-    final pais = _esVacio(paisOperacion) ? null : _normalizarPais(paisOperacion!);
+    final pais =
+        _esVacio(paisOperacion) ? null : _normalizarPais(paisOperacion!);
 
     if (_navegarASucursal(orden) && sucursal != null && sucursal.isNotEmpty) {
       return _desdeSucursal(sucursal, pais, tipo: 'sucursal');
@@ -141,8 +194,12 @@ class DireccionNavegacionService {
     } else if (pais != null) {
       _agregarParte(partes, pais);
     }
+    final completa =
+        partes.isEmpty ? 'Dirección no especificada' : partes.join(', ');
     return DireccionNavegacionResultado(
-      direccionCompleta: partes.isEmpty ? 'Dirección no especificada' : partes.join(', '),
+      direccionCompleta: completa,
+      direccionMapa: completa,
+      candidatosMapa: completa == 'Dirección no especificada' ? const [] : [completa],
       tipoDestino: tipo,
     );
   }
@@ -152,30 +209,152 @@ class DireccionNavegacionService {
     String? pais, {
     required String tipo,
   }) {
-    final partes = <String>[];
+    final calle = orden.direccionDestino;
+    final poblado = orden.consejoPopularBatey; // Real Campiña, etc.
+    final municipio = orden.municipioDestino;
+    final provincia = !_esVacio(orden.provinciaDestino)
+        ? orden.provinciaDestino
+        : orden.ciudadDestino;
 
-    _agregarParte(partes, orden.direccionDestino);
-    _agregarParte(partes, orden.consejoPopularBatey);
-
-    if (!_esVacio(orden.municipioDestino)) {
-      _agregarParte(partes, orden.municipioDestino);
+    String? paisEff = pais;
+    final preview = _unirPartes([calle, poblado, municipio, provincia]);
+    if (preview.isNotEmpty &&
+        !_contieneAlgunPais(preview) &&
+        paisEff == null) {
+      // sin país conocido
     }
 
-    if (!_esVacio(orden.provinciaDestino)) {
-      _agregarParte(partes, orden.provinciaDestino);
-    } else if (!_esVacio(orden.ciudadDestino)) {
-      _agregarParte(partes, orden.ciudadDestino);
-    }
+    // Pantalla del repartidor: calle + desplegables (siempre completa).
+    final display = _unirPartes([calle, poblado, municipio, provincia, paisEff]);
 
-    final sinPais = partes.join(', ');
-    if (sinPais.isNotEmpty && !_contieneAlgunPais(sinPais) && pais != null) {
-      _agregarParte(partes, pais);
-    }
+    // Orden obligatorio GPS (evita «Calle 22 Calisto» → Matanzas u otro estado):
+    // 1) poblado  2) municipio  3) provincia  4) calle escrita (último).
+    final conPoblado = _unirPartes([poblado, municipio, provincia, paisEff]);
+    final pobladoProv = _unirPartes([poblado, provincia, paisEff]);
+    final conMunicipio = _unirPartes([municipio, provincia, paisEff]);
+    final soloProvincia = _unirPartes([provincia, paisEff]);
+    // Calle al final, pero SIEMPRE anclada a municipio/provincia/país
+    // para que Google no “adivine” otro estado.
+    final conCalle = _unirPartes([calle, poblado, municipio, provincia, paisEff]);
+
+    final candidatos = _unicos([
+      conPoblado,
+      pobladoProv,
+      conMunicipio,
+      soloProvincia,
+      conCalle, // último recurso
+    ]);
+
+    final mapa = candidatos.isNotEmpty
+        ? candidatos.first
+        : (display.isEmpty ? 'Dirección no especificada' : display);
 
     return DireccionNavegacionResultado(
-      direccionCompleta: partes.isEmpty ? 'Dirección no especificada' : partes.join(', '),
+      direccionCompleta:
+          display.isEmpty ? 'Dirección no especificada' : display,
+      direccionMapa: mapa.isEmpty ? 'Dirección no especificada' : mapa,
+      candidatosMapa: candidatos,
       tipoDestino: tipo,
+      provinciaEsperada: provincia?.trim(),
+      municipioEsperado: municipio?.trim(),
     );
+  }
+
+  /// True si el placemark coincide con provincia/municipio elegidos en la orden.
+  static bool _coincideZonaEsperada(
+    Placemark place, {
+    String? provinciaEsperada,
+    String? municipioEsperado,
+  }) {
+    final hayProv = !_esVacio(provinciaEsperada);
+    final hayMun = !_esVacio(municipioEsperado);
+    if (!hayProv && !hayMun) return true;
+
+    final blob = [
+      place.administrativeArea,
+      place.subAdministrativeArea,
+      place.locality,
+      place.subLocality,
+      place.name,
+      place.thoroughfare,
+    ].whereType<String>().join(' ').toLowerCase();
+
+    if (hayProv) {
+      final p = provinciaEsperada!.trim().toLowerCase();
+      // Exigir provincia: evita Cienfuegos → Matanzas por calle homónima.
+      if (!_textoContiene(blob, p)) return false;
+    }
+    if (hayMun) {
+      final m = municipioEsperado!.trim().toLowerCase();
+      // Municipio es soft-check: si aparece, bien; si no, igual aceptamos
+      // si la provincia ya encaja (poblado a veces no trae municipio en Google).
+      if (blob.isNotEmpty &&
+          !_textoContiene(blob, m) &&
+          !_textoContiene(m, blob)) {
+        // No rechazar solo por municipio: Google a veces omite el nombre.
+      }
+    }
+    return true;
+  }
+
+  /// Geocodifica: poblado → municipio → provincia → calle (última).
+  /// Si un resultado cae fuera de la provincia elegida, se descarta y se prueba el siguiente.
+  static Future<({double lat, double lon, String queryUsada})?>
+      geocodificarConFallback(
+    DireccionNavegacionResultado res, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    final queries = res.candidatosMapa.isNotEmpty
+        ? res.candidatosMapa
+        : (res.tieneMapa ? [res.direccionMapa] : <String>[]);
+    for (final q in queries) {
+      try {
+        print('📍 Geocode intento: $q');
+        final locations = await locationFromAddress(q).timeout(timeout);
+        if (locations.isEmpty) continue;
+
+        for (final loc in locations.take(3)) {
+          var aceptado = true;
+          if (!_esVacio(res.provinciaEsperada)) {
+            try {
+              final marks = await placemarkFromCoordinates(
+                loc.latitude,
+                loc.longitude,
+              ).timeout(timeout);
+              if (marks.isNotEmpty) {
+                aceptado = _coincideZonaEsperada(
+                  marks.first,
+                  provinciaEsperada: res.provinciaEsperada,
+                  municipioEsperado: res.municipioEsperado,
+                );
+                if (!aceptado) {
+                  print(
+                    '🚫 Geocode descartado (fuera de ${res.provinciaEsperada}): '
+                    '${loc.latitude}, ${loc.longitude} ← "$q"',
+                  );
+                }
+              }
+            } catch (_) {
+              // Sin reverse: si la query ya incluye provincia, aceptar.
+              aceptado = _textoContiene(q, res.provinciaEsperada ?? '');
+            }
+          }
+          if (!aceptado) continue;
+
+          print(
+            '✅ Geocode OK ($q) → ${loc.latitude}, ${loc.longitude}',
+          );
+          return (
+            lat: loc.latitude,
+            lon: loc.longitude,
+            queryUsada: q,
+          );
+        }
+      } catch (e) {
+        print('⚠️ Geocode falló ($q): $e');
+      }
+    }
+    return null;
   }
 
   static Future<Map<String, dynamic>?> cargarSucursalOrden(Orden orden) async {
@@ -228,10 +407,15 @@ class DireccionNavegacionService {
         paisOperacion: pais,
       );
 
+      // Preferir query de mapa (sin calle confusa en Cuba).
+      // Si no hay texto útil, usar coordenadas ya guardadas.
       String destino;
-      if (res.esValida) {
-        destino = res.direccionCompleta;
-        print('🗺️ Navegación (${res.tipoDestino}): $destino');
+      if (res.tieneMapa) {
+        destino = res.direccionMapa;
+        print(
+          '🗺️ Navegación (${res.tipoDestino}) mapa="$destino" '
+          '(display="${res.direccionCompleta}")',
+        );
       } else if (latitudFallback != null && longitudFallback != null) {
         destino = '$latitudFallback,$longitudFallback';
         print('🗺️ Navegación (coordenadas): $destino');

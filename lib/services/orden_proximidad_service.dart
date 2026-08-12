@@ -1,8 +1,6 @@
-import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import '../models/orden.dart';
 import 'direccion_navegacion_service.dart';
-import 'paises_service.dart';
 
 /// Ordena órdenes de la más cercana a la más lejana respecto al repartidor.
 class OrdenProximidadService {
@@ -44,14 +42,11 @@ class OrdenProximidadService {
         orden,
         sucursal: sucursal,
       );
-      if (!res.esValida) return null;
+      if (!res.esValida && !res.tieneMapa) return null;
 
-      final locations = await locationFromAddress(res.direccionCompleta);
-      if (locations.isEmpty) return null;
-      return (
-        lat: locations.first.latitude,
-        lon: locations.first.longitude,
-      );
+      final geo = await DireccionNavegacionService.geocodificarConFallback(res);
+      if (geo == null) return null;
+      return (lat: geo.lat, lon: geo.lon);
     } catch (e) {
       print('⚠️ Geocoding orden #${orden.numeroOrden}: $e');
       return null;

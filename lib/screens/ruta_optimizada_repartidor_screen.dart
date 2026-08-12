@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
 import '../models/orden.dart';
 import '../services/paises_service.dart';
 import '../services/mapa_region_service.dart';
@@ -574,22 +573,24 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
           orden,
           sucursal: suc,
         );
-        if (!res.esValida) {
+        if (!res.esValida && !res.tieneMapa) {
           print('   ⚠️ Sin dirección completa para orden #${orden.numeroOrden}');
           continue;
         }
-        final direccionCompleta = res.direccionCompleta;
-        print('   📍 Geocodificando (${res.tipoDestino}): $direccionCompleta');
-        
-        final locations = await locationFromAddress(direccionCompleta)
-            .timeout(const Duration(seconds: 5));
-        if (locations.isNotEmpty) {
-          final location = locations.first;
-          // Guardar en el Map temporal
-          _coordenadasGeocodificadas[orden.id] = LatLng(location.latitude, location.longitude);
-          print('   ✅ Coordenadas obtenidas: ${location.latitude}, ${location.longitude}');
+        print(
+          '   📍 Geocodificando (${res.tipoDestino}): '
+          'mapa="${res.direccionMapa}" | display="${res.direccionCompleta}"',
+        );
+
+        final geo =
+            await DireccionNavegacionService.geocodificarConFallback(res);
+        if (geo != null) {
+          _coordenadasGeocodificadas[orden.id] = LatLng(geo.lat, geo.lon);
+          print(
+            '   ✅ Coordenadas: ${geo.lat}, ${geo.lon} (query: ${geo.queryUsada})',
+          );
         } else {
-          print('   ⚠️ No se encontraron coordenadas para: $direccionCompleta');
+          print('   ⚠️ No se encontraron coordenadas para: ${res.direccionMapa}');
         }
       } catch (e) {
         print('   ❌ Error geocodificando orden #${orden.numeroOrden}: $e');
@@ -1048,11 +1049,12 @@ class _RutaOptimizadaRepartidorScreenState extends State<RutaOptimizadaRepartido
         orden,
         sucursal: suc,
       );
-      if (!res.esValida) return null;
+      if (!res.esValida && !res.tieneMapa) return null;
 
-      final locations = await locationFromAddress(res.direccionCompleta);
-      if (locations.isNotEmpty) {
-        final coords = LatLng(locations.first.latitude, locations.first.longitude);
+      final geo =
+          await DireccionNavegacionService.geocodificarConFallback(res);
+      if (geo != null) {
+        final coords = LatLng(geo.lat, geo.lon);
         _coordenadasGeocodificadas[orden.id] = coords;
         return coords;
       }

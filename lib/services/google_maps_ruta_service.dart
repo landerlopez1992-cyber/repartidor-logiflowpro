@@ -58,8 +58,9 @@ class GoogleMapsRutaService {
         sucursal: suc,
         paisOperacion: paisOperacion,
       );
-      if (res.esValida) {
-        direcciones.add(res.direccionCompleta);
+      if (res.esValida || res.tieneMapa) {
+        // En Cuba: poblado/municipio/provincia (no la calle escrita a mano).
+        direcciones.add(res.direccionMapa);
       } else if (orden.latitudEntrega != null && orden.longitudEntrega != null) {
         direcciones.add('${orden.latitudEntrega},${orden.longitudEntrega}');
       }
