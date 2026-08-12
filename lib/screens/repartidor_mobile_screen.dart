@@ -6561,17 +6561,6 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   Future<void> _verOrdenesDelLote(String? loteIdRaw) async {
     final loteId = (loteIdRaw ?? '').trim();
     if (loteId.isEmpty) return;
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => const AlertDialog(
-        backgroundColor: Color(0xFFFFFFFF),
-        content: Text(
-          'Cargando órdenes del lote…',
-          style: TextStyle(color: Color(0xFF2C2C2C), fontSize: 14),
-        ),
-      ),
-    );
     Map<String, dynamic>? detalle;
     try {
       final res = await supabase.rpc(
@@ -6585,7 +6574,6 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       debugPrint('Detalle lote: $e');
     }
     if (!mounted) return;
-    Navigator.of(context, rootNavigator: true).pop();
     if (detalle == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -7299,31 +7287,35 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     }
 
     // Botones para repartidores
+    if (OrdenLogisticaRedUi.puedeConfirmarRecepcionLote(orden) &&
+        orden.estado != 'ENTREGADO' &&
+        orden.estado != 'CANCELADA' &&
+        orden.estado != 'ENTREGADO EN SUCURSAL') {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _botonTarjetaOrden(
+            onPressed: () => _verOrdenesDelLote(orden.loteActualId),
+            icon: Icons.list_alt_outlined,
+            label: _etiquetaVerOrdenesLote(orden.loteActualId),
+            color: const Color(0xFF37474F),
+          ),
+          const SizedBox(height: 8),
+          _botonTarjetaOrden(
+            onPressed: () {
+              if (_confirmandoLote) return;
+              _confirmarRecepcionLoteRed(orden);
+            },
+            icon: Icons.inventory_2_outlined,
+            label: 'Confirmar recepción lote',
+            color: const Color(0xFF37474F),
+          ),
+        ],
+      );
+    }
+
     switch (orden.estado) {
       case 'POR ENVIAR':
-        if (OrdenLogisticaRedUi.puedeConfirmarRecepcionLote(orden)) {
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _botonTarjetaOrden(
-                onPressed: () => _verOrdenesDelLote(orden.loteActualId),
-                icon: Icons.list_alt_outlined,
-                label: _etiquetaVerOrdenesLote(orden.loteActualId),
-                color: const Color(0xFF37474F),
-              ),
-              const SizedBox(height: 8),
-              _botonTarjetaOrden(
-                onPressed: () {
-                  if (_confirmandoLote) return;
-                  _confirmarRecepcionLoteRed(orden);
-                },
-                icon: Icons.inventory_2_outlined,
-                label: 'Confirmar recepción lote',
-                color: const Color(0xFF37474F),
-              ),
-            ],
-          );
-        }
         if (OrdenRecogidaColaboradorUi.puedeIniciarRecolecta(orden)) {
           return _botonTarjetaOrden(
             onPressed: () => _iniciarRecolectaColaborador(orden),
@@ -7390,29 +7382,6 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         );
 
       case 'EN TRANSITO':
-        if (OrdenLogisticaRedUi.puedeConfirmarRecepcionLote(orden)) {
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _botonTarjetaOrden(
-                onPressed: () => _verOrdenesDelLote(orden.loteActualId),
-                icon: Icons.list_alt_outlined,
-                label: _etiquetaVerOrdenesLote(orden.loteActualId),
-                color: const Color(0xFF37474F),
-              ),
-              const SizedBox(height: 8),
-              _botonTarjetaOrden(
-                onPressed: () {
-                  if (_confirmandoLote) return;
-                  _confirmarRecepcionLoteRed(orden);
-                },
-                icon: Icons.inventory_2_outlined,
-                label: 'Confirmar recepción lote',
-                color: const Color(0xFF37474F),
-              ),
-            ],
-          );
-        }
         return _botonTarjetaOrden(
           onPressed: () => _marcarComoEnReparto(orden),
           icon: Icons.local_shipping,
