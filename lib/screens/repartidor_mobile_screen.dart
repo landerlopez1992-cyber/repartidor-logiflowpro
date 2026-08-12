@@ -42,6 +42,7 @@ import 'taxi_navegacion_chofer_screen.dart';
 import 'taxi_chofer_mapa_screen.dart';
 import '../services/taxi_chofer_service.dart';
 import '../services/repartidor_suspension_service.dart';
+import '../services/tenant_fuera_servicio_service.dart';
 import '../widgets/repartidor_viajes_suspendido_panel.dart';
 import '../widgets/repartidor_viajes_tab_chip.dart';
 import '../services/taxi_tarifas_chofer_service.dart';
@@ -51,6 +52,7 @@ import 'qr_scanner_fullscreen.dart';
 import 'aviso_ubicacion_segundo_plano_screen.dart';
 import 'aviso_ubicacion_destacado_screen.dart';
 import 'ruta_optimizada_repartidor_screen.dart';
+import 'tenant_fuera_servicio_screen.dart';
 import '../config/app_colors.dart';
 import '../constants/repartidor_notificacion_tipos.dart';
 import '../services/repartidor_notificacion_service.dart';
@@ -326,6 +328,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           onTimeout: () {},
         ),
       ]);
+      if (await _verificarTenantFueraServicioYBloquear()) return;
       // Recarga órdenes (caché otra vez + red solo si hay internet real).
       unawaited(_cargarOrdenes());
       unawaited(_cargarPaisOperacion());
@@ -492,6 +495,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     _suspensionPollTimer?.cancel();
     _suspensionPollTimer = Timer.periodic(const Duration(seconds: 12), (_) {
       unawaited(_verificarSuspensionYBloquear());
+      unawaited(_verificarTenantFueraServicioYBloquear());
     });
     try {
       final user = supabase.auth.currentUser;
@@ -514,6 +518,31 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           )
           .subscribe();
     } catch (_) {}
+  }
+
+  /// Empresa bloqueada / sin suscripción → pantalla negra de fuera de servicio.
+  Future<bool> _verificarTenantFueraServicioYBloquear() async {
+    if (!mounted) return false;
+    final tid = (_tenantId ?? '').trim();
+    if (tid.isEmpty) return false;
+    try {
+      final fuera = await TenantFueraServicioService.fetch(
+        tenantId: tid,
+        forceRefresh: true,
+      ).timeout(const Duration(seconds: 6));
+      if (!mounted) return false;
+      if (fuera?.bloqueada != true) return false;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => TenantFueraServicioScreen(tenantId: tid),
+        ),
+        (_) => false,
+      );
+      return true;
+    } catch (e) {
+      print('⚠️ Check fuera de servicio en home: $e');
+      return false;
+    }
   }
 
   /// Aplica suspensión de chofer: apaga buscar viajes, sin bloquear toda la app.
@@ -843,6 +872,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       // Recargar configuración, órdenes y notificaciones cuando la app vuelve a estar activa
       print('🔄 App resumida - Recargando configuración, órdenes y notificaciones...');
       unawaited(_verificarSuspensionYBloquear());
+      unawaited(_verificarTenantFueraServicioYBloquear());
       _cargarConfiguracionPrioridad();
       _cargarOrdenes();
       _cargarMensajesNoLeidos();

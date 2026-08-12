@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
 import 'package:flutter/foundation.dart' show TargetPlatform;
+import 'dart:async';
 import 'dart:io' show Platform;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,9 +14,11 @@ import 'loading_data_screen.dart';
 import '../services/sesion_offline_cleanup.dart';
 import '../services/auth_error_handler.dart';
 import '../services/repartidor_boot_cache_service.dart';
+import '../services/tenant_fuera_servicio_service.dart';
 import '../config/app_colors.dart';
 import '../widgets/volonex_dialog.dart';
 import '../widgets/repartidor_loading_spinner.dart';
+import 'tenant_fuera_servicio_screen.dart';
 
 class LoginRepartidorScreen extends StatefulWidget {
   const LoginRepartidorScreen({super.key});
@@ -870,14 +873,63 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
           },
           onComplete: () {
             if (mounted) {
-              Navigator.of(context).pushReplacement(
-                MaterialPageRoute(
-                  builder: (context) => const RepartidorMobileScreen(),
-                ),
-              );
+              unawaited(_irAHomeOFueraServicio());
             }
           },
         ),
+      ),
+    );
+  }
+
+  Future<void> _irAHomeOFueraServicio() async {
+    if (!mounted) return;
+    try {
+      final user = supabase.auth.currentUser;
+      String? tenantId;
+      if (user != null) {
+        final prefs = await SharedPreferences.getInstance();
+        tenantId = prefs.getString('cached_tenant_id_${user.id}');
+        if (tenantId == null || tenantId.isEmpty) {
+          final raw = prefs.getString('cached_user_data_${user.id}');
+          if (raw != null && raw.isNotEmpty) {
+            try {
+              final m = jsonDecode(raw) as Map<String, dynamic>;
+              tenantId = m['tenant_id']?.toString();
+            } catch (_) {}
+          }
+        }
+        if (tenantId == null || tenantId.isEmpty) {
+          final row = await supabase
+              .from('usuarios')
+              .select('tenant_id')
+              .eq('auth_id', user.id)
+              .maybeSingle()
+              .timeout(const Duration(seconds: 5));
+          tenantId = row?['tenant_id']?.toString();
+        }
+      }
+      if (tenantId != null && tenantId.isNotEmpty) {
+        final fuera = await TenantFueraServicioService.fetch(
+          tenantId: tenantId,
+          forceRefresh: true,
+        ).timeout(const Duration(seconds: 6));
+        if (!mounted) return;
+        if (fuera?.bloqueada == true) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => TenantFueraServicioScreen(tenantId: tenantId!),
+            ),
+          );
+          return;
+        }
+      }
+    } catch (e) {
+      print('⚠️ Check fuera de servicio post-login: $e');
+    }
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (context) => const RepartidorMobileScreen(),
       ),
     );
   }
