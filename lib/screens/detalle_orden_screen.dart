@@ -38,6 +38,7 @@ import '../services/repartidor_seguridad_service.dart';
 import '../services/repartidor_jornada_service.dart';
 import '../services/repartidor_gps_odometro_service.dart';
 import '../utils/repartidor_requires_online.dart';
+import 'mapa_destino_entrega_screen.dart';
 
 class DetalleOrdenScreen extends StatefulWidget {
   final Orden orden;
@@ -1548,111 +1549,132 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
             ),
             const SizedBox(height: 16),
             
-            // Botones de contacto (WhatsApp, GPS, SMS, Llamada) - Solo si recoger_en_sucursal = false
-            if (!_ordenActual.recogerEnSucursal && _ordenActual.direccionDestino.isNotEmpty) ...[
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: RemesaPuraUiTheme.fondoTarjeta,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: AppColors.darkBorder,
-                    width: 0.5,
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Row(
-                      children: [
-                        Icon(
-                          Icons.contact_phone,
-                          color: RemesaPuraUiTheme.acento,
-                          size: 20,
-                        ),
-                        SizedBox(width: 8),
-                        Text(
-                          'Contacto del Destinatario',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.darkText,
+            // Contacto domicilio: dirección (aunque venga de municipio/provincia) + teléfono + GPS/WhatsApp
+            if (!_ordenActual.recogerEnSucursal) ...[
+              Builder(
+                builder: (context) {
+                  final dir = _formatearDireccionCompletaRemesa().trim();
+                  final dirOk = dir.isNotEmpty &&
+                      dir.toLowerCase() != 'dirección no especificada' &&
+                      dir.toLowerCase() != 'direccion no especificada';
+                  final tel = (_ordenActual.telefonoDestinatario ?? '').trim();
+                  final telOk = tel.isNotEmpty;
+                  if (!dirOk && !telOk) {
+                    return const SizedBox.shrink();
+                  }
+                  return Column(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: RemesaPuraUiTheme.fondoTarjeta,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: AppColors.darkBorder,
+                            width: 0.5,
                           ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    // Dirección (acciones GPS/llamar/mensaje/WhatsApp al final)
-                    Row(
-                      children: [
-                        const Icon(Icons.location_on, color: Color(0xFF1976D2), size: 20),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Dirección de Entrega',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: AppColors.darkTextMuted,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                _formatearDireccionCompletaRemesa(),
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  color: AppColors.darkText,
-                                  fontWeight: FontWeight.w600,
-                                  height: 1.4,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    // Teléfono (sin botones inline)
-                    if (_ordenActual.telefonoDestinatario != null && _ordenActual.telefonoDestinatario!.isNotEmpty) ...[
-                      const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          const Icon(Icons.phone, color: Color(0xFF1976D2), size: 20),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Row(
                               children: [
-                                const Text(
-                                  'Teléfono del Destinatario',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: AppColors.darkTextMuted,
-                                    fontWeight: FontWeight.w500,
-                                  ),
+                                Icon(
+                                  Icons.contact_phone,
+                                  color: RemesaPuraUiTheme.acento,
+                                  size: 20,
                                 ),
+                                SizedBox(width: 8),
                                 Text(
-                                  _ordenActual.telefonoDestinatario!,
-                                  style: const TextStyle(
+                                  'Contacto del Destinatario',
+                                  style: TextStyle(
                                     fontSize: 16,
+                                    fontWeight: FontWeight.bold,
                                     color: AppColors.darkText,
-                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ],
                             ),
-                          ),
-                        ],
+                            if (dirOk) ...[
+                              const SizedBox(height: 16),
+                              Row(
+                                children: [
+                                  const Icon(Icons.location_on,
+                                      color: Color(0xFF1976D2), size: 20),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Dirección de Entrega',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: AppColors.darkTextMuted,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          dir,
+                                          style: const TextStyle(
+                                            fontSize: 14,
+                                            color: AppColors.darkText,
+                                            fontWeight: FontWeight.w600,
+                                            height: 1.4,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                            if (telOk) ...[
+                              const SizedBox(height: 16),
+                              Row(
+                                children: [
+                                  const Icon(Icons.phone,
+                                      color: Color(0xFF1976D2), size: 20),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Teléfono del Destinatario',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: AppColors.darkTextMuted,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                        Text(
+                                          tel,
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            color: AppColors.darkText,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                            const SizedBox(height: 16),
+                            _buildAccionesContactoDestinatarioBar(),
+                          ],
+                        ),
                       ),
+                      const SizedBox(height: 16),
                     ],
-                    const SizedBox(height: 16),
-                    _buildAccionesContactoDestinatarioBar(),
-                  ],
-                ),
+                  );
+                },
               ),
-              const SizedBox(height: 16),
             ],
             
             if (estado == 'POR ENVIAR' || estado == 'ENTREGADO EN SUCURSAL') ...[
@@ -3485,21 +3507,26 @@ class _DetalleOrdenScreenState extends State<DetalleOrdenScreen> {
       paisOperacion: paisOk,
     );
 
-    final ok = await DireccionNavegacionService.abrirDestinoEnGoogleMaps(
-      orden: _ordenActual,
-      sucursal: _sucursalInfo,
-      paisOperacion: paisOk,
-      latitudFallback: _ordenActual.latitudEntrega,
-      longitudFallback: _ordenActual.longitudEntrega,
-    );
-
-    if (!ok) {
+    if (!res.esValida &&
+        (_ordenActual.latitudEntrega == null ||
+            _ordenActual.longitudEntrega == null)) {
       _mostrarMensaje(
-        res.esValida
-            ? 'No se pudo abrir el mapa. Instala Google Maps o abre manualmente:\n\n${res.direccionCompleta}'
-            : 'No hay dirección completa (calle, municipio, provincia y país) para navegar.',
+        'No hay dirección completa (calle, municipio, provincia y país) para navegar.',
       );
+      return;
     }
+
+    if (!mounted) return;
+    // Mapa Volonex in-app (mismo tiles que taxi); Google Maps queda como opción dentro.
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MapaDestinoEntregaScreen(
+          orden: _ordenActual,
+          sucursal: _sucursalInfo,
+          paisOperacion: paisOk,
+        ),
+      ),
+    );
   }
 
   void _mostrarOpciones() {

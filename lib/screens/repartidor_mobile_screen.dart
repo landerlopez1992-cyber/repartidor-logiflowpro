@@ -65,6 +65,7 @@ import '../utils/orden_tipo_tarjeta_repartidor.dart';
 import '../widgets/boton_ver_productos_orden_tienda.dart';
 import '../services/productos_orden_tienda_service.dart';
 import '../utils/orden_recogida_colaborador_ui.dart';
+import '../utils/orden_logistica_red_ui.dart';
 import '../utils/remesa_pura_entrega_ui.dart';
 import '../widgets/volonex_dialog.dart';
 import '../widgets/volonex_ui.dart';
@@ -86,6 +87,8 @@ import '../widgets/actualizacion_forzada_overlay.dart';
 import '../widgets/repartidor_foto_perfil_prompt_dialog.dart';
 import '../utils/repartidor_provincia_filtro_util.dart';
 import '../utils/entrega_geo_validacion_util.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'mapa_destino_entrega_screen.dart';
 
 class RepartidorMobileScreen extends StatefulWidget {
   const RepartidorMobileScreen({super.key});
@@ -191,6 +194,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   
   // Map para almacenar información de sucursales por orden ID
   Map<String, Map<String, dynamic>> _sucursalesInfo = {};
+  /// id hub → {nombre, codigo, direccion, ...}
+  final Map<String, Map<String, dynamic>> _hubsInfo = {};
+  /// id lote → {codigo, estado, hub_destino_id, ...}
+  final Map<String, Map<String, dynamic>> _lotesInfo = {};
+  bool _confirmandoLote = false;
   
   // Verificar si hay órdenes que pueden mostrar ruta optimizada
   // Muestra el botón si hay 2+ órdenes en EN TRANSITO, EN REPARTO, ATRASADO
@@ -1877,6 +1885,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               _ordenesFiltradasCache = null; // Invalidar caché cuando cambien las órdenes
               _cacheKeyFiltradas = null;
             });
+            unawaited(_asegurarHubsYLotes(listaFinal));
             }
             return; // Salir temprano para este caso
           }
@@ -2094,6 +2103,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               _ordenesFiltradasCache = null; // Invalidar caché cuando cambien las órdenes
               _cacheKeyFiltradas = null;
             });
+            unawaited(_asegurarHubsYLotes(listaFinal));
             // Verificar y activar rastreo si hay órdenes en "EN REPARTO"
             _verificarYActivarRastreo();
           }
@@ -5083,14 +5093,37 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   ),
                 ),
                 const SizedBox(height: 8),
-              ] else if (orden.direccionDestino.isNotEmpty) ...[
-                // Si NO es recogida en sucursal: mostrar dirección del destinatario
-                _buildInfoRow(
-                  Icons.location_on,
-                  'Dirección:',
-                  _formatearDireccionCompleta(orden),
+              ] else ...[
+                // Domicilio: dirección + teléfono + GPS Volonex / WhatsApp (como órdenes)
+                Builder(
+                  builder: (context) {
+                    final dir = _formatearDireccionCompleta(orden).trim();
+                    final dirOk = dir.isNotEmpty &&
+                        dir.toLowerCase() != 'dirección no especificada' &&
+                        dir.toLowerCase() != 'direccion no especificada';
+                    final tel = (orden.telefonoDestinatario ?? '').trim();
+                    final telOk = tel.isNotEmpty;
+                    if (!dirOk && !telOk) {
+                      return const SizedBox.shrink();
+                    }
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (dirOk) ...[
+                          _buildInfoRow(Icons.location_on, 'Dirección:', dir),
+                          const SizedBox(height: 4),
+                        ],
+                        if (telOk) ...[
+                          _buildInfoRow(Icons.phone, 'Teléfono:', tel),
+                          const SizedBox(height: 4),
+                        ],
+                        const SizedBox(height: 4),
+                        _buildAccionesContactoRemesaLista(orden),
+                        const SizedBox(height: 8),
+                      ],
+                    );
+                  },
                 ),
-                const SizedBox(height: 4),
               ],
               ], // fin expandida remesa
               
@@ -5238,6 +5271,27 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             'Recoger:',
             nombre.isNotEmpty ? nombre : 'Punto del colaborador',
           ),
+          const SizedBox(height: 4),
+          _buildInfoRow(Icons.person_outline, 'Para:', orden.receptor, maxLines: 1),
+        ],
+      );
+    }
+    if (OrdenLogisticaRedUi.mostrarPuntoHub(orden)) {
+      final hubNom = _nombreHub(orden.hubActualId);
+      final loteCod = _codigoLote(orden.loteActualId);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildInfoRow(
+            Icons.hub_outlined,
+            'Hub:',
+            hubNom,
+            maxLines: 1,
+          ),
+          if (loteCod.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            _buildInfoRow(Icons.inventory_2_outlined, 'Lote:', loteCod, maxLines: 1),
+          ],
           const SizedBox(height: 4),
           _buildInfoRow(Icons.person_outline, 'Para:', orden.receptor, maxLines: 1),
         ],
@@ -5659,6 +5713,62 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                     ],
                   ),
                 ),
+              ] else if (OrdenLogisticaRedUi.mostrarPuntoHub(orden)) ...[
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF37474F).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF37474F), width: 1.5),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.hub_outlined, color: Color(0xFF37474F), size: 16),
+                          SizedBox(width: 6),
+                          Text(
+                            'Recoger en hub',
+                            style: TextStyle(
+                              color: Color(0xFF37474F),
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      _buildInfoRow(
+                        Icons.warehouse_outlined,
+                        'Hub:',
+                        _nombreHub(orden.hubActualId),
+                      ),
+                      if (_codigoLote(orden.loteActualId).isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        _buildInfoRow(
+                          Icons.inventory_2_outlined,
+                          'Lote:',
+                          _codigoLote(orden.loteActualId),
+                        ),
+                      ],
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Tras confirmar recepción del lote (si aplica), entrega al destinatario.',
+                        style: TextStyle(color: AppColors.darkTextMuted, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _buildInfoRow(Icons.person_outline, 'Para:', orden.receptor),
+                const SizedBox(height: 4),
+                if (orden.direccionDestino.isNotEmpty)
+                  _buildInfoRow(
+                    Icons.location_on,
+                    'Entregar en:',
+                    _formatearDireccionCompleta(orden),
+                  ),
               ] else if (OrdenRecogidaColaboradorUi.mostrarBloqueDestinatario(orden)) ...[
                 _buildInfoRow(Icons.person, 'De:', orden.emisor),
                 const SizedBox(height: 4),
@@ -6149,6 +6259,133 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     
     return partes.join(', ');
   }
+
+  /// Barra GPS / llamar / SMS / WhatsApp en tarjeta remesa a domicilio.
+  Widget _buildAccionesContactoRemesaLista(Orden orden) {
+    final tel = orden.telefonoDestinatario?.trim();
+    final hasTel = tel != null && tel.isNotEmpty;
+
+    Widget actionBtn({
+      required Color color,
+      required Widget icon,
+      required VoidCallback onPressed,
+      String? tooltip,
+    }) {
+      final btn = Container(
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: IconButton(
+          onPressed: onPressed,
+          icon: icon,
+          style: IconButton.styleFrom(
+            padding: const EdgeInsets.all(10),
+          ),
+        ),
+      );
+      if (tooltip == null || tooltip.isEmpty) return btn;
+      return Tooltip(message: tooltip, child: btn);
+    }
+
+    return Align(
+      alignment: Alignment.center,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          actionBtn(
+            color: const Color(0xFF4CAF50),
+            icon: const Icon(Icons.navigation, color: Colors.white, size: 18),
+            onPressed: () => _abrirMapaDestinoRemesa(orden),
+            tooltip: 'Mapa Volonex',
+          ),
+          if (hasTel) ...[
+            const SizedBox(width: 8),
+            actionBtn(
+              color: const Color(0xFF4CAF50),
+              icon: const Icon(Icons.call, color: Colors.white, size: 18),
+              onPressed: () => _llamarTelefonoRemesa(tel),
+              tooltip: 'Llamar',
+            ),
+            const SizedBox(width: 8),
+            actionBtn(
+              color: const Color(0xFF1976D2),
+              icon: const Icon(Icons.message, color: Colors.white, size: 18),
+              onPressed: () => _smsTelefonoRemesa(tel),
+              tooltip: 'Mensaje',
+            ),
+            const SizedBox(width: 8),
+            actionBtn(
+              color: const Color(0xFF25D366),
+              icon: const FaIcon(
+                FontAwesomeIcons.whatsapp,
+                color: Colors.white,
+                size: 18,
+              ),
+              onPressed: () => _whatsappTelefonoRemesa(tel),
+              tooltip: 'WhatsApp',
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _abrirMapaDestinoRemesa(Orden orden) async {
+    Map<String, dynamic>? suc;
+    if (orden.recogerEnSucursal && _sucursalesInfo.containsKey(orden.id)) {
+      suc = _sucursalesInfo[orden.id];
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MapaDestinoEntregaScreen(
+          orden: orden,
+          sucursal: suc,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _llamarTelefonoRemesa(String telefono) async {
+    final uri = Uri(scheme: 'tel', path: telefono);
+    try {
+      await launchUrl(uri);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se puede realizar la llamada')),
+      );
+    }
+  }
+
+  Future<void> _smsTelefonoRemesa(String telefono) async {
+    final uri = Uri(scheme: 'sms', path: telefono);
+    try {
+      await launchUrl(uri);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se puede enviar mensaje')),
+      );
+    }
+  }
+
+  Future<void> _whatsappTelefonoRemesa(String telefono) async {
+    final digits = telefono.replaceAll(RegExp(r'[^\d]'), '');
+    if (digits.isEmpty) return;
+    try {
+      await launchUrl(
+        Uri.parse('https://wa.me/$digits'),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo abrir WhatsApp')),
+      );
+    }
+  }
   
   String _formatearDireccionSucursal(Map<String, dynamic> sucursal) {
     final direccion = sucursal['direccion'] ?? '';
@@ -6163,6 +6400,140 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     if (pais.isNotEmpty) partes.add(pais);
     
     return partes.isNotEmpty ? partes.join(', ') : 'Dirección no especificada';
+  }
+
+  String _nombreHub(String? hubId) {
+    final id = (hubId ?? '').trim();
+    if (id.isEmpty) return 'Hub';
+    final h = _hubsInfo[id];
+    if (h == null) return 'Hub';
+    final n = (h['nombre'] ?? '').toString();
+    final c = (h['codigo'] ?? '').toString();
+    if (n.isEmpty) return 'Hub';
+    return c.isEmpty ? n : '$n ($c)';
+  }
+
+  String _codigoLote(String? loteId) {
+    final id = (loteId ?? '').trim();
+    if (id.isEmpty) return '';
+    final l = _lotesInfo[id];
+    return (l?['codigo'] ?? id).toString();
+  }
+
+  Future<void> _asegurarHubsYLotes(List<Orden> ordenes) async {
+    final hubIds = <String>{};
+    final loteIds = <String>{};
+    for (final o in ordenes) {
+      final h = (o.hubActualId ?? '').trim();
+      if (h.isNotEmpty) hubIds.add(h);
+      final hd = (o.hubDestinoRedId ?? '').trim();
+      if (hd.isNotEmpty) hubIds.add(hd);
+      final l = (o.loteActualId ?? '').trim();
+      if (l.isNotEmpty) loteIds.add(l);
+    }
+    hubIds.removeWhere((id) => _hubsInfo.containsKey(id));
+    loteIds.removeWhere((id) => _lotesInfo.containsKey(id));
+    try {
+      if (hubIds.isNotEmpty) {
+        final res = await supabase
+            .from('logistica_hubs')
+            .select('id, nombre, codigo, direccion, ciudad, tipo')
+            .inFilter('id', hubIds.toList());
+        for (final raw in (res as List)) {
+          if (raw is Map) {
+            final m = Map<String, dynamic>.from(raw);
+            final id = m['id']?.toString();
+            if (id != null) _hubsInfo[id] = m;
+          }
+        }
+      }
+      if (loteIds.isNotEmpty) {
+        final res = await supabase
+            .from('logistica_lotes')
+            .select('id, codigo, estado, hub_origen_id, hub_destino_id')
+            .inFilter('id', loteIds.toList());
+        for (final raw in (res as List)) {
+          if (raw is Map) {
+            final m = Map<String, dynamic>.from(raw);
+            final id = m['id']?.toString();
+            if (id != null) _lotesInfo[id] = m;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Hubs/lotes info: $e');
+    }
+  }
+
+  Future<void> _confirmarRecepcionLoteRed(Orden orden) async {
+    final loteId = (orden.loteActualId ?? '').trim();
+    if (loteId.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFFFFFFFF),
+        title: const Text('Confirmar recepción de lote'),
+        content: Text(
+          '¿Confirmas que recibiste el lote ${_codigoLote(loteId)} '
+          'en el hub ${_nombreHub(orden.hubDestinoRedId ?? orden.hubActualId)}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF37474F),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Confirmar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _confirmandoLote = true);
+    try {
+      final res = await supabase.rpc(
+        'logistica_lote_confirmar_recepcion',
+        params: {'p_lote_id': loteId},
+      );
+      if (!mounted) return;
+      if (res is Map && res['ok'] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Lote recibido. Ya puedes entregar al destinatario.'),
+            backgroundColor: Color(0xFF4CAF50),
+          ),
+        );
+        _lotesInfo.remove(loteId);
+        await _cargarOrdenes();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              mensajeErrorOperacion(
+                (res is Map ? res['error'] : null) ?? 'No se pudo confirmar',
+              ),
+            ),
+            backgroundColor: const Color(0xFFDC2626),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(mensajeErrorOperacion(e)),
+            backgroundColor: const Color(0xFFDC2626),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _confirmandoLote = false);
+    }
   }
 
   // Marcar remesa como entregada en sucursal (solo para recoger_en_sucursal = true)
@@ -6764,6 +7135,17 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     // Botones para repartidores
     switch (orden.estado) {
       case 'POR ENVIAR':
+        if (OrdenLogisticaRedUi.puedeConfirmarRecepcionLote(orden)) {
+          return _botonTarjetaOrden(
+            onPressed: () {
+              if (_confirmandoLote) return;
+              _confirmarRecepcionLoteRed(orden);
+            },
+            icon: Icons.inventory_2_outlined,
+            label: 'Confirmar recepción lote',
+            color: const Color(0xFF37474F),
+          );
+        }
         if (OrdenRecogidaColaboradorUi.puedeIniciarRecolecta(orden)) {
           return _botonTarjetaOrden(
             onPressed: () => _iniciarRecolectaColaborador(orden),

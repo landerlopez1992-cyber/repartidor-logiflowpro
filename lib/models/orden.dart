@@ -101,6 +101,11 @@ class Orden {
   /// ID de `tienda_ordenes` cuando la logística viene de una compra online.
   final String? tiendaOrdenId;
 
+  /// Red logística: hub donde está el bulto / lote activo.
+  final String? hubActualId;
+  final String? hubDestinoRedId;
+  final String? loteActualId;
+
   Orden({
     required this.id,
     required this.numeroOrden,
@@ -164,6 +169,9 @@ class Orden {
     this.avisosRecogidaVendedor,
     this.ofacDeclaracionAceptada,
     this.tiendaOrdenId,
+    this.hubActualId,
+    this.hubDestinoRedId,
+    this.loteActualId,
   });
 
   /// Compra de tienda (Amazon/Shein/vendedor/catálogo), no envío ordinario por libras.
@@ -459,6 +467,9 @@ class Orden {
       avisosRecogidaVendedor: _parseAvisosRecogida(json['avisos_recogida_vendedor']),
       ofacDeclaracionAceptada: _parseBool(json['ofac_declaracion_aceptada']),
       tiendaOrdenId: json['tienda_orden_id']?.toString(),
+      hubActualId: json['hub_actual_id']?.toString(),
+      hubDestinoRedId: json['hub_destino_red_id']?.toString(),
+      loteActualId: json['lote_actual_id']?.toString(),
     );
   }
 
@@ -574,6 +585,9 @@ class Orden {
       'avisos_recogida_vendedor': avisosRecogidaVendedor,
       'tienda_orden_id': tiendaOrdenId,
       'ofac_declaracion_aceptada': ofacDeclaracionAceptada,
+      'hub_actual_id': hubActualId,
+      'hub_destino_red_id': hubDestinoRedId,
+      'lote_actual_id': loteActualId,
     };
   }
 }
