@@ -15,4 +15,6 @@ class OrdenLogisticaRedUi {
 
   static bool puedeConfirmarRecepcionLote(Orden orden) =>
       tieneLoteActivo(orden);
+
+  static bool mostrarVerOrdenesLote(Orden orden) => tieneLoteActivo(orden);
 }

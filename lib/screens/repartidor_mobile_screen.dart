@@ -213,7 +213,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       }
       
       // Incluir órdenes en EN TRANSITO, EN REPARTO o ATRASADO
+      // Si aún van en un lote (saco entre hubs), no son última milla.
       if (estado == 'EN TRANSITO' || estado == 'EN REPARTO' || estado == 'ATRASADO') {
+        if ((orden.loteActualId ?? '').trim().isNotEmpty) {
+          return false;
+        }
         return true;
       }
       
@@ -263,7 +267,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       }
       
       // Incluir órdenes en EN TRANSITO, EN REPARTO o ATRASADO
+      // Si aún van en un lote (saco entre hubs), no son última milla.
       if (estado == 'EN TRANSITO' || estado == 'EN REPARTO' || estado == 'ATRASADO') {
+        if ((orden.loteActualId ?? '').trim().isNotEmpty) {
+          return false;
+        }
         return true;
       }
       
@@ -6536,6 +6544,164 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     }
   }
 
+  int _cantidadOrdenesMismoLote(String? loteId) {
+    final id = (loteId ?? '').trim();
+    if (id.isEmpty) return 0;
+    return _ordenes
+        .where((o) => (o.loteActualId ?? '').trim() == id)
+        .length;
+  }
+
+  String _etiquetaVerOrdenesLote(String? loteId) {
+    final n = _cantidadOrdenesMismoLote(loteId);
+    if (n > 0) return 'Ver órdenes del lote ($n)';
+    return 'Ver órdenes del lote';
+  }
+
+  Future<void> _verOrdenesDelLote(String? loteIdRaw) async {
+    final loteId = (loteIdRaw ?? '').trim();
+    if (loteId.isEmpty) return;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const AlertDialog(
+        backgroundColor: Color(0xFFFFFFFF),
+        content: Text(
+          'Cargando órdenes del lote…',
+          style: TextStyle(color: Color(0xFF2C2C2C), fontSize: 14),
+        ),
+      ),
+    );
+    Map<String, dynamic>? detalle;
+    try {
+      final res = await supabase.rpc(
+        'logistica_lote_detalle_ordenes',
+        params: {'p_lote_id': loteId},
+      );
+      if (res is Map && res['ok'] == true) {
+        detalle = Map<String, dynamic>.from(res);
+      }
+    } catch (e) {
+      debugPrint('Detalle lote: $e');
+    }
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+    if (detalle == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudieron cargar las órdenes del lote'),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      return;
+    }
+
+    final ordenes = (detalle['ordenes'] is List)
+        ? (detalle['ordenes'] as List)
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList()
+        : <Map<String, dynamic>>[];
+    final cant = detalle['cantidad'] ?? ordenes.length;
+    final codigo = detalle['codigo']?.toString() ?? _codigoLote(loteId);
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFFFFFFFF),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        title: Text(
+          'Órdenes del lote ($cant)',
+          style: const TextStyle(
+            color: Color(0xFF2C2C2C),
+            fontWeight: FontWeight.w600,
+            fontSize: 18,
+          ),
+        ),
+        content: SizedBox(
+          width: 360,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$codigo · ${_nombreHub(detalle!['hub_origen_id']?.toString())} → '
+                '${_nombreHub(detalle['hub_destino_id']?.toString())}',
+                style: const TextStyle(color: Color(0xFF666666), fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              if (ordenes.isEmpty)
+                const Text(
+                  'Este lote no tiene órdenes.',
+                  style: TextStyle(color: Color(0xFF666666), fontSize: 13),
+                )
+              else
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 360, maxWidth: 360),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: ordenes.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (_, i) {
+                      final o = ordenes[i];
+                      final dest = [
+                        o['destinatario_nombre'],
+                        o['municipio_destino'] ?? o['ciudad_destino'],
+                        o['provincia_destino'],
+                      ]
+                          .where((e) =>
+                              e != null && e.toString().trim().isNotEmpty)
+                          .join(' · ');
+                      return Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF5F5F5),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFFE0E0E0)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              o['numero_orden']?.toString() ?? 'Orden',
+                              style: const TextStyle(
+                                color: Color(0xFF2C2C2C),
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              dest.isEmpty
+                                  ? (o['estado']?.toString() ?? '')
+                                  : '${o['estado']} · $dest',
+                              style: const TextStyle(
+                                color: Color(0xFF666666),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text(
+              'Cerrar',
+              style: TextStyle(color: Color(0xFF666666)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // Marcar remesa como entregada en sucursal (solo para recoger_en_sucursal = true)
   Future<void> _marcarRemesaEntregadaEnSucursal(Orden orden) async {
     if (orden.estado == 'ENTREGADO' || orden.estado == 'ENTREGADO EN SUCURSAL') {
@@ -7136,14 +7302,26 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     switch (orden.estado) {
       case 'POR ENVIAR':
         if (OrdenLogisticaRedUi.puedeConfirmarRecepcionLote(orden)) {
-          return _botonTarjetaOrden(
-            onPressed: () {
-              if (_confirmandoLote) return;
-              _confirmarRecepcionLoteRed(orden);
-            },
-            icon: Icons.inventory_2_outlined,
-            label: 'Confirmar recepción lote',
-            color: const Color(0xFF37474F),
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _botonTarjetaOrden(
+                onPressed: () => _verOrdenesDelLote(orden.loteActualId),
+                icon: Icons.list_alt_outlined,
+                label: _etiquetaVerOrdenesLote(orden.loteActualId),
+                color: const Color(0xFF37474F),
+              ),
+              const SizedBox(height: 8),
+              _botonTarjetaOrden(
+                onPressed: () {
+                  if (_confirmandoLote) return;
+                  _confirmarRecepcionLoteRed(orden);
+                },
+                icon: Icons.inventory_2_outlined,
+                label: 'Confirmar recepción lote',
+                color: const Color(0xFF37474F),
+              ),
+            ],
           );
         }
         if (OrdenRecogidaColaboradorUi.puedeIniciarRecolecta(orden)) {
@@ -7212,6 +7390,29 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         );
 
       case 'EN TRANSITO':
+        if (OrdenLogisticaRedUi.puedeConfirmarRecepcionLote(orden)) {
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _botonTarjetaOrden(
+                onPressed: () => _verOrdenesDelLote(orden.loteActualId),
+                icon: Icons.list_alt_outlined,
+                label: _etiquetaVerOrdenesLote(orden.loteActualId),
+                color: const Color(0xFF37474F),
+              ),
+              const SizedBox(height: 8),
+              _botonTarjetaOrden(
+                onPressed: () {
+                  if (_confirmandoLote) return;
+                  _confirmarRecepcionLoteRed(orden);
+                },
+                icon: Icons.inventory_2_outlined,
+                label: 'Confirmar recepción lote',
+                color: const Color(0xFF37474F),
+              ),
+            ],
+          );
+        }
         return _botonTarjetaOrden(
           onPressed: () => _marcarComoEnReparto(orden),
           icon: Icons.local_shipping,
