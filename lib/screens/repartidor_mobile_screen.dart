@@ -32,6 +32,7 @@ import '../services/goodbarber_sync_service.dart';
 import '../services/paises_service.dart';
 import '../utils/moneda_tenant_util.dart';
 import '../utils/mensaje_error_operacion.dart';
+import '../utils/tipo_repartidor_util.dart';
 import '../services/orden_proximidad_service.dart';
 import 'repartidor_perfil_screen.dart';
 import 'chat_repartidor_lista_screen.dart';
@@ -363,6 +364,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       _iniciarVigilanciaSuspension();
       unawaited(() async {
         if (await _verificarSuspensionYBloquear()) return;
+        await _obtenerNombreRepartidor();
+        if (!mounted || _esRecolector) return;
         unawaited(
           TaxiTarifasChoferService.instance.reafirmarDisponibleSiActivoLocal(),
         );
@@ -454,11 +457,13 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     _taxiViajeActivoPollTimer?.cancel();
     _taxiViajeActivoPollTimer =
         Timer.periodic(const Duration(seconds: 12), (_) {
+      if (_esRecolector) return;
       unawaited(_refrescarTaxiViajeActivo());
     });
   }
 
   Future<void> _refrescarTaxiViajeActivo() async {
+    if (_esRecolector) return;
     try {
       if (_cuentaSuspendida) {
         if (mounted && _taxiViajeActivo) {
@@ -595,6 +600,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   /// Si hay carrera taxi aceptada/en curso, reabrir el mapa (p. ej. tras salir al home).
   Future<void> _abrirViajeTaxiActivoSiHay() async {
+    if (_esRecolector) return;
     try {
       if (await _verificarSuspensionYBloquear()) return;
       final oferta = await TaxiChoferService.instance.viajeActivo();
@@ -1119,8 +1125,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             _repartidorNombre = cachedNombre ?? 'Repartidor';
             _fotoPerfilUrl = cachedFoto;
             _esRepartidorMaster = cachedMaster ?? false;
-            _tipoRepartidor = cachedTipo ?? 'REPARTIDOR';
-            _esRecolector = cachedTipo == 'RECOLECTOR';
+            _tipoRepartidor = normalizarTipoRepartidor(cachedTipo);
+            _esRecolector = esTipoRecolector(cachedTipo);
+            if (_esRecolector) _pestanaHomeViajes = false;
             if (cachedUsuarioId != null) _repartidorId = cachedUsuarioId;
           });
         }
@@ -1144,8 +1151,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               _repartidorNombre = cachedNombre;
               _fotoPerfilUrl = cachedFoto;
               _esRepartidorMaster = cachedMaster ?? false;
-              _tipoRepartidor = cachedTipo ?? 'REPARTIDOR';
-              _esRecolector = cachedTipo == 'RECOLECTOR';
+              _tipoRepartidor = normalizarTipoRepartidor(cachedTipo);
+              _esRecolector = esTipoRecolector(cachedTipo);
+              if (_esRecolector) _pestanaHomeViajes = false;
               if (cachedUsuarioId != null) _repartidorId = cachedUsuarioId;
             });
             await _resolverFotoPerfilLocalHeader();
@@ -1191,7 +1199,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             final prefs = await SharedPreferences.getInstance();
             if (nombre != null) await prefs.setString('cached_repartidor_nombre_${user.id}', nombre);
             await RepartidorMasterUtil.saveCached(user.id, esMaster);
-            await prefs.setString('cached_repartidor_tipo_${user.id}', tipoRepartidor);
+            await prefs.setString(
+              'cached_repartidor_tipo_${user.id}',
+              normalizarTipoRepartidor(tipoRepartidor),
+            );
             if (foto != null) await prefs.setString('cached_repartidor_foto_${user.id}', foto);
             if (usuarioId != null) {
               await prefs.setString('cached_repartidor_usuario_id_${user.id}', usuarioId);
@@ -1206,8 +1217,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             _fotoPerfilUrl = foto;
             if (usuarioId != null) _repartidorId = usuarioId;
             _esRepartidorMaster = esMaster;
-            _tipoRepartidor = tipoRepartidor;
-            _esRecolector = tipoRepartidor == 'RECOLECTOR';
+            _tipoRepartidor = normalizarTipoRepartidor(tipoRepartidor);
+            _esRecolector = esTipoRecolector(tipoRepartidor);
+            if (_esRecolector) _pestanaHomeViajes = false;
           });
           await _cachearFotoPerfilHeader(foto);
           await _resolverFotoPerfilLocalHeader();
@@ -1232,8 +1244,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 _repartidorNombre = cachedNombre;
                 _fotoPerfilUrl = cachedFoto;
                 _esRepartidorMaster = cachedMaster ?? false;
-                _tipoRepartidor = cachedTipo ?? 'REPARTIDOR';
-                _esRecolector = cachedTipo == 'RECOLECTOR';
+                _tipoRepartidor = normalizarTipoRepartidor(cachedTipo);
+                _esRecolector = esTipoRecolector(cachedTipo);
+                if (_esRecolector) _pestanaHomeViajes = false;
                 if (cachedUsuarioId != null) _repartidorId = cachedUsuarioId;
               });
               await _resolverFotoPerfilLocalHeader();
@@ -1259,8 +1272,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 _esRepartidorMaster = RepartidorMasterUtil.parseFlag(
                   response['repartidor_master'],
                 );
-                _tipoRepartidor = tipoRepartidor;
-                _esRecolector = tipoRepartidor == 'RECOLECTOR';
+                _tipoRepartidor = normalizarTipoRepartidor(tipoRepartidor);
+                _esRecolector = esTipoRecolector(tipoRepartidor);
+                if (_esRecolector) _pestanaHomeViajes = false;
               });
               await RepartidorMasterUtil.saveCached(
                 user.id,
@@ -4013,10 +4027,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Flexible(
+                      Flexible(
                         child: Text(
-                          'Repartidor',
-                          style: TextStyle(
+                          _esRecolector ? 'Recolector' : 'Repartidor',
+                          style: const TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
                             color: Colors.white,
@@ -4749,8 +4763,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             child: Row(
               children: [
                 chip(
-                  label: 'Repartidor',
-                  icon: Icons.local_shipping_outlined,
+                  label: _esRecolector ? 'Recolector' : 'Repartidor',
+                  icon: _esRecolector
+                      ? Icons.inventory_2_outlined
+                      : Icons.local_shipping_outlined,
                   selected: !_pestanaHomeViajes,
                   onTap: () {
                     if (_pestanaHomeViajes) {
@@ -4758,7 +4774,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                     }
                   },
                 ),
-                RepartidorViajesTabChip(
+                if (!_esRecolector)
+                  RepartidorViajesTabChip(
                   selected: _pestanaHomeViajes,
                   showOnlineDot: !_cuentaSuspendida &&
                       _taxiBuscandoActivo &&

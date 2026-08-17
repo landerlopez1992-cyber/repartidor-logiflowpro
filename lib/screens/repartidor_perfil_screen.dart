@@ -30,6 +30,7 @@ import '../widgets/repartidor_saldo_desglose_modal.dart';
 import '../widgets/repartidor_transfer_wallet_cliente_flow.dart';
 import '../widgets/repartidor_loading_spinner.dart';
 import '../utils/repartidor_master_util.dart';
+import '../utils/tipo_repartidor_util.dart';
 import '../widgets/repartidor_master_badge.dart';
 import '../services/paises_service.dart';
 import '../utils/moneda_tenant_util.dart';
@@ -225,8 +226,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             return;
           }
 
-          final tipoRepartidor = response['tipo_repartidor'] as String? ?? 'REPARTIDOR';
-          final esRecolector = tipoRepartidor == 'RECOLECTOR';
+          final tipoRepartidor = normalizarTipoRepartidor(response['tipo_repartidor']);
+          final esRecolector = esTipoRecolector(tipoRepartidor);
           final esMaster = RepartidorMasterUtil.parseFlag(response['repartidor_master']);
           final suspendida = response['cuenta_suspendida'] == true ||
               response['cuenta_suspendida'] == 'true' ||
@@ -276,8 +277,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
 
           if (!_esRecolector) {
             await _cargarEstadisticasSemanales();
+            await _cargarContadorViajes();
           }
-          await _cargarContadorViajes();
           await _cachearFotoPerfilLocal(_repartidorId!, response['foto_perfil']?.toString());
           await _cargarHistorialPagos();
           await _cargarSaldo();
@@ -294,8 +295,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                   .eq('email', user.email!)
                   .single();
 
-              final tipoRepartidor = response['tipo_repartidor'] as String? ?? 'REPARTIDOR';
-              final esRecolector = tipoRepartidor == 'RECOLECTOR';
+              final tipoRepartidor = normalizarTipoRepartidor(response['tipo_repartidor']);
+              final esRecolector = esTipoRecolector(tipoRepartidor);
               final esMaster = RepartidorMasterUtil.parseFlag(response['repartidor_master']);
               final suspendida = response['cuenta_suspendida'] == true ||
                   response['cuenta_suspendida'] == 'true' ||
@@ -344,8 +345,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
 
               if (!_esRecolector) {
                 await _cargarEstadisticasSemanales();
+                await _cargarContadorViajes();
               }
-              await _cargarContadorViajes();
               await _cachearFotoPerfilLocal(_repartidorId!, response['foto_perfil']?.toString());
               await _cargarHistorialPagos();
               await _cargarSaldo();
@@ -383,6 +384,11 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           final cached = await RepartidorMasterUtil.loadCached(user.id);
           if (cached != null) esMaster = cached;
         }
+        String? tipoCached;
+        if (user != null) {
+          final prefs = await SharedPreferences.getInstance();
+          tipoCached = prefs.getString('cached_repartidor_tipo_${user.id}');
+        }
         setState(() {
           _repartidorId = perfilCache['id']?.toString();
           _tenantId = perfilCache['tenant_id']?.toString();
@@ -392,6 +398,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           _fotoPerfilUrl = perfilCache['foto_perfil'];
           _fotoVehiculoUrl = _resolverFotoVehiculoUrl(perfilCache);
           _esRepartidorMaster = esMaster;
+          _esRecolector = esTipoRecolector(tipoCached);
           _isLoading = false;
         });
         print('💾 Datos de perfil cargados desde caché (master=$esMaster)');
@@ -401,8 +408,9 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         });
       }
 
-      // Cargar estadísticas desde caché
-      await _cargarEstadisticasDesdeCache();
+      if (!_esRecolector) {
+        await _cargarEstadisticasDesdeCache();
+      }
       
       // Cargar historial desde caché
       await _cargarHistorialDesdeCache();
@@ -933,13 +941,17 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                         ],
                         _buildBotonSolicitarPago(),
                         const SizedBox(height: 12),
-                        _buildBotonJornada(),
-                        const SizedBox(height: 12),
+                        if (!_esRecolector) ...[
+                          _buildBotonJornada(),
+                          const SizedBox(height: 12),
+                        ],
                         _buildBotonTransferirWalletCliente(),
                         const SizedBox(height: 24),
                         _buildAjustesMetodoCobro(),
-                        const SizedBox(height: 16),
-                        _buildAjustesTaxis(),
+                        if (!_esRecolector) ...[
+                          const SizedBox(height: 16),
+                          _buildAjustesTaxis(),
+                        ],
                         const SizedBox(height: 24),
                         _buildHistorialPagos(),
                         const SizedBox(height: 24),

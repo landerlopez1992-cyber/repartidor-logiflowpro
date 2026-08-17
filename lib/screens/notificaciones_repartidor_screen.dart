@@ -9,6 +9,7 @@ import '../services/sync_service.dart';
 import '../services/network_timeout.dart';
 import 'detalle_orden_screen.dart';
 import '../config/app_colors.dart';
+import '../utils/tipo_repartidor_util.dart';
 
 class NotificacionesRepartidorScreen extends StatefulWidget {
   const NotificacionesRepartidorScreen({super.key});
@@ -106,7 +107,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
           _repartidorId = response['id']?.toString();
           repartidorNombre = response['nombre'];
           final tipoRepartidor = response['tipo_repartidor']?.toString();
-          _esRecolector = tipoRepartidor == 'RECOLECTOR';
+          _esRecolector = esTipoRecolector(tipoRepartidor);
           print('✅ Repartidor ID obtenido: $_repartidorId (tipo: ${_repartidorId.runtimeType})');
           print('✅ Es recolector: $_esRecolector');
         }
@@ -451,9 +452,32 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return Scaffold(
+        backgroundColor: AppColors.darkBg,
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF37474F),
+          title: const Text(
+            'Notificaciones',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          iconTheme: const IconThemeData(color: Colors.white),
+        ),
+        body: const Center(
+          child: CircularProgressIndicator(
+            color: Color(0xFFFF9800),
+          ),
+        ),
+      );
+    }
+
     return DefaultTabController(
-      length: 4,
-      initialIndex: _tabIndex.clamp(0, 3),
+      length: _esRecolector ? 3 : 4,
+      initialIndex: _tabIndex.clamp(0, _esRecolector ? 2 : 3),
       child: Scaffold(
         backgroundColor: AppColors.darkBg,
         appBar: AppBar(
@@ -489,6 +513,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                 }(),
                 text: 'Órdenes',
               ),
+              if (!_esRecolector)
               Tab(
                 icon: () {
                   final noLeidas = _notificacionesViajes
@@ -546,19 +571,14 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
             },
           ),
         ),
-        body: _isLoading
-            ? const Center(
-                child: CircularProgressIndicator(
-                  color: Color(0xFFFF9800),
-                ),
-              )
-            : TabBarView(
+        body: TabBarView(
                 children: [
                   RefreshIndicator(
                     onRefresh: _cargarNotificaciones,
                     color: const Color(0xFFFF9800),
                     child: _buildListaOrdenes(),
                   ),
+                  if (!_esRecolector)
                   RefreshIndicator(
                     onRefresh: _cargarNotificaciones,
                     color: const Color(0xFFFF9800),
