@@ -972,6 +972,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                         // Botón de cerrar sesión
                         if (!_isEditing) ...[
                           const SizedBox(height: 16),
+                          _buildBotonEliminarCuenta(),
+                          const SizedBox(height: 12),
                           _buildBotonCerrarSesion(),
                           const SizedBox(height: 100), // Espacio adicional al final para scroll
                         ],
@@ -1690,6 +1692,28 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     );
   }
 
+  Widget _buildBotonEliminarCuenta() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: TextButton(
+        onPressed: _mostrarConfirmacionEliminarCuenta,
+        style: TextButton.styleFrom(
+          foregroundColor: const Color(0xFFDC2626),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+        ),
+        child: const Text(
+          'Eliminar cuenta',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            decoration: TextDecoration.underline,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildBotonCerrarSesion() {
     return Container(
       width: double.infinity,
@@ -2006,6 +2030,159 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _mostrarConfirmacionEliminarCuenta() async {
+    final confirmCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFFFFFFFF),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Eliminar cuenta',
+          style: TextStyle(
+            color: Color(0xFF2C2C2C),
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Se eliminará tu cuenta de forma permanente. No podrás iniciar sesión con estos datos. Tu empresa puede conservar registros operativos anonimizados.',
+                style: TextStyle(color: Color(0xFF666666), height: 1.35),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Escribe ELIMINAR para confirmar:',
+                style: TextStyle(
+                  color: Color(0xFF2C2C2C),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: confirmCtrl,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: 'ELIMINAR',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar', style: TextStyle(color: Color(0xFF666666))),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (confirmCtrl.text.trim().toUpperCase() != 'ELIMINAR') {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Debes escribir ELIMINAR exactamente.'),
+                    backgroundColor: Color(0xFF37474F),
+                  ),
+                );
+                return;
+              }
+              Navigator.of(ctx).pop(true);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Eliminar definitivamente'),
+          ),
+        ],
+      ),
+    );
+    confirmCtrl.dispose();
+    if (ok != true || !mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: Material(
+          color: Colors.transparent,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RepartidorLoadingSpinner.large(),
+              SizedBox(height: 12),
+              Text(
+                'Eliminando cuenta…',
+                style: TextStyle(color: Colors.white, fontSize: 14),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    try {
+      final res = await supabase.functions.invoke(
+        'tenant-auth-signup',
+        body: {
+          'action': 'delete_own_account',
+          'confirm': 'ELIMINAR',
+        },
+      );
+      final data = res.data;
+      if (data is! Map || data['ok'] != true) {
+        final errMsg = data is Map ? (data['error']?.toString() ?? '') : '';
+        throw Exception(
+          errMsg.isNotEmpty ? errMsg : 'No se pudo eliminar la cuenta',
+        );
+      }
+
+      final user = supabase.auth.currentUser;
+      final prefs = await SharedPreferences.getInstance();
+      if (user != null) {
+        await prefs.remove('cached_repartidor_nombre_${user.id}');
+        await prefs.remove('cached_repartidor_master_${user.id}');
+        await prefs.remove('cached_repartidor_tipo_${user.id}');
+        await prefs.remove('cached_repartidor_foto_${user.id}');
+        await prefs.remove('cached_tenant_id_${user.id}');
+        await prefs.remove('cached_user_data_${user.id}');
+        await SesionOfflineCleanup.limpiarTodo();
+      }
+      await prefs.remove(kLastRepartidorAuthIdKey);
+      await prefs.remove(kRepartidorOfflineSessionKey);
+      await RepartidorNotificacionesPushService.instance.limpiarAlCerrarSesion();
+      try {
+        await supabase.auth.signOut();
+      } catch (_) {}
+
+      if (!mounted) return;
+      Navigator.of(context).pop(); // loading
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Tu cuenta fue eliminada.'),
+          backgroundColor: Color(0xFF4CAF50),
+        ),
+      );
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginRepartidorScreen()),
+        (route) => false,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop(); // loading
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo eliminar la cuenta: $e'),
+          backgroundColor: const Color(0xFFDC2626),
+        ),
+      );
+    }
   }
 
   Future<void> _mostrarConfirmacionLogout() async {
