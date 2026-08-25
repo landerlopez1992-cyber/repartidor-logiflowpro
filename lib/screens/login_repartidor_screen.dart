@@ -16,6 +16,7 @@ import '../services/auth_error_handler.dart';
 import '../services/repartidor_boot_cache_service.dart';
 import '../services/tenant_fuera_servicio_service.dart';
 import '../config/app_colors.dart';
+import '../navigation/repartidor_navigator.dart';
 import '../widgets/volonex_dialog.dart';
 import '../widgets/repartidor_loading_spinner.dart';
 import 'tenant_fuera_servicio_screen.dart';
@@ -872,9 +873,9 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
             await boot.runBootLoad(updateProgress: updateProgress);
           },
           onComplete: () {
-            if (mounted) {
-              unawaited(_irAHomeOFueraServicio());
-            }
+            // Login ya fue reemplazado por LoadingDataScreen → `mounted` del
+            // login es false. Navegar con la clave global del Navigator.
+            unawaited(_irAHomeOFueraServicio());
           },
         ),
       ),
@@ -882,7 +883,11 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
   }
 
   Future<void> _irAHomeOFueraServicio() async {
-    if (!mounted) return;
+    final nav = RepartidorNavigator.state;
+    if (nav == null) {
+      print('❌ Post-login: Navigator global no disponible');
+      return;
+    }
     try {
       final user = supabase.auth.currentUser;
       String? tenantId;
@@ -913,9 +918,8 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
           tenantId: tenantId,
           forceRefresh: true,
         ).timeout(const Duration(seconds: 6));
-        if (!mounted) return;
         if (fuera?.bloqueada == true) {
-          Navigator.of(context).pushReplacement(
+          nav.pushReplacement(
             MaterialPageRoute(
               builder: (_) => TenantFueraServicioScreen(tenantId: tenantId!),
             ),
@@ -926,8 +930,7 @@ class _LoginRepartidorScreenState extends State<LoginRepartidorScreen> {
     } catch (e) {
       print('⚠️ Check fuera de servicio post-login: $e');
     }
-    if (!mounted) return;
-    Navigator.of(context).pushReplacement(
+    nav.pushReplacement(
       MaterialPageRoute(
         builder: (context) => const RepartidorMobileScreen(),
       ),

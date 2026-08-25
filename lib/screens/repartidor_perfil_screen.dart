@@ -2084,7 +2084,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           ElevatedButton(
             onPressed: () {
               if (confirmCtrl.text.trim().toUpperCase() != 'ELIMINAR') {
-                ScaffoldMessenger.of(context).showSnackBar(
+                ScaffoldMessenger.of(ctx).showSnackBar(
                   const SnackBar(
                     content: Text('Debes escribir ELIMINAR exactamente.'),
                     backgroundColor: Color(0xFF37474F),
@@ -2103,7 +2103,11 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
         ],
       ),
     );
-    confirmCtrl.dispose();
+    // Esperar a que el diálogo termine de desmontar el TextField antes de dispose
+    // (si se dispose al instante → pantalla roja: controller used after disposed).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      confirmCtrl.dispose();
+    });
     if (ok != true || !mounted) return;
 
     showDialog(
