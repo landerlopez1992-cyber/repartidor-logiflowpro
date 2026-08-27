@@ -49,10 +49,10 @@ class RepartidorActualizacionForzadaService {
     return null;
   }
 
-  /// Solo Android consulta tienda mientras no haya listing iOS.
+  /// Android + iOS: consulta versión publicada en Play / App Store.
   bool get storeListingCheckEnabled {
     if (kIsWeb) return false;
-    return Platform.isAndroid;
+    return Platform.isAndroid || Platform.isIOS;
   }
 
   Future<int> _ondaLocal(String plataforma) async {
