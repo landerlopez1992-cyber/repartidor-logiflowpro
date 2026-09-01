@@ -68,6 +68,23 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
   List<LatLng> _rutaOverview = const [];
   String? _viajeEtaLabel;
 
+  /// Oferta aún disponible para aceptar/rechazar (inmediato o reserva futura).
+  static bool _estadoOfertaEntranteValido(String raw) {
+    final e = raw.trim().toLowerCase();
+    return e == 'buscando_chofer' ||
+        e == 'reserva_pendiente_chofer' ||
+        e == 'reserva_reasignando';
+  }
+
+  /// Ya asignado a un chofer (viaje en curso o reserva tomada).
+  static bool _estadoViajeAsignado(String raw) {
+    final e = raw.trim().toLowerCase();
+    return e == 'aceptado' ||
+        e == 'en_camino' ||
+        e == 'en_viaje' ||
+        e == 'reserva_confirmada';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -119,13 +136,12 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
         return;
       }
       final est = o.estado.toLowerCase();
-      if (est == 'aceptado' || est == 'en_camino' || est == 'en_viaje') {
+      if (_estadoViajeAsignado(est)) {
         final activo = await TaxiChoferService.instance.viajeActivo();
         if (!mounted) return;
         final mio = activo != null &&
             activo.id.trim() == widget.solicitudId.trim();
         if (mio) {
-          // Yo lo tengo: silenciar; la navegación la abre _aceptar si aplica.
           await TaxiLlamadaPersistenteService.instance.detener(
             motivo: 'viaje_en_curso',
             resultado: true,
@@ -135,7 +151,7 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
         await _cerrarViajePerdido('tomado_por_otro');
         return;
       }
-      if (est == 'cancelado' || est != 'buscando_chofer') {
+      if (est == 'cancelado' || !_estadoOfertaEntranteValido(est)) {
         await _cerrarViajePerdido(
           est == 'cancelado' ? 'cancelado_pasajero' : 'tomado_por_otro',
         );
@@ -178,7 +194,7 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
       final o =
           await TaxiChoferService.instance.detalleOferta(widget.solicitudId);
       if (!mounted) return;
-      if (o == null || o.estado != 'buscando_chofer') {
+      if (o == null || !_estadoOfertaEntranteValido(o.estado)) {
         setState(() {
           _loading = false;
           _error = 'Este viaje ya no está disponible.';
@@ -249,8 +265,24 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
       await TaxiLlamadaPersistenteService.instance.onAceptadoDesdeUi();
       if (!mounted) return;
       final oferta = res.oferta!;
-      // Cerrar modal y abrir mapa de la carrera (siempre, aunque el caller no lo haga).
       Navigator.of(context).pop(true);
+
+      // Reserva futura: no abrir navegación GPS; queda en pestaña Viajes.
+      if (oferta.esReserva ||
+          oferta.estado.trim().toLowerCase() == 'reserva_confirmada') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Reserva confirmada. La verás en Viajes cuando llegue el día.',
+            ),
+            backgroundColor: Color(0xFF37474F),
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 4),
+          ),
+        );
+        return;
+      }
+
       final rootNav = RepartidorNavigator.state;
       if (rootNav != null) {
         await rootNav.push(

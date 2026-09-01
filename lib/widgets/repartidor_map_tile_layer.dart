@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:mbtiles/mbtiles.dart';
 
+import '../config/carto_map_config.dart';
 import '../services/map_tile_disk_cache.dart';
 import '../services/tenant_mapa_offline_service.dart';
 
@@ -95,6 +96,12 @@ class _RepartidorMapTileLayerState extends State<RepartidorMapTileLayer> {
           }
         }
       } else {
+        if (!CartoMapConfig.hasApiKey) {
+          print(
+            '⚠️ Mapa Carto sin CARTO_BASEMAP_KEY → marca de agua. '
+            'Solicita clave en https://carto.com/basemaps/apikey',
+          );
+        }
         print('🗺️ Mapa base: Carto online (calles)');
       }
     } catch (e) {

@@ -11,6 +11,8 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../config/carto_map_config.dart';
+
 /// Caché en disco de teselas raster (Carto Voyager) para mapas FlutterMap.
 ///
 /// Con internet: guarda cada tile al pedirlo.
@@ -19,8 +21,7 @@ class MapTileDiskCache {
   MapTileDiskCache._();
   static final instance = MapTileDiskCache._();
 
-  static const urlTemplate =
-      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
+  static String get urlTemplate => CartoMapConfig.urlTemplate;
   static const subdomains = ['a', 'b', 'c', 'd'];
   static const userAgent = 'com.logiflow.repartidor';
 
