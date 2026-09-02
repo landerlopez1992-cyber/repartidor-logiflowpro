@@ -1,6 +1,6 @@
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show ValueNotifier, kIsWeb;
 import 'package:in_app_update/in_app_update.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,6 +8,13 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../main.dart';
 import 'store_listing_version_service.dart';
+
+/// Aviso suave mientras se publica un build nuevo en tienda.
+class RepartidorBuildPendienteInfo {
+  const RepartidorBuildPendienteInfo({required this.nombreApp});
+
+  final String nombreApp;
+}
 
 /// Estado de actualización obligatoria (tienda + refuerzo Super Admin).
 class ActualizacionForzadaEstado {
@@ -35,6 +42,34 @@ class RepartidorActualizacionForzadaService {
   RepartidorActualizacionForzadaService._();
   static final RepartidorActualizacionForzadaService instance =
       RepartidorActualizacionForzadaService._();
+
+  static final ValueNotifier<ActualizacionForzadaEstado?> estado =
+      ValueNotifier<ActualizacionForzadaEstado?>(null);
+
+  static final ValueNotifier<RepartidorBuildPendienteInfo?> buildPendiente =
+      ValueNotifier<RepartidorBuildPendienteInfo?>(null);
+
+  static bool _refreshing = false;
+
+  Future<void> refresh({bool forceStoreLookup = false}) async {
+    if (_refreshing) return;
+    _refreshing = true;
+    try {
+      if (forceStoreLookup) {
+        StoreListingVersionService.clearCache();
+      }
+      final res = await consultarDesdeConfig(
+        forceStoreLookup: forceStoreLookup,
+      );
+      estado.value = res;
+      buildPendiente.value = res == null ? await consultarBuildPendiente() : null;
+    } catch (_) {
+      estado.value = null;
+      buildPendiente.value = null;
+    } finally {
+      _refreshing = false;
+    }
+  }
 
   static const _prefOndaAndroid = 'repartidor_onda_actualizacion_android';
   static const _prefOndaIos = 'repartidor_onda_actualizacion_ios';
@@ -120,23 +155,21 @@ class RepartidorActualizacionForzadaService {
     }
   }
 
-  /// ¿Bloquear? Instalada vs publicada en tienda (+ API Play) y/o onda Super Admin.
+  /// ¿Bloquear? Paridad con CubaLink23: Play API → tienda → mínima+nonce → onda.
   static bool requiresMandatoryUpdate({
     required String installed,
+    required String minVersion,
+    required int nonce,
     required int ondaServidor,
     required int ondaLocal,
     String? storePublishedVersion,
     bool playUpdateAvailable = false,
   }) {
     final inst = normalizeInstalledVersion(installed);
+    final min = normalizeInstalledVersion(minVersion);
     final store = storePublishedVersion != null
         ? normalizeInstalledVersion(storePublishedVersion)
         : '';
-
-    // Ya tiene lo último publicado → no bloquear (y la onda queda resuelta fuera).
-    if (store.isNotEmpty && compareVersions(inst, store) >= 0) {
-      return false;
-    }
 
     if (playUpdateAvailable) return true;
 
@@ -144,7 +177,13 @@ class RepartidorActualizacionForzadaService {
       return true;
     }
 
-    // Sin dato fiable de tienda: refuerzo Super Admin (onda pendiente).
+    if (nonce > 0 && min.isNotEmpty) {
+      if (store.isNotEmpty && compareVersions(min, store) > 0) {
+        return false;
+      }
+      if (compareVersions(inst, min) < 0) return true;
+    }
+
     if (ondaServidor > 0 && ondaLocal < ondaServidor) {
       return true;
     }
@@ -190,11 +229,25 @@ class RepartidorActualizacionForzadaService {
           .select(
             'onda_actualizacion_android, onda_actualizacion_ios, '
             'google_play_store_url, google_play_url, '
-            'apple_store_listing_url, apple_store_url',
+            'apple_store_listing_url, apple_store_url, '
+            'app_movil_update_min_version, app_movil_update_prompt_nonce, '
+            'app_movil_update_build_pending_at, app_movil_ios_en_produccion',
           )
           .eq('id', 1)
           .maybeSingle();
       if (row == null) return null;
+
+      final minVersionRaw =
+          (row['app_movil_update_min_version'] ?? '').toString().trim();
+      final nonce =
+          (row['app_movil_update_prompt_nonce'] as num?)?.toInt() ?? 0;
+      final iosEnProduccion = row['app_movil_ios_en_produccion'] != false;
+      var minVersion = minVersionRaw;
+      var nonceParaCheck = nonce;
+      if (plataforma == 'ios' && !iosEnProduccion) {
+        minVersion = '';
+        nonceParaCheck = 0;
+      }
 
       final ondaServidor = plataforma == 'android'
           ? _parseOnda(row['onda_actualizacion_android'])
@@ -267,6 +320,8 @@ class RepartidorActualizacionForzadaService {
 
       if (!requiresMandatoryUpdate(
         installed: installed,
+        minVersion: minVersion,
+        nonce: nonceParaCheck,
         ondaServidor: ondaServidor,
         ondaLocal: ondaLocal,
         storePublishedVersion: storePublishedVersion,
@@ -275,12 +330,17 @@ class RepartidorActualizacionForzadaService {
         return null;
       }
 
+      final minParaUi = minVersion.isNotEmpty
+          ? minVersion
+          : (storePublishedVersion ?? '');
+
       return ActualizacionForzadaEstado(
         plataforma: plataforma,
-        onda: ondaServidor > 0 ? ondaServidor : 1,
+        onda: ondaServidor > 0 ? ondaServidor : nonce,
         urlTienda: urlTienda,
         installedVersion: installed,
-        storePublishedVersion: storePublishedVersion,
+        storePublishedVersion:
+            storePublishedVersion ?? (minParaUi.isNotEmpty ? minParaUi : null),
         mensaje: plataforma == 'android'
             ? 'Hay una actualización obligatoria. Abre Google Play e instala la última versión para continuar.'
             : 'Hay una actualización obligatoria. Abre la App Store e instala la última versión para continuar.',
@@ -323,6 +383,8 @@ class RepartidorActualizacionForzadaService {
       if (storePublished == null && !playOk) return null;
       if (!requiresMandatoryUpdate(
         installed: installed,
+        minVersion: '',
+        nonce: 0,
         ondaServidor: 0,
         ondaLocal: 0,
         storePublishedVersion: storePublished,
@@ -376,9 +438,16 @@ class RepartidorActualizacionForzadaService {
     );
   }
 
-  Future<bool> abrirTienda(String url) async {
+  Future<bool> abrirTienda(String url, {bool preferInAppUpdate = true}) async {
     if (Platform.isAndroid) {
+      if (preferInAppUpdate) {
+        final inApp = await _intentarActualizacionInAppPlay();
+        if (inApp) return true;
+      }
       return _abrirTiendaAndroid(url);
+    }
+    if (Platform.isIOS) {
+      return _abrirTiendaIos(url);
     }
     final uri = Uri.tryParse(url);
     if (uri == null) return false;
@@ -386,6 +455,90 @@ class RepartidorActualizacionForzadaService {
       return await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (_) {
       return false;
+    }
+  }
+
+  Future<bool> _intentarActualizacionInAppPlay() async {
+    if (kIsWeb || !Platform.isAndroid) return false;
+    try {
+      final info = await InAppUpdate.checkForUpdate()
+          .timeout(const Duration(seconds: 15));
+      if (info.updateAvailability != UpdateAvailability.updateAvailable) {
+        return false;
+      }
+      if (info.immediateUpdateAllowed) {
+        final result = await InAppUpdate.performImmediateUpdate();
+        return result == AppUpdateResult.success ||
+            result == AppUpdateResult.userDeniedUpdate;
+      }
+      if (info.flexibleUpdateAllowed) {
+        final started = await InAppUpdate.startFlexibleUpdate();
+        if (started != AppUpdateResult.success) return false;
+        await InAppUpdate.completeFlexibleUpdate();
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  Future<bool> _abrirTiendaIos(String storeUrl) async {
+    final raw = storeUrl.trim();
+    final appId = RegExp(r'/id(\d+)').firstMatch(raw)?.group(1);
+    if (appId != null && appId.isNotEmpty) {
+      final itms = Uri.parse('itms-apps://apps.apple.com/app/id$appId');
+      try {
+        if (await canLaunchUrl(itms)) {
+          final ok = await launchUrl(
+            itms,
+            mode: LaunchMode.externalApplication,
+          );
+          if (ok) return true;
+        }
+      } catch (_) {}
+    }
+    final httpsUri = Uri.tryParse(raw);
+    if (httpsUri == null) return false;
+    try {
+      return await launchUrl(httpsUri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Aviso suave si hay build en preparación (paridad CubaLink23).
+  Future<RepartidorBuildPendienteInfo?> consultarBuildPendiente() async {
+    final plataforma = _plataformaActual;
+    if (plataforma == null) return null;
+    try {
+      final row = await supabase
+          .from('logiflow_descargas_app')
+          .select(
+            'app_movil_update_build_pending_at, app_movil_update_min_version',
+          )
+          .eq('id', 1)
+          .maybeSingle();
+      if (row == null) return null;
+
+      final pendingRaw = row['app_movil_update_build_pending_at']?.toString();
+      if (pendingRaw == null || pendingRaw.isEmpty) return null;
+
+      final info = await PackageInfo.fromPlatform();
+      final installed = normalizeInstalledVersion(info.version);
+      final minVersion =
+          (row['app_movil_update_min_version'] ?? '').toString().trim();
+
+      if (minVersion.isNotEmpty &&
+          compareVersions(installed, minVersion) >= 0) {
+        return null;
+      }
+
+      final pendingAt = DateTime.parse(pendingRaw).toUtc();
+      final age = DateTime.now().toUtc().difference(pendingAt);
+      if (age.inHours > 48) return null;
+
+      return const RepartidorBuildPendienteInfo(nombreApp: 'VolonexPro+');
+    } catch (_) {
+      return null;
     }
   }
 

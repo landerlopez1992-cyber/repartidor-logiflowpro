@@ -9,9 +9,11 @@ class ActualizacionForzadaOverlay extends StatefulWidget {
   const ActualizacionForzadaOverlay({
     super.key,
     required this.estado,
+    this.onActualizar,
   });
 
   final ActualizacionForzadaEstado estado;
+  final Future<void> Function()? onActualizar;
 
   @override
   State<ActualizacionForzadaOverlay> createState() =>
@@ -25,9 +27,12 @@ class _ActualizacionForzadaOverlayState extends State<ActualizacionForzadaOverla
     if (_abriendo) return;
     setState(() => _abriendo = true);
     try {
-      await RepartidorActualizacionForzadaService.instance
-          .abrirTienda(widget.estado.urlTienda);
-      // No marcar onda ni cerrar: el padre reconsulta en AppLifecycleState.resumed.
+      if (widget.onActualizar != null) {
+        await widget.onActualizar!();
+      } else {
+        await RepartidorActualizacionForzadaService.instance
+            .abrirTienda(widget.estado.urlTienda);
+      }
     } finally {
       if (mounted) setState(() => _abriendo = false);
     }

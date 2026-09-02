@@ -25,6 +25,7 @@ import 'widgets/repartidor_loading_spinner.dart';
 import 'config/app_colors.dart';
 import 'utils/repartidor_connectivity.dart';
 import 'widgets/volonex_dialog.dart';
+import 'widgets/repartidor_store_update_blocker.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -89,12 +90,14 @@ class RepartidorApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'VolonexPro+',
-      debugShowCheckedModeBanner: false,
-      theme: VolonexTheme.material,
-      navigatorKey: RepartidorNavigator.key,
-      home: const AuthWrapper(),
+    return RepartidorStoreUpdateBlocker(
+      child: MaterialApp(
+        title: 'VolonexPro+',
+        debugShowCheckedModeBanner: false,
+        theme: VolonexTheme.material,
+        navigatorKey: RepartidorNavigator.key,
+        home: const AuthWrapper(),
+      ),
     );
   }
 }

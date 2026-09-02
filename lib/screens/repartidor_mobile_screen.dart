@@ -84,7 +84,6 @@ import '../services/repartidor_perfil_cache_service.dart';
 import '../services/repartidor_perfil_foto_cache_service.dart';
 import '../services/repartidor_foto_perfil_prompt_service.dart';
 import '../services/repartidor_actualizacion_forzada_service.dart';
-import '../widgets/actualizacion_forzada_overlay.dart';
 import '../widgets/repartidor_foto_perfil_prompt_dialog.dart';
 import '../utils/repartidor_provincia_filtro_util.dart';
 import '../utils/entrega_geo_validacion_util.dart';
@@ -128,7 +127,6 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   bool _hidratadoPushAlInicio = false;
   late DateTime _inicioSesionNotificacionesUtc;
   Map<String, dynamic>? _notificacionGeneralBanner; // Notificación general para mostrar en banner
-  ActualizacionForzadaEstado? _actualizacionForzada;
   
   // Variables para rastreo de ubicación
   StreamSubscription<Position>? _positionStreamSubscription;
@@ -423,10 +421,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   Future<void> _comprobarActualizacionForzada({
     bool forceStoreLookup = false,
   }) async {
-    final estado = await RepartidorActualizacionForzadaService.instance
-        .consultarDesdeConfig(forceStoreLookup: forceStoreLookup);
-    if (!mounted) return;
-    setState(() => _actualizacionForzada = estado);
+    await RepartidorActualizacionForzadaService.instance.refresh(
+      forceStoreLookup: forceStoreLookup,
+    );
   }
 
   Future<void> _refrescarTaxiBuscandoActivo() async {
@@ -733,9 +730,12 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   }) async {
     final estado = await RepartidorActualizacionForzadaService.instance
         .resolverActualizacionForzada(notificacion: notificacion);
-    if (!mounted) return;
     if (estado != null) {
-      setState(() => _actualizacionForzada = estado);
+      RepartidorActualizacionForzadaService.estado.value = estado;
+    } else {
+      await RepartidorActualizacionForzadaService.instance.refresh(
+        forceStoreLookup: true,
+      );
     }
   }
   
@@ -4655,10 +4655,6 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         ],
       ),
         ),
-        if (_actualizacionForzada != null)
-          ActualizacionForzadaOverlay(
-            estado: _actualizacionForzada!,
-          ),
       ],
     );
   }
