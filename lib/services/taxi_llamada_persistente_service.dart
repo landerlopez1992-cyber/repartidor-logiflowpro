@@ -428,7 +428,8 @@ class TaxiLlamadaPersistenteService {
       audioAttributesUsage: AudioAttributesUsage.alarm,
       ongoing: true,
       autoCancel: false,
-      fullScreenIntent: true,
+      // Sin USE_FULL_SCREEN_INTENT (política Play): alerta de alta prioridad.
+      fullScreenIntent: false,
       visibility: NotificationVisibility.public,
       styleInformation: BigTextStyleInformation(
         mensaje,
