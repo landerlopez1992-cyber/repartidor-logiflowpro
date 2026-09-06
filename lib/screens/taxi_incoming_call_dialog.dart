@@ -26,11 +26,26 @@ class TaxiIncomingCallDialog extends StatefulWidget {
   static String? _solicitudMostrada;
 
   /// Pantalla de llamada. No se cierra al tocar fuera ni con atrás.
-  static Future<bool?> show(BuildContext context, String solicitudId) {
+  ///
+  /// Si el viaje ya no es oferta entrante (p. ej. recordatorio de
+  /// `reserva_confirmada`), no abre el modal ni el ringtone — evita el
+  /// parpadeo de aceptar/cerrar en bucle.
+  static Future<bool?> show(BuildContext context, String solicitudId) async {
     final id = solicitudId.trim();
-    if (id.isEmpty) return Future.value(null);
-    if (_solicitudMostrada == id) return Future.value(null);
+    if (id.isEmpty) return null;
+    if (_solicitudMostrada == id) return null;
     _solicitudMostrada = id;
+
+    try {
+      final o = await TaxiChoferService.instance.detalleOferta(id);
+      if (o == null ||
+          !_TaxiIncomingCallDialogState.esOfertaEntranteValida(o.estado)) {
+        if (_solicitudMostrada == id) _solicitudMostrada = null;
+        return null;
+      }
+    } catch (_) {
+      // Sin red: igual mostrar; el dialog reintentará cargar.
+    }
 
     unawaited(
       TaxiLlamadaPersistenteService.instance.iniciar(
@@ -69,12 +84,16 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
   String? _viajeEtaLabel;
 
   /// Oferta aún disponible para aceptar/rechazar (inmediato o reserva futura).
-  static bool _estadoOfertaEntranteValido(String raw) {
+  static bool esOfertaEntranteValida(String raw) {
     final e = raw.trim().toLowerCase();
     return e == 'buscando_chofer' ||
         e == 'reserva_pendiente_chofer' ||
         e == 'reserva_reasignando';
   }
+
+  /// Oferta aún disponible para aceptar/rechazar (inmediato o reserva futura).
+  static bool _estadoOfertaEntranteValido(String raw) =>
+      esOfertaEntranteValida(raw);
 
   /// Ya asignado a un chofer (viaje en curso o reserva tomada).
   static bool _estadoViajeAsignado(String raw) {

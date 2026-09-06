@@ -134,6 +134,11 @@ class _AvisoUbicacionSegundoPlanoDialogState extends State<AvisoUbicacionSegundo
               const Text(
                 'VolonexPro+ recopila datos de ubicación para habilitar el rastreo de entregas en tiempo real, incluso cuando la app está cerrada o no está en uso.',
                 textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  height: 1.4,
+                  color: Color(0xFFECEFF1),
+                ),
               ),
               const SizedBox(height: 16),
               Container(

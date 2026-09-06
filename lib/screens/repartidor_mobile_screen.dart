@@ -8543,20 +8543,31 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
+          backgroundColor: const Color(0xFF1E232E),
+          constraints: const BoxConstraints(maxWidth: 420),
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
+          ),
           title: const Text(
-            'Permiso de Ubicación en Segundo Plano',
+            'Permiso de ubicación en segundo plano',
             style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: AppColors.darkText,
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFFECEFF1),
             ),
           ),
-          content: const Text(
-            'Para rastrear tu ubicación mientras manejas (con el teléfono en el bolsillo), necesitas cambiar el permiso de ubicación a "Permitir todo el tiempo".\n\n'
-            '¿Quieres ir a Configuración ahora para cambiar este permiso?',
-            style: TextStyle(
-              fontSize: 14,
-              color: AppColors.darkTextMuted,
+          content: const SingleChildScrollView(
+            child: Text(
+              'Para rastrear tu ubicación mientras manejas (con el teléfono en el bolsillo), necesitas cambiar el permiso de ubicación a "Permitir todo el tiempo".\n\n'
+              '¿Quieres ir a Configuración ahora para cambiar este permiso?',
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.35,
+                color: Color(0xFF9CA3AF),
+              ),
             ),
           ),
           actions: [
@@ -8564,18 +8575,17 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               onPressed: () => Navigator.of(context).pop(),
               child: const Text(
                 'Cancelar',
-                style: TextStyle(color: AppColors.darkTextMuted),
+                style: TextStyle(color: Color(0xFF9CA3AF)),
               ),
             ),
             ElevatedButton(
               onPressed: () async {
                 Navigator.of(context).pop();
-                // Abrir configuración de la app
                 await openAppSettings();
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFFF9800),
-                foregroundColor: Colors.white,
+                backgroundColor: const Color(0xFF37474F),
+                foregroundColor: const Color(0xFFECEFF1),
               ),
               child: const Text('Ir a Configuración'),
             ),

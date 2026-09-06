@@ -144,18 +144,28 @@ class RepartidorActualizacionForzadaService {
   static String normalizeInstalledVersion(String raw) =>
       StoreListingVersionService.normalizeVersion(raw);
 
-  static Future<bool> playInAppUpdateAvailable() async {
-    if (kIsWeb || !Platform.isAndroid) return false;
+  /// Resultado de In-App Updates de Play (null = no se pudo consultar).
+  static Future<bool?> playInAppUpdateAvailableOrNull() async {
+    if (kIsWeb || !Platform.isAndroid) return null;
     try {
       final info = await InAppUpdate.checkForUpdate()
           .timeout(const Duration(seconds: 12));
       return info.updateAvailability == UpdateAvailability.updateAvailable;
     } catch (_) {
-      return false;
+      return null;
     }
   }
 
-  /// ¿Bloquear? Paridad con CubaLink23: Play API → tienda → mínima+nonce → onda.
+  static Future<bool> playInAppUpdateAvailable() async {
+    return (await playInAppUpdateAvailableOrNull()) == true;
+  }
+
+  /// ¿Bloquear? Paridad Cubalink23 + regla Android Abrir:
+  /// 1) Play In-App Update disponible → sí
+  /// 2) Si Play respondió “sin update” → no (ficha con Abrir; no tiene sentido forzar)
+  /// 3) Ficha scrapeada más nueva → sí
+  /// 4) nonce + mínima (si la mínima ya está en tienda) → sí
+  /// 5) onda Super Admin (solo si Play no respondió) → sí
   static bool requiresMandatoryUpdate({
     required String installed,
     required String minVersion,
@@ -164,6 +174,7 @@ class RepartidorActualizacionForzadaService {
     required int ondaLocal,
     String? storePublishedVersion,
     bool playUpdateAvailable = false,
+    bool? playCheckSucceeded,
   }) {
     final inst = normalizeInstalledVersion(installed);
     final min = normalizeInstalledVersion(minVersion);
@@ -171,12 +182,22 @@ class RepartidorActualizacionForzadaService {
         ? normalizeInstalledVersion(storePublishedVersion)
         : '';
 
+    // 1) Igual Cubalink23: API oficial Play primero.
     if (playUpdateAvailable) return true;
 
+    // 2) Play consultó OK y no hay update instalable → no bloquear
+    //    (caso modal + botón Abrir). Cubalink23 no tenía este corte;
+    //    en Repartidor evita el bloqueo inútil.
+    if (playCheckSucceeded == true && !playUpdateAvailable) {
+      return false;
+    }
+
+    // 3) Ficha pública más nueva que la instalada.
     if (store.isNotEmpty && compareVersions(inst, store) < 0) {
       return true;
     }
 
+    // 4) Pedido panel (nonce + mínima), como Cubalink23.
     if (nonce > 0 && min.isNotEmpty) {
       if (store.isNotEmpty && compareVersions(min, store) > 0) {
         return false;
@@ -184,7 +205,10 @@ class RepartidorActualizacionForzadaService {
       if (compareVersions(inst, min) < 0) return true;
     }
 
-    if (ondaServidor > 0 && ondaLocal < ondaServidor) {
+    // 5) Onda solo si no hubo respuesta clara de Play.
+    if (playCheckSucceeded != true &&
+        ondaServidor > 0 &&
+        ondaLocal < ondaServidor) {
       return true;
     }
 
@@ -279,6 +303,7 @@ class RepartidorActualizacionForzadaService {
 
       String? storePublishedVersion;
       var playUpdateAvailable = false;
+      bool? playCheckSucceeded;
       if (storeListingCheckEnabled) {
         if (forceStoreLookup) {
           StoreListingVersionService.clearCache();
@@ -289,7 +314,11 @@ class RepartidorActualizacionForzadaService {
           androidStoreUrl: urlTienda,
           forceRefresh: forceStoreLookup,
         );
-        playUpdateAvailable = await playInAppUpdateAvailable();
+        if (plataforma == 'android') {
+          final play = await playInAppUpdateAvailableOrNull();
+          playCheckSucceeded = play != null;
+          playUpdateAvailable = play == true;
+        }
       } else if (plataforma == 'ios' && _esUrlAppStoreValida(urlIosRaw)) {
         if (forceStoreLookup) {
           StoreListingVersionService.clearCache();
@@ -326,6 +355,7 @@ class RepartidorActualizacionForzadaService {
         ondaLocal: ondaLocal,
         storePublishedVersion: storePublishedVersion,
         playUpdateAvailable: playUpdateAvailable,
+        playCheckSucceeded: playCheckSucceeded,
       )) {
         return null;
       }
@@ -372,12 +402,15 @@ class RepartidorActualizacionForzadaService {
       final installed = normalizeInstalledVersion(info.version);
       String? storePublished;
       var playOk = false;
+      bool? playCheckSucceeded;
       if (storeListingCheckEnabled) {
         storePublished = await StoreListingVersionService.fetchPublishedVersion(
           androidStoreUrl: provisional.urlTienda,
           forceRefresh: true,
         );
-        playOk = await playInAppUpdateAvailable();
+        final play = await playInAppUpdateAvailableOrNull();
+        playCheckSucceeded = play != null;
+        playOk = play == true;
       }
       // Sin evidencia de tienda desactualizada / Play update, no bloquear.
       if (storePublished == null && !playOk) return null;
@@ -389,6 +422,7 @@ class RepartidorActualizacionForzadaService {
         ondaLocal: 0,
         storePublishedVersion: storePublished,
         playUpdateAvailable: playOk,
+        playCheckSucceeded: playCheckSucceeded,
       )) {
         return null;
       }

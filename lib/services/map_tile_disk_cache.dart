@@ -22,7 +22,7 @@ class MapTileDiskCache {
   static final instance = MapTileDiskCache._();
 
   static String get urlTemplate => CartoMapConfig.urlTemplate;
-  static const subdomains = ['a', 'b', 'c', 'd'];
+  static List<String> get subdomains => CartoMapConfig.subdomains;
   static const userAgent = 'com.logiflow.repartidor';
 
   Directory? _dir;

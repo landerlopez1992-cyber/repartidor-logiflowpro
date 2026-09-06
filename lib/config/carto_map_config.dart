@@ -5,8 +5,8 @@
 /// Compilar / ejecutar con:
 /// `--dart-define=CARTO_BASEMAP_KEY=tu_clave_aqui`
 ///
-/// Sin clave, Carto sirve las teselas con la marca de agua
-/// "API KEY REQUIRED" (el mapa funciona pero se ve feo).
+/// Sin clave: no usamos Carto (marca de agua "API KEY REQUIRED");
+/// caemos a teselas OpenStreetMap limpio.
 class CartoMapConfig {
   CartoMapConfig._();
 
@@ -15,16 +15,23 @@ class CartoMapConfig {
   static const String _stylePath =
       'rastertiles/voyager/{z}/{x}/{y}.png';
 
+  /// Sin `{s}` — OpenStreetMap no usa subdominios tipo Carto.
+  static const String _osmTemplate =
+      'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+
   /// Plantilla FlutterMap / fetch HTTP (incluye `?key=` si hay clave).
   static String get urlTemplate {
-    final base =
-        'https://{s}.basemaps.cartocdn.com/$_stylePath';
     final key = apiKey.trim();
-    if (key.isEmpty) return base;
-    return '$base?key=${Uri.encodeComponent(key)}';
+    if (key.isEmpty) return _osmTemplate;
+    return 'https://{s}.basemaps.cartocdn.com/$_stylePath'
+        '?key=${Uri.encodeComponent(key)}';
   }
 
   static bool get hasApiKey => apiKey.trim().isNotEmpty;
+
+  /// Subdominios solo para Carto; OSM no lleva `{s}`.
+  static List<String> get subdomains =>
+      hasApiKey ? const ['a', 'b', 'c', 'd'] : const <String>[];
 
   static const String attribution =
       '© OpenStreetMap © CARTO';

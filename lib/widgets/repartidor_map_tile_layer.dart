@@ -98,11 +98,13 @@ class _RepartidorMapTileLayerState extends State<RepartidorMapTileLayer> {
       } else {
         if (!CartoMapConfig.hasApiKey) {
           print(
-            '⚠️ Mapa Carto sin CARTO_BASEMAP_KEY → marca de agua. '
-            'Solicita clave en https://carto.com/basemaps/apikey',
+            '⚠️ Sin CARTO_BASEMAP_KEY → OpenStreetMap (sin marca de agua). '
+            'Opcional: --dart-define=CARTO_BASEMAP_KEY=…',
           );
+          print('🗺️ Mapa base: OpenStreetMap online');
+        } else {
+          print('🗺️ Mapa base: Carto online (calles)');
         }
-        print('🗺️ Mapa base: Carto online (calles)');
       }
     } catch (e) {
       print('⚠️ RepartidorMapTileLayer MBTiles: $e');
