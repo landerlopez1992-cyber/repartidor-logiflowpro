@@ -31,7 +31,8 @@ class MapTileDiskCache {
   Future<Directory> cacheDir() async {
     if (_dir != null) return _dir!;
     final root = await getApplicationDocumentsDirectory();
-    final d = Directory('${root.path}/map_tiles_carto_v1');
+    // v2: no reutilizar teselas Carto con marca "API KEY REQUIRED".
+    final d = Directory('${root.path}/map_tiles_base_v2');
     if (!await d.exists()) {
       await d.create(recursive: true);
     }
@@ -47,12 +48,15 @@ class MapTileDiskCache {
   }
 
   String urlFor(int z, int x, int y) {
-    final s = subdomains[(x + y) % subdomains.length];
-    return urlTemplate
-        .replaceAll('{s}', s)
+    var url = urlTemplate
         .replaceAll('{z}', '$z')
         .replaceAll('{x}', '$x')
         .replaceAll('{y}', '$y');
+    if (subdomains.isNotEmpty && url.contains('{s}')) {
+      final s = subdomains[(x + y) % subdomains.length];
+      url = url.replaceAll('{s}', s);
+    }
+    return url;
   }
 
   Future<Uint8List?> readCached(int z, int x, int y) async {
