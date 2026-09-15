@@ -33,6 +33,7 @@ class ProductoOrdenTiendaLinea {
     required this.origen,
     this.detalle,
     this.imagenLocalPath,
+    this.esComida = false,
   });
 
   final String nombre;
@@ -42,6 +43,7 @@ class ProductoOrdenTiendaLinea {
   final String? detalle;
   /// Ruta en disco (caché offline); tiene prioridad sobre [imagenUrl].
   final String? imagenLocalPath;
+  final bool esComida;
 }
 
 class ProductosOrdenTiendaUtil {
@@ -96,6 +98,39 @@ class ProductosOrdenTiendaUtil {
     if (t == 'formulario') return true;
     final id = p['id']?.toString() ?? '';
     return id.startsWith('formulario');
+  }
+
+  /// Línea de comida local (vendedor_atributos.tipo = comida).
+  static bool lineaEsComida(Map<String, dynamic> p) {
+    final t = p['tipo']?.toString().toLowerCase();
+    if (t == 'comida') return true;
+    final attrs = p['vendedor_atributos'];
+    if (attrs is Map &&
+        (attrs['tipo'] ?? '').toString().toLowerCase() == 'comida') {
+      return true;
+    }
+    final ad = p['additionalData'];
+    if (ad is Map) {
+      if ((ad['vendedor_tipo'] ?? '').toString().toLowerCase() == 'comida') {
+        return true;
+      }
+      final nested = ad['vendedor_atributos'];
+      if (nested is Map &&
+          (nested['tipo'] ?? '').toString().toLowerCase() == 'comida') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// True si algún producto de la orden es comida (para chip en lista).
+  static bool ordenTieneComida(List<dynamic>? productos) {
+    if (productos == null) return false;
+    for (final item in productos) {
+      if (item is! Map) continue;
+      if (lineaEsComida(Map<String, dynamic>.from(item))) return true;
+    }
+    return false;
   }
 
   static OrigenProductoTienda clasificarOrigen(Map<String, dynamic> p) {
@@ -221,6 +256,7 @@ class ProductosOrdenTiendaUtil {
           imagenUrl: _imagenDe(p),
           origen: clasificarOrigen(p),
           detalle: _detalleDe(p),
+          esComida: lineaEsComida(p),
         ),
       );
     }

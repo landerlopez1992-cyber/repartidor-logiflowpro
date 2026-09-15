@@ -249,6 +249,34 @@ class _ProductosOrdenTiendaScreenState extends State<ProductosOrdenTiendaScreen>
                     ),
                   ],
                 ),
+                if (_lineas.any((l) => l.esComida)) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF9800).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: const Color(0xFFFF9800).withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.restaurant_menu, size: 16, color: Color(0xFFFF9800)),
+                        SizedBox(width: 6),
+                        Text(
+                          'Comida caliente',
+                          style: TextStyle(
+                            color: Color(0xFFFF9800),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -565,6 +593,36 @@ class _ProductosOrdenTiendaScreenState extends State<ProductosOrdenTiendaScreen>
                           ],
                         ),
                       ),
+                      if (p.esComida)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFF9800).withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: const Color(0xFFFF9800).withValues(alpha: 0.5),
+                            ),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.restaurant_menu,
+                                  size: 14, color: Color(0xFFFF9800)),
+                              SizedBox(width: 4),
+                              Text(
+                                'Comida caliente',
+                                style: TextStyle(
+                                  color: Color(0xFFFF9800),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       Text(
                         'Cantidad: ${p.cantidad}',
                         style: const TextStyle(
