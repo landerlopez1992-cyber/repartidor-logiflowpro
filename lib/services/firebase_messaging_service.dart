@@ -18,6 +18,7 @@ import '../screens/detalle_orden_screen.dart';
 import '../screens/historial_pagos_completo_screen.dart';
 import '../screens/taxi_incoming_call_dialog.dart';
 import '../constants/repartidor_notificacion_tipos.dart';
+import 'taxi_chofer_ui_bridge.dart';
 import 'taxi_llamada_persistente_service.dart';
 
 /// Push FCM para la app Repartidor (app cerrada / background).
@@ -340,6 +341,24 @@ class FirebaseMessagingService {
       if (nav == null) return;
       // El dialog ya arranca la alerta persistente (evitar doble iniciar).
       await TaxiIncomingCallDialog.show(nav.context, solicitudId);
+      return;
+    }
+    if (RepartidorNotificacionTipos.tiposTaxiReservaCancelada.contains(tipo) ||
+        t == 'TAXI_RESERVA_CANCELADA') {
+      TaxiChoferUiBridge.refreshReservas();
+      TaxiChoferUiBridge.irAPestanaViajesTick.value++;
+      final nav = RepartidorNavigator.state;
+      final ctx = nav?.context;
+      if (ctx != null && ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          const SnackBar(
+            content: Text('El pasajero canceló una reserva programada.'),
+            backgroundColor: Color(0xFFDC2626),
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
       return;
     }
     // Propina / chat / completado: no abrir «llamada»; ir a notificaciones o chat.

@@ -42,6 +42,7 @@ import 'taxi_incoming_call_dialog.dart';
 import 'taxi_navegacion_chofer_screen.dart';
 import 'taxi_chofer_mapa_screen.dart';
 import '../services/taxi_chofer_service.dart';
+import '../services/taxi_chofer_ui_bridge.dart';
 import '../services/repartidor_suspension_service.dart';
 import '../services/tenant_fuera_servicio_service.dart';
 import '../widgets/repartidor_viajes_suspendido_panel.dart';
@@ -324,6 +325,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    TaxiChoferUiBridge.irAPestanaViajesTick.addListener(_onIrAPestanaViajes);
     // Usar listener con debounce para evitar que el teclado se cierre
     _searchController.addListener(_onSearchChanged);
     // Cargar datos de forma asíncrona sin bloquear el hilo principal.
@@ -384,6 +386,11 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       _inicializarEstadoConexion();
       unawaited(_comprobarActualizacionForzada());
     });
+  }
+
+  void _onIrAPestanaViajes() {
+    if (!mounted || _esRecolector) return;
+    setState(() => _pestanaHomeViajes = true);
   }
 
   /// Pinta tarjetas desde SharedPreferences al abrir (sin red / sin esperar perfil).
@@ -869,6 +876,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    TaxiChoferUiBridge.irAPestanaViajesTick.removeListener(_onIrAPestanaViajes);
     _searchDebounceTimer?.cancel();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
@@ -2961,6 +2969,36 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         return;
       }
 
+      // Pasajero canceló una reserva que este chofer ya tenía aceptada.
+      if (RepartidorNotificacionTipos.tiposTaxiReservaCancelada.contains(tipo)) {
+        if (notificacionId != null && notificacionId.isNotEmpty) {
+          if (_notificacionesProcesadas.contains(notificacionId) ||
+              RepartidorNotificacionesPushService.instance
+                  .yaSeMostroPushLocal(notificacionId)) {
+            return;
+          }
+          _notificacionesProcesadas.add(notificacionId);
+          await RepartidorNotificacionesPushService.instance
+              .marcarPushMostrado(notificacionId);
+        }
+        TaxiChoferUiBridge.refreshReservas();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              mensaje.trim().isEmpty
+                  ? 'El pasajero canceló una reserva programada.'
+                  : mensaje,
+            ),
+            backgroundColor: const Color(0xFFDC2626),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+        await _cargarNotificacionesNoLeidas();
+        return;
+      }
+
       print('🔍 Verificando configuración de notificaciones...');
       print('   - Tipo: $tipo');
       print('   - Título: $titulo');
@@ -3433,7 +3471,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             if (sid.isEmpty) continue;
             try {
               final o = await TaxiChoferService.instance.detalleOferta(sid);
-              if (o != null && o.estado == 'buscando_chofer') {
+              // Incluye reservas programadas (reserva_pendiente_chofer / reasignando).
+              if (o != null &&
+                  TaxiIncomingCallDialog.esOfertaEntranteValida(o.estado)) {
                 nElegida = n;
                 break;
               }

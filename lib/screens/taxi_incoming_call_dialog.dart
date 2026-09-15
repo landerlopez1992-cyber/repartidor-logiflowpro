@@ -9,6 +9,7 @@ import '../services/taxi_directions_service.dart';
 import 'package:latlong2/latlong.dart';
 import '../widgets/taxi_chofer_maplibre.dart';
 import '../services/taxi_llamada_persistente_service.dart';
+import '../services/taxi_chofer_ui_bridge.dart';
 import '../widgets/taxi_cash_comision_aviso_modal.dart';
 import '../widgets/taxi_itinerario_chofer_panel.dart';
 import 'taxi_navegacion_chofer_screen.dart';
@@ -25,6 +26,14 @@ class TaxiIncomingCallDialog extends StatefulWidget {
 
   static String? _solicitudMostrada;
 
+  /// Oferta aún disponible para aceptar/rechazar (inmediato o reserva futura).
+  static bool esOfertaEntranteValida(String raw) {
+    final e = raw.trim().toLowerCase();
+    return e == 'buscando_chofer' ||
+        e == 'reserva_pendiente_chofer' ||
+        e == 'reserva_reasignando';
+  }
+
   /// Pantalla de llamada. No se cierra al tocar fuera ni con atrás.
   ///
   /// Si el viaje ya no es oferta entrante (p. ej. recordatorio de
@@ -38,8 +47,7 @@ class TaxiIncomingCallDialog extends StatefulWidget {
 
     try {
       final o = await TaxiChoferService.instance.detalleOferta(id);
-      if (o == null ||
-          !_TaxiIncomingCallDialogState.esOfertaEntranteValida(o.estado)) {
+      if (o == null || !esOfertaEntranteValida(o.estado)) {
         if (_solicitudMostrada == id) _solicitudMostrada = null;
         return null;
       }
@@ -84,12 +92,8 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
   String? _viajeEtaLabel;
 
   /// Oferta aún disponible para aceptar/rechazar (inmediato o reserva futura).
-  static bool esOfertaEntranteValida(String raw) {
-    final e = raw.trim().toLowerCase();
-    return e == 'buscando_chofer' ||
-        e == 'reserva_pendiente_chofer' ||
-        e == 'reserva_reasignando';
-  }
+  static bool esOfertaEntranteValida(String raw) =>
+      TaxiIncomingCallDialog.esOfertaEntranteValida(raw);
 
   /// Oferta aún disponible para aceptar/rechazar (inmediato o reserva futura).
   static bool _estadoOfertaEntranteValido(String raw) =>
@@ -286,17 +290,54 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
       final oferta = res.oferta!;
       Navigator.of(context).pop(true);
 
-      // Reserva futura: no abrir navegación GPS; queda en pestaña Viajes.
+      // Reserva futura: no abrir navegación GPS; mostrar resumen y ir a Viajes.
       if (oferta.esReserva ||
           oferta.estado.trim().toLowerCase() == 'reserva_confirmada') {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Reserva confirmada. La verás en Viajes cuando llegue el día.',
+        TaxiChoferUiBridge.afterReservaConfirmada();
+        if (!mounted) return;
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: const Color(0xFF1E232E),
+            constraints: const BoxConstraints(maxWidth: 400),
+            insetPadding:
+                const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Text(
+              'Reserva confirmada',
+              style: TextStyle(
+                color: Color(0xFFECEFF1),
+                fontWeight: FontWeight.w800,
+                fontSize: 17,
+              ),
             ),
-            backgroundColor: Color(0xFF37474F),
-            behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: 4),
+            content: const SingleChildScrollView(
+              child: Text(
+                'El viaje quedó en tus reservas programadas.\n\n'
+                'Ábrelo en la pestaña Viajes (arriba). Ahí verás la fecha, '
+                'direcciones y podrás cancelar tu cita si no puedes ir.\n\n'
+                'Si el pasajero cancela, te llegará un aviso.',
+                style: TextStyle(
+                  color: Color(0xFF9CA3AF),
+                  height: 1.4,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text(
+                  'Ver en Viajes',
+                  style: TextStyle(
+                    color: Color(0xFFECEFF1),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
           ),
         );
         return;

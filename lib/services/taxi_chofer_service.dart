@@ -1061,6 +1061,8 @@ class TaxiReservaChoferItem {
   final double precioUsd;
 
   factory TaxiReservaChoferItem.fromJson(Map<String, dynamic> m) {
+    final ganancia = (m['ganancia_chofer_usd'] as num?)?.toDouble();
+    final precio = (m['precio_usd'] as num?)?.toDouble() ?? 0;
     return TaxiReservaChoferItem(
       id: m['id']?.toString() ?? '',
       estado: m['estado']?.toString() ?? '',
@@ -1070,7 +1072,7 @@ class TaxiReservaChoferItem {
       pasajeroNombre: (m['pasajero_nombre_snap'] ?? m['pasajero_nombre'])
               ?.toString() ??
           '',
-      precioUsd: (m['precio_usd'] as num?)?.toDouble() ?? 0,
+      precioUsd: (ganancia != null && ganancia > 0) ? ganancia : precio,
     );
   }
 }

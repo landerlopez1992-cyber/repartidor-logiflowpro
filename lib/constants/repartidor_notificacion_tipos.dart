@@ -7,6 +7,7 @@ class RepartidorNotificacionTipos {
 
   static const String taxiViaje = 'taxi_viaje';
   static const String taxiReserva = 'taxi_reserva';
+  static const String taxiReservaCancelada = 'taxi_reserva_cancelada';
   static const String taxiViajeCompletado = 'taxi_viaje_completado';
   static const String taxiPropina = 'taxi_propina';
   static const String taxiChat = 'taxi_chat';
@@ -20,11 +21,13 @@ class RepartidorNotificacionTipos {
   static const List<String> tiposTaxiViajeCompletado = [taxiViajeCompletado];
   static const List<String> tiposTaxiPropina = [taxiPropina];
   static const List<String> tiposTaxiChat = [taxiChat];
+  static const List<String> tiposTaxiReservaCancelada = [taxiReservaCancelada];
 
   /// Badge / lista de notificaciones (todos los avisos del módulo taxi).
   static const List<String> tiposTaxiTodos = [
     taxiViaje,
     taxiReserva,
+    taxiReservaCancelada,
     taxiViajeCompletado,
     taxiPropina,
     taxiChat,
