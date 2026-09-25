@@ -160,12 +160,9 @@ class RepartidorActualizacionForzadaService {
     return (await playInAppUpdateAvailableOrNull()) == true;
   }
 
-  /// ¿Bloquear? Paridad Cubalink23 + regla Android Abrir:
-  /// 1) Play In-App Update disponible → sí
-  /// 2) Si Play respondió “sin update” → no (ficha con Abrir; no tiene sentido forzar)
-  /// 3) Ficha scrapeada más nueva → sí
-  /// 4) nonce + mínima (si la mínima ya está en tienda) → sí
-  /// 5) onda Super Admin (solo si Play no respondió) → sí
+  /// ¿Bloquear?
+  /// Nunca forzar si la tienda no confirma update instalable (Play Abrir /
+  /// App Store sin build nuevo — típico en Cuba con scrape fallido o rollout).
   static bool requiresMandatoryUpdate({
     required String installed,
     required String minVersion,
@@ -182,12 +179,15 @@ class RepartidorActualizacionForzadaService {
         ? normalizeInstalledVersion(storePublishedVersion)
         : '';
 
-    // 1) Igual Cubalink23: API oficial Play primero.
+    // 0) Ya tiene lo publicado → nunca bloquear.
+    if (store.isNotEmpty && compareVersions(inst, store) >= 0) {
+      return false;
+    }
+
+    // 1) API oficial Play: hay update instalable.
     if (playUpdateAvailable) return true;
 
-    // 2) Play consultó OK y no hay update instalable → no bloquear
-    //    (caso modal + botón Abrir). Cubalink23 no tenía este corte;
-    //    en Repartidor evita el bloqueo inútil.
+    // 2) Play consultó OK y no hay update → no bloquear.
     if (playCheckSucceeded == true && !playUpdateAvailable) {
       return false;
     }
@@ -197,18 +197,20 @@ class RepartidorActualizacionForzadaService {
       return true;
     }
 
-    // 4) Pedido panel (nonce + mínima), como Cubalink23.
+    // 4) Pedido panel (nonce + mínima) solo si la ficha confirma la mínima.
     if (nonce > 0 && min.isNotEmpty) {
-      if (store.isNotEmpty && compareVersions(min, store) > 0) {
-        return false;
-      }
+      if (store.isEmpty) return false;
+      if (compareVersions(min, store) > 0) return false;
       if (compareVersions(inst, min) < 0) return true;
     }
 
-    // 5) Onda solo si no hubo respuesta clara de Play.
-    if (playCheckSucceeded != true &&
-        ondaServidor > 0 &&
-        ondaLocal < ondaServidor) {
+    // 5) Onda Super Admin: solo con ficha que confirme algo más nuevo,
+    //    o si Play no respondió y tampoco hay ficha (último recurso débil
+    //    desactivado a propósito — sin ficha no forzar).
+    if (ondaServidor > 0 &&
+        ondaLocal < ondaServidor &&
+        store.isNotEmpty &&
+        compareVersions(inst, store) < 0) {
       return true;
     }
 
