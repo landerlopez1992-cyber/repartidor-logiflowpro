@@ -510,11 +510,18 @@ class TaxiChoferService {
     if (s.isEmpty ||
         low.contains('exception') ||
         low.contains('postgrest') ||
-        low.contains('socket')) {
+        low.contains('socket') ||
+        low.contains('logiflow_uwp') ||
+        low.contains('42501') ||
+        low.contains('forbidden') ||
+        low.contains('permission denied') ||
+        low.contains('row-level security')) {
       return 'No se pudo completar la acción. Inténtalo de nuevo.';
     }
     return s;
   }
+
+  static String _errUi(Object e) => mensajeErrorUsuario(e.toString());
 
   Future<TaxiOfertaChofer?> detalleOferta(String solicitudId) async {
     final res = await _db.rpc(
@@ -567,7 +574,7 @@ class TaxiChoferService {
         error: null,
       );
     } catch (e) {
-      return (items: const <TaxiReservaChoferItem>[], error: e.toString());
+      return (items: const <TaxiReservaChoferItem>[], error: _errUi(e));
     }
   }
 
@@ -671,7 +678,7 @@ class TaxiChoferService {
         oferta: TaxiOfertaChofer.fromJson(Map<String, dynamic>.from(res)),
       );
     } catch (e) {
-      return (ok: false, err: e.toString(), oferta: null);
+      return (ok: false, err: _errUi(e), oferta: null);
     }
   }
 
@@ -688,7 +695,9 @@ class TaxiChoferService {
         return (
           ok: false,
           err: res is Map
-              ? (res['mensaje']?.toString() ?? res['error']?.toString())
+              ? mensajeErrorUsuario(
+                  res['mensaje']?.toString() ?? res['error']?.toString(),
+                )
               : 'Error',
           oferta: null,
         );
@@ -699,7 +708,7 @@ class TaxiChoferService {
         oferta: TaxiOfertaChofer.fromJson(Map<String, dynamic>.from(res)),
       );
     } catch (e) {
-      return (ok: false, err: e.toString(), oferta: null);
+      return (ok: false, err: _errUi(e), oferta: null);
     }
   }
 
@@ -725,11 +734,13 @@ class TaxiChoferService {
       return (
         ok: false,
         err: res is Map
-            ? (res['mensaje']?.toString() ?? res['error']?.toString())
+            ? mensajeErrorUsuario(
+                res['mensaje']?.toString() ?? res['error']?.toString(),
+              )
             : 'No se pudo guardar el progreso',
       );
     } catch (e) {
-      return (ok: false, err: e.toString());
+      return (ok: false, err: _errUi(e));
     }
   }
 
@@ -765,7 +776,7 @@ class TaxiChoferService {
     } catch (e) {
       return (
         ok: false,
-        err: e.toString(),
+        err: _errUi(e),
         gananciaUsd: null,
         comisionUsd: null,
         esCash: false,
@@ -842,7 +853,7 @@ class TaxiChoferService {
         reasignada: null,
       );
     } catch (e) {
-      return (ok: false, err: e.toString(), amountUsd: null, reasignada: null);
+      return (ok: false, err: _errUi(e), amountUsd: null, reasignada: null);
     }
   }
 
@@ -980,7 +991,7 @@ class TaxiChoferService {
             : 'No se pudo guardar la valoración',
       );
     } catch (e) {
-      return (ok: false, err: e.toString());
+      return (ok: false, err: _errUi(e));
     }
   }
 }

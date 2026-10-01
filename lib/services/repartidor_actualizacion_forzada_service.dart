@@ -160,9 +160,32 @@ class RepartidorActualizacionForzadaService {
     return (await playInAppUpdateAvailableOrNull()) == true;
   }
 
+  /// Tiempo mínimo desde `currentVersionReleaseDate` (App Store) antes de
+  /// forzar en iOS: el lookup anuncia la versión horas antes de que el
+  /// dispositivo vea el botón «Actualizar».
+  static const Duration appStorePropagationGrace = Duration(hours: 24);
+
+  static String _plataformaRuntime() {
+    if (kIsWeb) return 'other';
+    if (Platform.isAndroid) return 'android';
+    if (Platform.isIOS) return 'ios';
+    return 'other';
+  }
+
   /// ¿Bloquear?
-  /// Nunca forzar si la tienda no confirma update instalable (Play Abrir /
-  /// App Store sin build nuevo — típico en Cuba con scrape fallido o rollout).
+  ///
+  /// REGLA ÚNICA: **nunca** mostrar el cartel obligatorio si la tienda del
+  /// dispositivo no puede instalar la actualización en este momento.
+  ///
+  /// - **Android:** solo la API oficial de Google Play (In-App Update).
+  ///   Ni scrape HTML, ni mínima de BD, ni onda pueden forzar por sí solos.
+  /// - **iOS:** lookup oficial de App Store con versión superior a la
+  ///   instalada **y** publicada hace al menos [appStorePropagationGrace].
+  ///   Si el panel fijó mínima (nonce > 0), debe estar publicada y la
+  ///   instalada por debajo. La onda de Super Admin solo acompaña a una
+  ///   ficha nueva ya propagada.
+  ///
+  /// [plataforma] (`'android'` | `'ios'`) permite probar sin depender del host.
   static bool requiresMandatoryUpdate({
     required String installed,
     required String minVersion,
@@ -172,49 +195,47 @@ class RepartidorActualizacionForzadaService {
     String? storePublishedVersion,
     bool playUpdateAvailable = false,
     bool? playCheckSucceeded,
+    DateTime? storeReleaseDate,
+    DateTime? now,
+    String? plataforma,
   }) {
+    final plat = plataforma ?? _plataformaRuntime();
     final inst = normalizeInstalledVersion(installed);
     final min = normalizeInstalledVersion(minVersion);
     final store = storePublishedVersion != null
         ? normalizeInstalledVersion(storePublishedVersion)
         : '';
 
-    // 0) Ya tiene lo publicado → nunca bloquear.
-    if (store.isNotEmpty && compareVersions(inst, store) >= 0) {
+    // ── Android: Play API manda. ──────────────────────────────────────────
+    if (plat == 'android') {
+      // «updateAvailable» == botón Actualizar activo en Play para este
+      // dispositivo. Si Play dice que no (o no respondió), no bloquear.
+      return playUpdateAvailable;
+    }
+
+    // ── iOS: lookup App Store + propagación. ─────────────────────────────
+    if (plat != 'ios') return false;
+
+    if (store.isEmpty) return false;
+    if (compareVersions(inst, store) >= 0) return false;
+
+    if (storeReleaseDate == null) return false;
+    final ahora = (now ?? DateTime.now()).toUtc();
+    if (ahora.difference(storeReleaseDate.toUtc()) < appStorePropagationGrace) {
       return false;
     }
 
-    // 1) API oficial Play: hay update instalable.
-    if (playUpdateAvailable) return true;
-
-    // 2) Play consultó OK y no hay update → no bloquear.
-    if (playCheckSucceeded == true && !playUpdateAvailable) {
-      return false;
-    }
-
-    // 3) Ficha pública más nueva que la instalada.
-    if (store.isNotEmpty && compareVersions(inst, store) < 0) {
-      return true;
-    }
-
-    // 4) Pedido panel (nonce + mínima) solo si la ficha confirma la mínima.
+    // Pedido del panel (nonce + mínima).
     if (nonce > 0 && min.isNotEmpty) {
-      if (store.isEmpty) return false;
       if (compareVersions(min, store) > 0) return false;
-      if (compareVersions(inst, min) < 0) return true;
+      return compareVersions(inst, min) < 0;
     }
 
-    // 5) Onda Super Admin: solo con ficha que confirme algo más nuevo,
-    //    o si Play no respondió y tampoco hay ficha (último recurso débil
-    //    desactivado a propósito — sin ficha no forzar).
-    if (ondaServidor > 0 &&
-        ondaLocal < ondaServidor &&
-        store.isNotEmpty &&
-        compareVersions(inst, store) < 0) {
-      return true;
-    }
+    // Onda Super Admin pendiente con ficha nueva propagada → bloquear.
+    if (ondaServidor > 0 && ondaLocal < ondaServidor) return true;
 
-    return false;
+    // Sin pedido explícito: versión nueva ya propagada → actualizar.
+    return true;
   }
 
   bool _esUrlTiendaAndroidValida(String url) {
@@ -358,6 +379,7 @@ class RepartidorActualizacionForzadaService {
         storePublishedVersion: storePublishedVersion,
         playUpdateAvailable: playUpdateAvailable,
         playCheckSucceeded: playCheckSucceeded,
+        storeReleaseDate: StoreListingVersionService.lastStoreReleaseDate,
       )) {
         return null;
       }
@@ -425,6 +447,7 @@ class RepartidorActualizacionForzadaService {
         storePublishedVersion: storePublished,
         playUpdateAvailable: playOk,
         playCheckSucceeded: playCheckSucceeded,
+        storeReleaseDate: StoreListingVersionService.lastStoreReleaseDate,
       )) {
         return null;
       }

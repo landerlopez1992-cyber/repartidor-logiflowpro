@@ -18,6 +18,13 @@ class StoreListingVersionService {
   static DateTime? _cachedAt;
   static String? _cacheKey;
 
+  /// Fecha de publicación de la versión actual en App Store
+  /// (`currentVersionReleaseDate` del lookup oficial). `null` en Android o si
+  /// no se pudo leer. Sirve para esperar la propagación antes de forzar.
+  static DateTime? _lastStoreReleaseDate;
+
+  static DateTime? get lastStoreReleaseDate => _lastStoreReleaseDate;
+
   static String normalizeVersion(String raw) {
     var v = raw.trim();
     if (v.isEmpty) return '';
@@ -52,6 +59,7 @@ class StoreListingVersionService {
     String? version;
     try {
       if (Platform.isAndroid) {
+        _lastStoreReleaseDate = null;
         version = await _fetchPlayStoreVersion(androidStoreUrl);
       } else if (Platform.isIOS) {
         version = await _fetchAppStoreVersion(iosStoreUrl);
@@ -73,6 +81,7 @@ class StoreListingVersionService {
     _cachedVersion = null;
     _cachedAt = null;
     _cacheKey = null;
+    _lastStoreReleaseDate = null;
   }
 
   static Future<String?> _fetchPlayStoreVersion(String? storeUrl) async {
@@ -151,7 +160,19 @@ class StoreListingVersionService {
       if (first is! Map) return null;
       final v = first['version']?.toString();
       if (v == null || v.trim().isEmpty) return null;
+      _lastStoreReleaseDate = parseItunesReleaseDate(first);
       return normalizeVersion(v);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// `currentVersionReleaseDate` (ISO-8601 UTC) del lookup de iTunes.
+  static DateTime? parseItunesReleaseDate(Map<dynamic, dynamic> result) {
+    final raw = result['currentVersionReleaseDate']?.toString().trim();
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      return DateTime.parse(raw).toUtc();
     } catch (_) {
       return null;
     }
