@@ -90,14 +90,20 @@ class RepartidorApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return RepartidorStoreUpdateBlocker(
-      child: MaterialApp(
-        title: 'VolonexPro+',
-        debugShowCheckedModeBanner: false,
-        theme: VolonexTheme.material,
-        navigatorKey: RepartidorNavigator.key,
-        home: const AuthWrapper(),
-      ),
+    // El bloqueador DEBE ir dentro de MaterialApp (builder), igual que CubaLink23.
+    // Si envuelve MaterialApp por fuera, el modal de actualización no tiene
+    // Directionality/Localizations y en iOS release se ve una pantalla gris vacía.
+    return MaterialApp(
+      title: 'VolonexPro+',
+      debugShowCheckedModeBanner: false,
+      theme: VolonexTheme.material,
+      navigatorKey: RepartidorNavigator.key,
+      builder: (context, child) {
+        return RepartidorStoreUpdateBlocker(
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
+      home: const AuthWrapper(),
     );
   }
 }

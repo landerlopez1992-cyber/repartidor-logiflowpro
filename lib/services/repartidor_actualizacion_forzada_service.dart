@@ -172,18 +172,33 @@ class RepartidorActualizacionForzadaService {
     return 'other';
   }
 
+  /// Kill switch remoto / de emergencia. Si está activo, **nunca** se muestra
+  /// el modal (Play ni App Store). Valores:
+  /// - `min_version` = `OFF` / `-` / `DISABLED`
+  /// - `min_version` empieza por `99.` (compatible con builds viejos iOS)
+  /// - `nonce` < 0
+  static bool isForceUpdateKillSwitch({
+    required String minVersionRaw,
+    required int nonce,
+  }) {
+    if (nonce < 0) return true;
+    final u = minVersionRaw.trim().toUpperCase();
+    if (u == 'OFF' || u == '-' || u == 'DISABLED') return true;
+    final norm = normalizeInstalledVersion(minVersionRaw);
+    if (norm.startsWith('99.')) return true;
+    return false;
+  }
+
   /// ¿Bloquear?
   ///
-  /// REGLA ÚNICA: **nunca** mostrar el cartel obligatorio si la tienda del
-  /// dispositivo no puede instalar la actualización en este momento.
+  /// Política permanente (Repartidor): **por defecto NO se fuerza nada**.
+  /// Solo con pedido explícito del panel (nonce + mínima real) o onda Super
+  /// Admin, y además la tienda debe poder instalar:
   ///
-  /// - **Android:** solo la API oficial de Google Play (In-App Update).
-  ///   Ni scrape HTML, ni mínima de BD, ni onda pueden forzar por sí solos.
-  /// - **iOS:** lookup oficial de App Store con versión superior a la
-  ///   instalada **y** publicada hace al menos [appStorePropagationGrace].
-  ///   Si el panel fijó mínima (nonce > 0), debe estar publicada y la
-  ///   instalada por debajo. La onda de Super Admin solo acompaña a una
-  ///   ficha nueva ya propagada.
+  /// - **Android:** Play In-App Update = true **y** ficha pública > instalada
+  ///   **y** (pedido panel o onda). Nunca solo por fantasma de Play.
+  /// - **iOS:** ficha App Store > instalada, propagada ≥24 h, **y**
+  ///   (pedido panel o onda). Nunca solo por «hay build en tienda».
   ///
   /// [plataforma] (`'android'` | `'ios'`) permite probar sin depender del host.
   static bool requiresMandatoryUpdate({
@@ -206,14 +221,30 @@ class RepartidorActualizacionForzadaService {
         ? normalizeInstalledVersion(storePublishedVersion)
         : '';
 
-    // ── Android: Play API manda. ──────────────────────────────────────────
+    // Kill switch también aquí (por si llega min 99.x / OFF).
+    if (isForceUpdateKillSwitch(minVersionRaw: minVersion, nonce: nonce)) {
+      return false;
+    }
+    if (min.startsWith('99.')) return false;
+
+    final pedidoPanel = nonce > 0 && min.isNotEmpty;
+    final ondaPendiente = ondaServidor > 0 && ondaLocal < ondaServidor;
+    // Sin pedido del panel ni onda → nunca molestar al repartidor.
+    if (!pedidoPanel && !ondaPendiente) return false;
+
+    // ── Android ──────────────────────────────────────────────────────────
     if (plat == 'android') {
-      // «updateAvailable» == botón Actualizar activo en Play para este
-      // dispositivo. Si Play dice que no (o no respondió), no bloquear.
-      return playUpdateAvailable;
+      if (!playUpdateAvailable) return false;
+      if (store.isEmpty) return false;
+      if (compareVersions(inst, store) >= 0) return false;
+      if (pedidoPanel) {
+        if (compareVersions(min, store) > 0) return false;
+        return compareVersions(inst, min) < 0;
+      }
+      return ondaPendiente;
     }
 
-    // ── iOS: lookup App Store + propagación. ─────────────────────────────
+    // ── iOS ──────────────────────────────────────────────────────────────
     if (plat != 'ios') return false;
 
     if (store.isEmpty) return false;
@@ -225,17 +256,12 @@ class RepartidorActualizacionForzadaService {
       return false;
     }
 
-    // Pedido del panel (nonce + mínima).
-    if (nonce > 0 && min.isNotEmpty) {
+    if (pedidoPanel) {
       if (compareVersions(min, store) > 0) return false;
       return compareVersions(inst, min) < 0;
     }
 
-    // Onda Super Admin pendiente con ficha nueva propagada → bloquear.
-    if (ondaServidor > 0 && ondaLocal < ondaServidor) return true;
-
-    // Sin pedido explícito: versión nueva ya propagada → actualizar.
-    return true;
+    return ondaPendiente;
   }
 
   bool _esUrlTiendaAndroidValida(String url) {
@@ -278,7 +304,8 @@ class RepartidorActualizacionForzadaService {
             'google_play_store_url, google_play_url, '
             'apple_store_listing_url, apple_store_url, '
             'app_movil_update_min_version, app_movil_update_prompt_nonce, '
-            'app_movil_update_build_pending_at, app_movil_ios_en_produccion',
+            'app_movil_update_build_pending_at, app_movil_ios_en_produccion, '
+            'app_movil_android_version_name, app_movil_ios_version_name',
           )
           .eq('id', 1)
           .maybeSingle();
@@ -288,6 +315,12 @@ class RepartidorActualizacionForzadaService {
           (row['app_movil_update_min_version'] ?? '').toString().trim();
       final nonce =
           (row['app_movil_update_prompt_nonce'] as num?)?.toInt() ?? 0;
+
+      // Parada de emergencia remota (ambas plataformas): OFF / 99.x / nonce < 0
+      if (isForceUpdateKillSwitch(minVersionRaw: minVersionRaw, nonce: nonce)) {
+        return null;
+      }
+
       final iosEnProduccion = row['app_movil_ios_en_produccion'] != false;
       var minVersion = minVersionRaw;
       var nonceParaCheck = nonce;
@@ -295,6 +328,13 @@ class RepartidorActualizacionForzadaService {
         minVersion = '';
         nonceParaCheck = 0;
       }
+
+      final panelAndroid = normalizeInstalledVersion(
+        (row['app_movil_android_version_name'] ?? '').toString(),
+      );
+      final panelIos = normalizeInstalledVersion(
+        (row['app_movil_ios_version_name'] ?? '').toString(),
+      );
 
       final ondaServidor = plataforma == 'android'
           ? _parseOnda(row['onda_actualizacion_android'])
@@ -323,6 +363,19 @@ class RepartidorActualizacionForzadaService {
 
       final info = await PackageInfo.fromPlatform();
       final installed = normalizeInstalledVersion(info.version);
+
+      // Si el panel ya marca esta versión como la publicada en tienda,
+      // no molestar (cubre falsos positivos de Play In-App Update).
+      if (plataforma == 'android' &&
+          panelAndroid.isNotEmpty &&
+          compareVersions(installed, panelAndroid) >= 0) {
+        return null;
+      }
+      if (plataforma == 'ios' &&
+          panelIos.isNotEmpty &&
+          compareVersions(installed, panelIos) >= 0) {
+        return null;
+      }
 
       String? storePublishedVersion;
       var playUpdateAvailable = false;

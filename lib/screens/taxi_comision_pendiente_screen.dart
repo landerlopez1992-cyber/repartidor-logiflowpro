@@ -106,8 +106,17 @@ class _TaxiComisionPendienteScreenState
         setState(() => _loading = false);
         return;
       }
+      final raw = e.toString();
+      final lower = raw.toLowerCase();
+      final friendly = (lower.contains('42501') ||
+              lower.contains('permission denied') ||
+              lower.contains('unauthorized') ||
+              lower.contains('jwt') ||
+              lower.contains('session'))
+          ? 'Tu sesión no es válida. Cierra sesión, entra otra vez con tu cuenta y reintenta.'
+          : 'No se pudo cargar la comisión. Revisa tu conexión e inténtalo de nuevo.';
       setState(() {
-        _error = '$e';
+        _error = friendly;
         _loading = false;
       });
     }

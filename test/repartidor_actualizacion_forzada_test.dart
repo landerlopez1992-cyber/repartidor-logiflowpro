@@ -33,22 +33,117 @@ void main() {
     );
   }
 
-  group('Android — solo Play API bloquea', () {
-    test('Play con update → bloquear', () {
+  group('Kill switch permanente', () {
+    test('OFF / 99.x / nonce negativo → nunca bloquear', () {
       expect(
-        regla(installed: '1.0.30', store: '1.0.30', play: true, plataforma: 'android'),
+        RepartidorActualizacionForzadaService.isForceUpdateKillSwitch(
+          minVersionRaw: 'OFF',
+          nonce: 9,
+        ),
         isTrue,
+      );
+      expect(
+        RepartidorActualizacionForzadaService.isForceUpdateKillSwitch(
+          minVersionRaw: '99.0.0',
+          nonce: 9,
+        ),
+        isTrue,
+      );
+      expect(
+        regla(
+          installed: '1.0.30',
+          minVersion: '99.0.0',
+          nonce: 9,
+          store: '1.0.34',
+          play: true,
+          release: hace2Dias,
+          plataforma: 'android',
+        ),
+        isFalse,
+      );
+      expect(
+        regla(
+          installed: '1.0.30',
+          minVersion: '1.0.34',
+          nonce: -1,
+          store: '1.0.34',
+          play: true,
+          release: hace2Dias,
+          plataforma: 'ios',
+        ),
+        isFalse,
       );
     });
 
-    test('ficha + mínima + onda, pero Play sin update → NO bloquear', () {
+    test('sin pedido panel ni onda → nunca bloquear (aunque Play diga update)', () {
+      expect(
+        regla(
+          installed: '1.0.30',
+          store: '1.0.34',
+          play: true,
+          plataforma: 'android',
+        ),
+        isFalse,
+      );
+      expect(
+        regla(
+          installed: '1.0.30',
+          store: '1.0.34',
+          release: hace2Dias,
+          plataforma: 'ios',
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('Android — Play + ficha + pedido panel', () {
+    test('Play + ficha nueva + mínima panel → bloquear', () {
       expect(
         regla(
           installed: '1.0.30',
           minVersion: '1.0.34',
           nonce: 7,
-          ondaServidor: 3,
-          ondaLocal: 0,
+          store: '1.0.34',
+          play: true,
+          plataforma: 'android',
+        ),
+        isTrue,
+      );
+    });
+
+    test('Play update pero ficha igual → NO bloquear', () {
+      expect(
+        regla(
+          installed: '1.0.34',
+          minVersion: '1.0.34',
+          nonce: 7,
+          store: '1.0.34',
+          play: true,
+          plataforma: 'android',
+        ),
+        isFalse,
+      );
+    });
+
+    test('Play update sin pedido panel → NO bloquear', () {
+      expect(
+        regla(
+          installed: '1.0.30',
+          store: '1.0.34',
+          play: true,
+          plataforma: 'android',
+        ),
+        isFalse,
+      );
+    });
+
+    test('pedido panel pero Play sin update → NO bloquear', () {
+      expect(
+        regla(
+          installed: '1.0.30',
+          minVersion: '1.0.34',
+          nonce: 7,
           store: '1.0.34',
           play: false,
           playOk: true,
@@ -57,26 +152,17 @@ void main() {
         isFalse,
       );
     });
+  });
 
-    test('Play no respondió → NO bloquear', () {
+  group('iOS — App Store + pedido panel', () {
+    test('sin ficha → no bloquear', () {
       expect(
         regla(
           installed: '1.0.30',
           minVersion: '1.0.34',
           nonce: 7,
-          store: '1.0.34',
-          playOk: null,
-          plataforma: 'android',
+          plataforma: 'ios',
         ),
-        isFalse,
-      );
-    });
-  });
-
-  group('iOS — App Store propagada', () {
-    test('sin ficha → no bloquear', () {
-      expect(
-        regla(installed: '1.0.30', minVersion: '1.0.34', nonce: 7, plataforma: 'ios'),
         isFalse,
       );
     });
@@ -85,6 +171,8 @@ void main() {
       expect(
         regla(
           installed: '1.0.30',
+          minVersion: '1.0.34',
+          nonce: 7,
           store: '1.0.34',
           release: hace2Horas,
           plataforma: 'ios',
@@ -93,7 +181,7 @@ void main() {
       );
     });
 
-    test('propagada + mínima publicada + instalada atrás → bloquear', () {
+    test('propagada + mínima panel + instalada atrás → bloquear', () {
       expect(
         regla(
           installed: '1.0.30',
