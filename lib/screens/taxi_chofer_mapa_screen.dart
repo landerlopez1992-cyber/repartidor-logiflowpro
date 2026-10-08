@@ -29,6 +29,7 @@ class TaxiChoferMapaScreen extends StatefulWidget {
     this.embedded = false,
     this.onBuscandoChanged,
     this.mapVisible = true,
+    this.viajesHabilitados = true,
   });
 
   final String? paisOperacion;
@@ -42,6 +43,9 @@ class TaxiChoferMapaScreen extends StatefulWidget {
   /// recentra la zona Habana con taxis caminando.
   final bool mapVisible;
 
+  /// false = la empresa apagó el rol taxista. No busca viajes.
+  final bool viajesHabilitados;
+
   @override
   State<TaxiChoferMapaScreen> createState() => _TaxiChoferMapaScreenState();
 }
@@ -54,6 +58,7 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
   PaisMapaCentro _vista = PaisMapaCentro.forPais('Cuba');
   LatLng? _yo;
   bool _buscando = false;
+  bool _rolTaxiActivo = true;
   bool _cargando = true;
   bool _toggleBusy = false;
   bool _esCubalink23 = false;
@@ -85,6 +90,25 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
         !_cargando) {
       unawaited(_aplicarVistaCubalink23Habana(recentrarMapa: true));
     }
+    if (oldWidget.viajesHabilitados && !widget.viajesHabilitados) {
+      unawaited(_cortarBusquedaPorRol());
+    }
+  }
+
+  Future<void> _cortarBusquedaPorRol() async {
+    try {
+      await TaxiBuscandoPrefs.setActivo(false);
+    } catch (_) {}
+    if (mounted && _buscando) {
+      setState(() => _buscando = false);
+    }
+    widget.onBuscandoChanged?.call(false);
+    _radar.stop();
+    _radar.reset();
+    _pararPublicacionGps();
+    await _posSub?.cancel();
+    _posSub = null;
+    unawaited(TaxiTarifasChoferService.instance.setDisponible(false));
   }
 
   /// Cubalink23: mapa Habana + taxis del mismo tamaño circulando por calles.
@@ -128,8 +152,15 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
       tarifa = await TaxiTarifasChoferService.instance.get();
     } catch (_) {}
 
-    final buscandoServidor = tarifa?.disponible == true;
-    final buscando = buscandoLocal || buscandoServidor;
+    final programaActivo = widget.viajesHabilitados && tarifa?.programaActivo != false;
+    final buscandoServidor = programaActivo && tarifa?.disponible == true;
+    final buscando = programaActivo && (buscandoLocal || buscandoServidor);
+    if (!programaActivo) {
+      try {
+        await TaxiBuscandoPrefs.setActivo(false);
+      } catch (_) {}
+      unawaited(TaxiTarifasChoferService.instance.setDisponible(false));
+    }
 
     if (buscando) {
       await TaxiBuscandoPrefs.setActivo(true);
@@ -169,6 +200,7 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
       _vista = vista;
       _yo = vista.center;
       _buscando = buscando;
+      _rolTaxiActivo = programaActivo;
       _cargando = false;
       _nearbyCars = fleet;
     });
@@ -448,6 +480,7 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
   }
 
   Future<void> _toggleBuscando() async {
+    if (!widget.viajesHabilitados || !_rolTaxiActivo) return;
     if (_toggleBusy || _cargando) return;
     _toggleBusy = true;
 
@@ -849,15 +882,24 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              _BuscandoRadarButton(
-                                activo: _buscando,
-                                animation: _radar,
-                                onTap: _toggleBuscando,
-                                size: compact ? 96 : 132,
-                              ),
+                              if (!widget.viajesHabilitados || !_rolTaxiActivo)
+                                Icon(
+                                  Icons.local_taxi,
+                                  size: compact ? 36 : 44,
+                                  color: const Color(0xFF9CA3AF),
+                                )
+                              else
+                                _BuscandoRadarButton(
+                                  activo: _buscando,
+                                  animation: _radar,
+                                  onTap: _toggleBuscando,
+                                  size: compact ? 96 : 132,
+                                ),
                               SizedBox(height: compact ? 8 : 16),
                               Text(
-                                _buscando
+                                (!widget.viajesHabilitados || !_rolTaxiActivo)
+                                    ? 'Viajes desactivados por la empresa'
+                                    : _buscando
                                     ? 'Buscando viajes · activo'
                                     : 'Toca para buscar viajes',
                                 style: TextStyle(
@@ -871,7 +913,9 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
                               if (!compact) ...[
                                 const SizedBox(height: 6),
                                 Text(
-                                  _buscando
+                                  (!widget.viajesHabilitados || !_rolTaxiActivo)
+                                      ? 'Cuando la empresa reactive el rol de taxista, podrás buscar viajes.'
+                                      : _buscando
                                       ? 'Seguirás activo aunque cierres la app. '
                                           'Toca de nuevo para desactivar.'
                                       : 'Activa el modo para recibir ofertas de taxi',
@@ -948,27 +992,11 @@ class _BuscandoRadarButton extends StatelessWidget {
                       color: Colors.white.withValues(alpha: 0.12),
                       width: 1.5,
                     ),
-                    boxShadow: activo
-                        ? [
-                            BoxShadow(
-                              color: const Color(0xFF4CAF50)
-                                  .withValues(alpha: 0.28),
-                              blurRadius: 8,
-                            ),
-                          ]
-                        : null,
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Image.asset(
-                      'assets/images/taxi-icon-3d-v3.png',
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => Icon(
-                        Icons.local_taxi,
-                        color: Colors.white,
-                        size: activo ? 34 : 30,
-                      ),
-                    ),
+                  child: Icon(
+                    Icons.local_taxi,
+                    color: Colors.white,
+                    size: activo ? 36 : 32,
                   ),
                 ),
               ),

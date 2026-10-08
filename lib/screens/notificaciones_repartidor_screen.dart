@@ -186,11 +186,8 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
       final tablaNotificaciones = _esRecolector ? 'notificaciones_recolectores' : 'notificaciones_repartidores';
       final campoId = _esRecolector ? 'recolector_id' : 'repartidor_id';
       
-      // Cargar notificaciones de órdenes desde la tabla correspondiente
-      // Tipos alineados con VolonexPro+ (canónico: nueva_orden)
-      // CRÍTICO: Solo cargar NOTIFICACIONES NO LEÍDAS
-      // Las leídas se QUITAN de la pantalla para evitar que se lean de nuevo
-      print('🔍 Cargando notificaciones de órdenes (solo no leídas)...');
+      // Historial completo. El badge de la pestaña solo cuenta las no leídas.
+      print('🔍 Cargando historial de notificaciones de órdenes...');
       print('   - Repartidor ID (tabla usuarios): $_repartidorId');
       print('   - Es recolector: $_esRecolector');
       print('   - Tabla: $tablaNotificaciones');
@@ -201,7 +198,6 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
             .select('id, tipo, titulo, mensaje, created_at, leida, orden_id, numero_orden')
             .eq(campoId, _repartidorId!)
             .inFilter('tipo', RepartidorNotificacionTipos.tiposOrdenNueva)
-            .eq('leida', false)
             .order('created_at', ascending: false)
             .limit(100),
       );
@@ -220,11 +216,21 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
           if (notif['orden_id'] != null) {
             final ordenData = await supabase
                 .from('ordenes')
-                .select('id, numero_orden, descripcion, direccion_destino, provincia_destino, municipio_destino, estado, fecha_creacion, fecha_envio, emisor_nombre, destinatario_nombre')
+                .select('id, numero_orden, descripcion, direccion_destino, provincia_destino, municipio_destino, estado, fecha_creacion, fecha_envio, emisor_nombre, destinatario_nombre, repartidor_nombre')
                 .eq('id', notif['orden_id'])
                 .maybeSingle();
             
             if (ordenData != null) {
+              if (!_esRecolector) {
+                final asignado = (ordenData['repartidor_nombre'] ?? '')
+                    .toString()
+                    .trim()
+                    .toLowerCase();
+                final yo = (_repartidorNombre ?? '').trim().toLowerCase();
+                if (asignado.isEmpty || asignado != yo) {
+                  continue;
+                }
+              }
               // Combinar datos de la notificación con datos de la orden
               ordenesConDatos.add({
                 ...ordenData,
@@ -255,20 +261,17 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
         return;
       }
 
-      // Cargar notificaciones de pagos — solo no leídas (desaparecen al leer)
       final pagosResponse = await supabase
           .from(tablaNotificaciones)
           .select('id, tipo, titulo, mensaje, created_at, leida')
           .eq(campoId, _repartidorId!)
           .inFilter('tipo', ['PAGO_ACEPTADO', 'PAGO_RECHAZADO', 'PAGO_CANCELADO'])
-          .eq('leida', false)
-          .order('created_at', ascending: false) // Más recientes primero
+          .order('created_at', ascending: false)
           .limit(100); // Aumentar límite para mostrar más notificaciones
       
       print('📊 Notificaciones de pagos NO LEÍDAS: ${pagosResponse.length}');
 
-      // Cargar notificaciones generales (mensajes de la empresa) — solo no leídas
-      print('🔍 Cargando notificaciones generales (solo no leídas)...');
+      print('🔍 Cargando historial de notificaciones generales...');
       print('   - Repartidor ID (tabla usuarios): $_repartidorId');
       print('   - Tipo de _repartidorId: ${_repartidorId.runtimeType}');
       print('   - Es recolector: $_esRecolector');
@@ -278,8 +281,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
           .select('id, tipo, titulo, mensaje, created_at, leida, $campoId, tiene_adjunto, tipo_adjunto, url_adjunto, archivo_url, archivo_nombre')
           .eq(campoId, _repartidorId!)
           .eq('tipo', 'general')
-          .eq('leida', false)
-          .order('created_at', ascending: false) // Más recientes primero
+          .order('created_at', ascending: false)
           .limit(100); // Aumentar límite para mostrar más notificaciones
       
       print('📊 Notificaciones generales NO LEÍDAS: ${generalesResponse.length}');
@@ -293,7 +295,6 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
         print('ℹ️ No hay notificaciones generales para este repartidor_id');
       }
 
-      // Viajes taxi (ofertas + completados) — solo no leídas
       List<Map<String, dynamic>> viajesResponse = [];
       if (!_esRecolector) {
         final viajesRaw = await ejecutarConTimeout(
@@ -302,7 +303,6 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
               .select('id, tipo, titulo, mensaje, created_at, leida, numero_orden')
               .eq(campoId, _repartidorId!)
               .inFilter('tipo', RepartidorNotificacionTipos.tiposTaxiTodos)
-              .eq('leida', false)
               .order('created_at', ascending: false)
               .limit(100),
           timeout: const Duration(seconds: 12),
@@ -741,6 +741,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
         else
           ..._notificacionesViajes.map((notif) {
             final tipo = notif['tipo']?.toString() ?? '';
+            final leida = notif['leida'] == true;
             final esCompletado = tipo ==
                 RepartidorNotificacionTipos.taxiViajeCompletado;
             final esPropina =
@@ -800,9 +801,11 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
                                   : esCompletado
                                       ? 'Viaje completado'
                                       : 'Nuevo viaje'),
-                      style: const TextStyle(
-                        color: Color(0xFFECEFF1),
-                        fontWeight: FontWeight.w600,
+                      style: TextStyle(
+                        color: leida
+                            ? const Color(0xFF9CA3AF)
+                            : const Color(0xFFECEFF1),
+                        fontWeight: leida ? FontWeight.w500 : FontWeight.w600,
                       ),
                     ),
                     subtitle: Text(
@@ -1720,7 +1723,7 @@ class _NotificacionesRepartidorScreenState extends State<NotificacionesRepartido
         print('✅ Notificación marcada como leída exitosamente');
         await RepartidorNotificacionesPushService.instance.marcarPushMostrado(id);
         
-        // Recargar notificaciones para que la leída desaparezca de la lista
+        // Recargar: sigue en el historial, ya marcada como leída.
         if (mounted) {
           await _cargarNotificaciones();
         }

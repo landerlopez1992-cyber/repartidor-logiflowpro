@@ -113,6 +113,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   bool _esRepartidorMaster = false; // Indica si el repartidor es master
   String? _tipoRepartidor; // 'REPARTIDOR' o 'RECOLECTOR'
   bool _esRecolector = false; // Indica si es recolector
+  /// false = la empresa apagó «Repartidor (entregas)». No muestra órdenes.
+  bool _entregasActivas = true;
   int _mensajesNoLeidos = 0;
   List<String> _conversacionesSoporteIds = [];
   RealtimeChannel? _channelNotificaciones;
@@ -176,6 +178,8 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   /// Socio taxi operativo: tarifa configurada en Ajustes de taxis (Perfil).
   bool _taxiSocioConfigurado = false;
+  /// false = la empresa apagó «Taxista (viajes)».
+  bool _programaTaxiActivo = true;
 
   /// Pestaña home: false = Repartidor (órdenes), true = Viajes (taxi).
   bool _pestanaHomeViajes = false;
@@ -393,9 +397,38 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     setState(() => _pestanaHomeViajes = true);
   }
 
+  bool _flagEntregas(dynamic raw) {
+    if (raw == null) return true;
+    if (raw is bool) return raw;
+    final s = raw.toString().toLowerCase();
+    return s != 'false' && s != '0';
+  }
+
+  /// Dentro de un setState ya abierto: apaga la lista de órdenes si el rol está off.
+  void _aplicarEntregasEnEstado(bool activas) {
+    _entregasActivas = activas;
+    if (!activas) {
+      _ordenes = [];
+      _ordenesFiltradasCache = null;
+      _cacheKeyFiltradas = null;
+      _isLoading = false;
+      if (!_esRecolector) _pestanaHomeViajes = true;
+    }
+  }
+
   /// Pinta tarjetas desde SharedPreferences al abrir (sin red / sin esperar perfil).
   Future<void> _hidratarOrdenesDesdeCacheAlInstante() async {
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final authId = supabase.auth.currentUser?.id ??
+          prefs.getString(kLastRepartidorAuthIdKey);
+      if (authId != null &&
+          prefs.containsKey('cached_repartidor_entregas_activo_$authId') &&
+          prefs.getBool('cached_repartidor_entregas_activo_$authId') == false) {
+        if (!mounted) return;
+        setState(() => _aplicarEntregasEnEstado(false));
+        return;
+      }
       final ordenesCache = await OrdenCacheService.getCachedOrders();
       if (!mounted) return;
       if (ordenesCache.isNotEmpty) {
@@ -445,15 +478,26 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
 
   Future<void> _refrescarTaxiSocioConfigurado() async {
     try {
-      final t = await TaxiTarifasChoferService.instance.get();
+      final t = await TaxiTarifasChoferService.instance.get(forceNetwork: true);
       if (!mounted) return;
-      if (t.configurado != _taxiSocioConfigurado) {
-        setState(() => _taxiSocioConfigurado = t.configurado);
+      if (!t.programaActivo) {
+        setState(() {
+          _programaTaxiActivo = false;
+          _taxiSocioConfigurado = false;
+          _taxiBuscandoActivo = false;
+          if (_entregasActivas) _pestanaHomeViajes = false;
+        });
+        unawaited(TaxiBuscandoPrefs.setActivo(false));
+        unawaited(TaxiTarifasChoferService.instance.setDisponible(false));
+        return;
       }
-      // Sin tarifa: no permanecer en pestaña Viajes.
-      if (!t.configurado && _pestanaHomeViajes) {
-        setState(() => _pestanaHomeViajes = false);
-      }
+      setState(() {
+        _programaTaxiActivo = true;
+        _taxiSocioConfigurado = t.configurado;
+        if (!t.configurado && _pestanaHomeViajes && _entregasActivas) {
+          _pestanaHomeViajes = false;
+        }
+      });
     } catch (_) {}
   }
 
@@ -904,12 +948,16 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
       unawaited(_verificarSuspensionYBloquear());
       unawaited(_verificarTenantFueraServicioYBloquear());
       _cargarConfiguracionPrioridad();
-      _cargarOrdenes();
+      unawaited(() async {
+        await _obtenerNombreRepartidor();
+        if (mounted) await _cargarOrdenes();
+      }());
       _cargarMensajesNoLeidos();
       _cargarNotificacionesNoLeidas(); // CRÍTICO: Actualizar badge de notificaciones
       unawaited(_cargarSaldo());
       // Tras volver de Play: solo quita el modal si la versión instalada ya basta.
       _comprobarActualizacionForzada(forceStoreLookup: true);
+      unawaited(_refrescarTaxiSocioConfigurado());
       unawaited(_refrescarTaxiBuscandoActivo());
       unawaited(_refrescarTaxiViajeActivo());
       // CRÍTICO: Reactivar rastreo cuando la app vuelve a estar activa
@@ -1128,6 +1176,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             prefsEarly.getString('cached_repartidor_foto_$authId');
         final cachedUsuarioId =
             prefsEarly.getString('cached_repartidor_usuario_id_$authId');
+        final cachedEntregas = prefsEarly.containsKey(
+                'cached_repartidor_entregas_activo_$authId')
+            ? prefsEarly.getBool('cached_repartidor_entregas_activo_$authId')
+            : true;
         if (mounted) {
           setState(() {
             _repartidorNombre = cachedNombre ?? 'Repartidor';
@@ -1137,6 +1189,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             _esRecolector = esTipoRecolector(cachedTipo);
             if (_esRecolector) _pestanaHomeViajes = false;
             if (cachedUsuarioId != null) _repartidorId = cachedUsuarioId;
+            _aplicarEntregasEnEstado(cachedEntregas != false);
           });
         }
         return;
@@ -1153,6 +1206,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           
           final cachedUsuarioId =
               prefs.getString('cached_repartidor_usuario_id_${user.id}');
+          final cachedEntregas = prefs.containsKey(
+                  'cached_repartidor_entregas_activo_${user.id}')
+              ? prefs.getBool('cached_repartidor_entregas_activo_${user.id}')
+              : true;
           if (cachedNombre != null) {
             print('💾 Datos de repartidor cargados desde caché');
             setState(() {
@@ -1163,6 +1220,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               _esRecolector = esTipoRecolector(cachedTipo);
               if (_esRecolector) _pestanaHomeViajes = false;
               if (cachedUsuarioId != null) _repartidorId = cachedUsuarioId;
+              _aplicarEntregasEnEstado(cachedEntregas != false);
             });
             await _resolverFotoPerfilLocalHeader();
             
@@ -1185,7 +1243,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
         try {
           final response = await supabase
               .from('usuarios')
-              .select('id, nombre, foto_perfil, repartidor_master, tipo_repartidor')
+              .select('id, nombre, foto_perfil, repartidor_master, tipo_repartidor, repartidor_entregas_activo')
               .eq('auth_id', user.id)  // USAR auth_id en lugar de id
               .limit(1)
               .maybeSingle()
@@ -1201,6 +1259,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
           final foto = response['foto_perfil'] as String?;
           final usuarioId = response['id']?.toString();
           final esMaster = RepartidorMasterUtil.parseFlag(response['repartidor_master']);
+          final entregasActivas = _flagEntregas(response['repartidor_entregas_activo']);
           
           // ✅ Guardar en caché para uso offline
           try {
@@ -1215,6 +1274,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             if (usuarioId != null) {
               await prefs.setString('cached_repartidor_usuario_id_${user.id}', usuarioId);
             }
+            await prefs.setBool(
+              'cached_repartidor_entregas_activo_${user.id}',
+              entregasActivas,
+            );
             print('💾 Datos de repartidor guardados en caché');
           } catch (cacheError) {
             print('⚠️ Error guardando en caché: $cacheError');
@@ -1228,6 +1291,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             _tipoRepartidor = normalizarTipoRepartidor(tipoRepartidor);
             _esRecolector = esTipoRecolector(tipoRepartidor);
             if (_esRecolector) _pestanaHomeViajes = false;
+            _aplicarEntregasEnEstado(entregasActivas);
           });
           await _cachearFotoPerfilHeader(foto);
           await _resolverFotoPerfilLocalHeader();
@@ -1248,6 +1312,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               
               final cachedUsuarioId =
                   prefs.getString('cached_repartidor_usuario_id_${user.id}');
+              final cachedEntregas = prefs.containsKey(
+                      'cached_repartidor_entregas_activo_${user.id}')
+                  ? prefs.getBool('cached_repartidor_entregas_activo_${user.id}')
+                  : true;
               setState(() {
                 _repartidorNombre = cachedNombre;
                 _fotoPerfilUrl = cachedFoto;
@@ -1256,6 +1324,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 _esRecolector = esTipoRecolector(cachedTipo);
                 if (_esRecolector) _pestanaHomeViajes = false;
                 if (cachedUsuarioId != null) _repartidorId = cachedUsuarioId;
+                _aplicarEntregasEnEstado(cachedEntregas != false);
               });
               await _resolverFotoPerfilLocalHeader();
               return;
@@ -1269,7 +1338,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             try {
               final response = await supabase
                   .from('usuarios')
-                  .select('nombre, foto_perfil, repartidor_master, tipo_repartidor')
+                  .select('nombre, foto_perfil, repartidor_master, tipo_repartidor, repartidor_entregas_activo')
                   .eq('email', user.email!)
                   .single();
               final tipoRepartidor = response['tipo_repartidor'] as String? ?? 'REPARTIDOR';
@@ -1283,6 +1352,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                 _tipoRepartidor = normalizarTipoRepartidor(tipoRepartidor);
                 _esRecolector = esTipoRecolector(tipoRepartidor);
                 if (_esRecolector) _pestanaHomeViajes = false;
+                _aplicarEntregasEnEstado(
+                  _flagEntregas(response['repartidor_entregas_activo']),
+                );
               });
               await RepartidorMasterUtil.saveCached(
                 user.id,
@@ -1318,6 +1390,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
   }
 
   Future<void> _cargarOrdenes({String? preservarOrdenId, String? preservarEstado}) async {
+    if (!_entregasActivas) {
+      if (mounted) setState(() => _aplicarEntregasEnEstado(false));
+      return;
+    }
     List<Orden> ordenesRespaldoCache = [];
     List<Orden> ordenesRespaldoPantalla = [];
     try {
@@ -1907,6 +1983,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
               ProductosOrdenTiendaPrecarga.desdeOrdenes(listaFinal);
             }
             
+            if (!_entregasActivas) {
+              if (mounted) setState(() => _aplicarEntregasEnEstado(false));
+              return;
+            }
             if (mounted) {
             setState(() {
               // 🔒 USAR la lista fusionada en lugar de la lista de Supabase directamente
@@ -2125,6 +2205,10 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             ProductosOrdenTiendaPrecarga.desdeOrdenes(listaFinal);
           }
 
+          if (!_entregasActivas) {
+            if (mounted) setState(() => _aplicarEntregasEnEstado(false));
+            return;
+          }
           if (mounted) {
             setState(() {
               // 🔒 USAR la lista fusionada en lugar de la lista de Supabase directamente
@@ -4683,6 +4767,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                     : TaxiChoferMapaScreen(
                         embedded: true,
                         paisOperacion: _paisOperacion,
+                        viajesHabilitados: _programaTaxiActivo,
                         mapVisible: _pestanaHomeViajes,
                         onBuscandoChanged: (activo) {
                           if (!mounted) return;
@@ -4798,6 +4883,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
             ),
             child: Row(
               children: [
+                if (_entregasActivas)
                 chip(
                   label: _esRecolector ? 'Recolector' : 'Repartidor',
                   icon: _esRecolector
@@ -4810,7 +4896,7 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
                     }
                   },
                 ),
-                if (!_esRecolector)
+                if (!_esRecolector && _programaTaxiActivo)
                   RepartidorViajesTabChip(
                   selected: _pestanaHomeViajes,
                   showOnlineDot: !_cuentaSuspendida &&
@@ -4914,7 +5000,9 @@ class _RepartidorMobileScreenState extends State<RepartidorMobileScreen> with Wi
     final compact = MediaQuery.sizeOf(context).height < 420;
     return VolonexUi.emptyState(
       icon: Icons.inbox_outlined,
-      message: compact
+      message: !_entregasActivas
+          ? 'La empresa desactivó tus entregas. Las órdenes ya no aparecen aquí.'
+          : compact
           ? 'No hay órdenes asignadas.'
           : 'No hay órdenes asignadas en este momento.\nPrueba otro filtro o espera nuevas asignaciones.',
       compact: compact,

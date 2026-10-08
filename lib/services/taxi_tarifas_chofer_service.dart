@@ -33,6 +33,7 @@ class TaxiTarifaChofer {
     this.destinoPreferidoLng,
     this.destinoPreferidoRadioM = 25000,
     this.soloHaciaDestinoPreferido = false,
+    this.programaActivo = true,
   });
 
   final bool configurado;
@@ -61,6 +62,8 @@ class TaxiTarifaChofer {
   final double? destinoPreferidoLng;
   final int destinoPreferidoRadioM;
   final bool soloHaciaDestinoPreferido;
+  /// false = la empresa apagó «Taxista (viajes)».
+  final bool programaActivo;
 
   static const vacia = TaxiTarifaChofer(
     configurado: false,
@@ -99,6 +102,9 @@ class TaxiTarifaChofer {
       destinoPreferidoRadioM:
           (m['destino_preferido_radio_m'] as num?)?.toInt() ?? 25000,
       soloHaciaDestinoPreferido: m['solo_hacia_destino_preferido'] == true,
+      programaActivo: m.containsKey('programa_activo')
+          ? m['programa_activo'] != false
+          : true,
     );
   }
 
@@ -123,6 +129,7 @@ class TaxiTarifaChofer {
         'destino_preferido_lng': destinoPreferidoLng,
         'destino_preferido_radio_m': destinoPreferidoRadioM,
         'solo_hacia_destino_preferido': soloHaciaDestinoPreferido,
+        'programa_activo': programaActivo,
       };
 }
 
@@ -331,6 +338,7 @@ class TaxiTarifasChoferService {
               destinoPreferidoLng: cached.destinoPreferidoLng,
               destinoPreferidoRadioM: cached.destinoPreferidoRadioM,
               soloHaciaDestinoPreferido: cached.soloHaciaDestinoPreferido,
+              programaActivo: cached.programaActivo,
             ),
           );
         }

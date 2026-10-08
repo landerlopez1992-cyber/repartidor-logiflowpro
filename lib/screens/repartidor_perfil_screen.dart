@@ -1027,10 +1027,19 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   }
 
   Widget _buildFotoPerfil() {
-    return Column(
-      children: [
-        Center(
-          child: Row(
+    return Center(
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 400),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF252A35),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -1042,28 +1051,19 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: _esRepartidorMaster
-                            ? AppColors.botonPrincipal
-                            : const Color(0xFF4CAF50),
-                        width: 3,
+                        color: Colors.white.withValues(alpha: 0.12),
+                        width: 1.5,
                       ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
                     ),
                     child: CircleAvatar(
                       radius: 60,
-                      backgroundColor: const Color(0xFF4CAF50),
+                      backgroundColor: const Color(0xFF1E232E),
                       backgroundImage: _imagenPerfilProvider(),
                       child: _imagenPerfilProvider() == null
                           ? const Icon(
                               Icons.person,
                               size: 60,
-                              color: Colors.white,
+                              color: Color(0xFF9CA3AF),
                             )
                           : null,
                     ),
@@ -1087,14 +1087,17 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                         child: Container(
                           width: 36,
                           height: 36,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFFF9800),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF37474F),
                             shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.12),
+                            ),
                           ),
                           child: const Icon(
                             Icons.camera_alt,
-                            color: Colors.white,
-                            size: 20,
+                            color: Color(0xFFECEFF1),
+                            size: 18,
                           ),
                         ),
                       ),
@@ -1104,15 +1107,16 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
               const SizedBox(width: 14),
               _buildBloqueFotoVehiculo(),
             ],
-          ),
+            ),
+            if (_esRepartidorMaster) ...[
+              const SizedBox(height: 10),
+              _buildInsigniaMasterChip(),
+            ],
+            const SizedBox(height: 12),
+            _buildResumenPagoChip(),
+          ],
         ),
-        if (_esRepartidorMaster) ...[
-          const SizedBox(height: 10),
-          _buildInsigniaMasterChip(),
-        ],
-        const SizedBox(height: 12),
-        _buildResumenPagoChip(),
-      ],
+      ),
     );
   }
 
@@ -1130,9 +1134,9 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
           Positioned.fill(
             child: Container(
               decoration: BoxDecoration(
-                color: AppColors.darkSurface,
+                color: const Color(0xFF1E232E),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.darkBorder),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
               ),
               clipBehavior: Clip.antiAlias,
               child: tieneFoto
@@ -1168,14 +1172,17 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                 child: Container(
                   width: 36,
                   height: 36,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFFF9800),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF37474F),
                     shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.12),
+                    ),
                   ),
                   child: const Icon(
                     Icons.camera_alt,
-                    color: Colors.white,
-                    size: 20,
+                    color: Color(0xFFECEFF1),
+                    size: 18,
                   ),
                 ),
               ),
@@ -2349,25 +2356,24 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             : '${p.diasDesdeUltimaNomina} días laborables';
       }
       return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: const Color(0xFFFF9800).withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFFF9800), width: 1.3),
+          color: const Color(0xFF1E232E),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.route_rounded, color: Color(0xFFFF9800), size: 20),
+            const Icon(Icons.route_rounded, color: Color(0xFF9CA3AF), size: 20),
             const SizedBox(width: 8),
             Flexible(
               child: Text(
                 texto,
-                textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFFFF9800),
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFFECEFF1),
                 ),
               ),
             ),
@@ -2393,39 +2399,31 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             moneda: _monedaSaldo,
           );
         },
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         child: Ink(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color: const Color(0xFF4CAF50).withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFF4CAF50), width: 1.4),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF4CAF50).withValues(alpha: 0.12),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              ),
-            ],
+            color: const Color(0xFF1E232E),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
           ),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
               Container(
                 width: 34,
                 height: 34,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF4CAF50).withValues(alpha: 0.2),
+                decoration: const BoxDecoration(
+                  color: Color(0xFF37474F),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
-                  Icons.account_balance_wallet_rounded,
-                  color: Color(0xFF4CAF50),
+                  Icons.account_balance_wallet_outlined,
+                  color: Color(0xFFECEFF1),
                   size: 18,
                 ),
               ),
               const SizedBox(width: 10),
-              Flexible(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
@@ -2434,7 +2432,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                       'Saldo disponible',
                       style: TextStyle(
                         color: Color(0xFF9CA3AF),
-                        fontSize: 11,
+                        fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -2442,17 +2440,16 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                       '$saldoTxt $_monedaSaldo$pendiente',
                       style: const TextStyle(
                         color: Color(0xFF4CAF50),
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 6),
               const Icon(
                 Icons.chevron_right_rounded,
-                color: Color(0xFF4CAF50),
+                color: Color(0xFF9CA3AF),
                 size: 22,
               ),
             ],
@@ -3061,7 +3058,11 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
       _mostrarMensaje('Ya tienes una solicitud de pago pendiente', Colors.orange);
       return;
     }
-    if (preview.tarifa <= 0) {
+    final saldoRetirable =
+        preview.saldoAcumulado > 0.009 || _saldoServidor > 0.009;
+    // La tarifa de nómina calcula pago por km o por día. El saldo ya ganado
+    // (viajes o entregas) se retira con el método de cobro del chofer.
+    if (preview.tarifa <= 0 && !(preview.esPorOrden && saldoRetirable)) {
       _mostrarMensaje('Tu empresa aún no configuró la tarifa de pago', Colors.red);
       return;
     }
