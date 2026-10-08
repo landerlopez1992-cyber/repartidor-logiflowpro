@@ -34,6 +34,7 @@ import '../utils/tipo_repartidor_util.dart';
 import '../widgets/repartidor_master_badge.dart';
 import '../services/paises_service.dart';
 import '../utils/moneda_tenant_util.dart';
+import '../services/taxi_tarifas_chofer_service.dart';
 import 'taxi_ajustes_screen.dart';
 import 'taxi_chofer_contactos_confianza_screen.dart';
 import 'taxi_comision_pendiente_screen.dart';
@@ -96,6 +97,8 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   
   // Tipo de repartidor
   bool _esRecolector = false;
+  /// Socio de viajes: cobra su saldo. La nómina por km/día/hora no le aplica.
+  bool _esSocioTaxi = false;
   bool _esRepartidorMaster = false;
   /// Suspensión de chofer (no bloquea toda la app; deshabilita ajustes taxi).
   bool _cuentaSuspendida = false;
@@ -279,6 +282,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
             await _cargarEstadisticasSemanales();
             await _cargarContadorViajes();
           }
+          await _marcarSocioTaxi();
           await _cachearFotoPerfilLocal(_repartidorId!, response['foto_perfil']?.toString());
           await _cargarHistorialPagos();
           await _cargarSaldo();
@@ -347,6 +351,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                 await _cargarEstadisticasSemanales();
                 await _cargarContadorViajes();
               }
+              await _marcarSocioTaxi();
               await _cachearFotoPerfilLocal(_repartidorId!, response['foto_perfil']?.toString());
               await _cargarHistorialPagos();
               await _cargarSaldo();
@@ -941,7 +946,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
                         ],
                         _buildBotonSolicitarPago(),
                         const SizedBox(height: 12),
-                        if (!_esRecolector) ...[
+                        if (!_esRecolector && !_esSocioTaxi) ...[
                           _buildBotonJornada(),
                           const SizedBox(height: 12),
                         ],
@@ -2343,7 +2348,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
   Widget _buildResumenPagoChip() {
     final p = _previewPago;
     // Por recorrido / por día: chip informativo (sin saldo acumulado clásico).
-    if (p?.esPorDistancia == true || p?.esPorDia == true) {
+    if (!_esSocioTaxi && (p?.esPorDistancia == true || p?.esPorDia == true)) {
       String texto;
       if (p!.esPorDistancia) {
         final u = p.unidadEsMilla ? 'milla' : 'km';
@@ -3002,6 +3007,20 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
     }
   }
 
+  Future<void> _marcarSocioTaxi() async {
+    if (_esRecolector) {
+      if (mounted && _esSocioTaxi) setState(() => _esSocioTaxi = false);
+      return;
+    }
+    try {
+      final t = await TaxiTarifasChoferService.instance.get(forceNetwork: _isOnline);
+      final socio = t.configurado || t.precioPorUnidadUsd >= 0.01;
+      if (mounted && socio != _esSocioTaxi) {
+        setState(() => _esSocioTaxi = socio);
+      }
+    } catch (_) {}
+  }
+
   Future<void> _mostrarModalSolicitarPago() async {
     if (_repartidorId == null) return;
 
@@ -3058,16 +3077,19 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
       _mostrarMensaje('Ya tienes una solicitud de pago pendiente', Colors.orange);
       return;
     }
+    await _marcarSocioTaxi();
     final saldoRetirable =
         preview.saldoAcumulado > 0.009 || _saldoServidor > 0.009;
-    // La tarifa de nómina calcula pago por km o por día. El saldo ya ganado
-    // (viajes o entregas) se retira con el método de cobro del chofer.
-    if (preview.tarifa <= 0 && !(preview.esPorOrden && saldoRetirable)) {
+    // Nómina por km, día u hora: solo el rol de entregas. El socio taxista
+    // retira el saldo con el método de cobro que él eligió.
+    if (!_esSocioTaxi &&
+        preview.tarifa <= 0 &&
+        !(preview.esPorOrden && saldoRetirable)) {
       _mostrarMensaje('Tu empresa aún no configuró la tarifa de pago', Colors.red);
       return;
     }
 
-    if (preview.esPorDistancia) {
+    if (!_esSocioTaxi && preview.esPorDistancia) {
       final calc = await RepartidorJornadaService.calcularKm(_repartidorId!);
       if (calc == null || !mounted) {
         _mostrarMensaje('No se pudo calcular el trayecto', Colors.red);
@@ -3092,7 +3114,7 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
       return;
     }
 
-    if (preview.esPorDia) {
+    if (!_esSocioTaxi && preview.esPorDia) {
       final ok = await RepartidorSolicitudPagoDialogs.modalPorDia(context, preview);
       if (ok != true || !mounted) return;
       await _enviarSolicitudPago(

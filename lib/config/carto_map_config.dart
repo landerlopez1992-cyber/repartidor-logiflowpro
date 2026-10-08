@@ -1,38 +1,18 @@
-/// Clave API de CARTO Basemaps (gratis dentro del límite de uso).
-///
-/// Solicitar en: https://carto.com/basemaps/apikey
-///
-/// Compilar / ejecutar con:
-/// `--dart-define=CARTO_BASEMAP_KEY=tu_clave_aqui`
-///
-/// Sin clave: no usamos Carto (marca de agua "API KEY REQUIRED");
-/// caemos a teselas OpenStreetMap limpio.
+/// Mapa CARTO Voyager. La clave va en el código para que ninguna
+/// compilación (local o de tienda) pida teselas sin ella.
+/// Sin clave, CARTO pinta «API KEY REQUIRED».
 class CartoMapConfig {
   CartoMapConfig._();
 
-  static const String apiKey = String.fromEnvironment('CARTO_BASEMAP_KEY');
+  static const String apiKey = 'cb1_4erj_1_d46a5e0e8e16e9fe0bfc7029';
 
-  static const String _stylePath =
-      'rastertiles/voyager/{z}/{x}/{y}.png';
+  static const bool hasApiKey = true;
 
-  /// Sin `{s}` — OpenStreetMap no usa subdominios tipo Carto.
-  static const String _osmTemplate =
-      'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+  static const String urlTemplate =
+      'https://basemaps.cartocdn.com/rastertiles/voyager/'
+      '{z}/{x}/{y}.png?key=$apiKey';
 
-  /// Plantilla FlutterMap / fetch HTTP (incluye `?key=` si hay clave).
-  static String get urlTemplate {
-    final key = apiKey.trim();
-    if (key.isEmpty) return _osmTemplate;
-    return 'https://{s}.basemaps.cartocdn.com/$_stylePath'
-        '?key=${Uri.encodeComponent(key)}';
-  }
+  static const List<String> subdomains = <String>[];
 
-  static bool get hasApiKey => apiKey.trim().isNotEmpty;
-
-  /// Subdominios solo para Carto; OSM no lleva `{s}`.
-  static List<String> get subdomains =>
-      hasApiKey ? const ['a', 'b', 'c', 'd'] : const <String>[];
-
-  static const String attribution =
-      '© OpenStreetMap © CARTO';
+  static const String attribution = '© OpenStreetMap © CARTO';
 }

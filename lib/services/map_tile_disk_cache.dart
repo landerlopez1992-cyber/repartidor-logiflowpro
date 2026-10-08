@@ -31,8 +31,8 @@ class MapTileDiskCache {
   Future<Directory> cacheDir() async {
     if (_dir != null) return _dir!;
     final root = await getApplicationDocumentsDirectory();
-    // v2: no reutilizar teselas Carto con marca "API KEY REQUIRED".
-    final d = Directory('${root.path}/map_tiles_base_v2');
+    // v3: no reutilizar teselas viejas con la marca «API KEY REQUIRED».
+    final d = Directory('${root.path}/map_tiles_base_v3');
     if (!await d.exists()) {
       await d.create(recursive: true);
     }
