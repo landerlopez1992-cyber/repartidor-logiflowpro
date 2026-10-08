@@ -424,12 +424,13 @@ class TaxiLlamadaPersistenteService {
       enableVibration: true,
       vibrationPattern: Int64List.fromList([0, 600, 400, 600, 400, 600]),
       icon: '@mipmap/ic_launcher',
-      category: AndroidNotificationCategory.alarm,
+      category: AndroidNotificationCategory.call,
       audioAttributesUsage: AudioAttributesUsage.alarm,
       ongoing: true,
       autoCancel: false,
-      // Sin USE_FULL_SCREEN_INTENT (política Play): alerta de alta prioridad.
-      fullScreenIntent: false,
+      // Pantalla de aceptar encima del bloqueo (como una llamada).
+      fullScreenIntent: true,
+      additionalFlags: Int32List.fromList(const [4]),
       visibility: NotificationVisibility.public,
       styleInformation: BigTextStyleInformation(
         mensaje,

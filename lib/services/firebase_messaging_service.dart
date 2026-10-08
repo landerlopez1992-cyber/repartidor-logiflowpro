@@ -96,6 +96,9 @@ class FirebaseMessagingService {
             AndroidFlutterLocalNotificationsPlugin>();
     if (androidImpl != null) {
       await androidImpl.requestNotificationsPermission();
+      try {
+        await androidImpl.requestFullScreenIntentPermission();
+      } catch (_) {}
       await androidImpl.createNotificationChannel(
         const AndroidNotificationChannel(
           androidChannelId,

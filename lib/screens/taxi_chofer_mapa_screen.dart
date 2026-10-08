@@ -183,6 +183,8 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
         count: 8,
         seed: pais.hashCode ^ 23,
       );
+    } else if (pais.toLowerCase().contains('cuba')) {
+      fleet = TaxiNearbyFleetUtil.acrossCuba(seed: pais.hashCode ^ 23);
     } else {
       fleet = TaxiNearbyFleetUtil.around(
         center: vista.center,
