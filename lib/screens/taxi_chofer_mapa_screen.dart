@@ -332,27 +332,29 @@ class _TaxiChoferMapaScreenState extends State<TaxiChoferMapaScreen>
         );
       }
       _posSub?.cancel();
-      _posSub = Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          distanceFilter: 40,
-        ),
-      ).listen((p) {
-        if (!mounted) return;
-        final ll = LatLng(p.latitude, p.longitude);
-        setState(() => _yo = ll);
-        if (_buscando) {
-          unawaited(
-            TaxiUbicacionMatchingService.instance.publicarPosicion(p),
-          );
-          // Cubalink23: mantener zoom calle centrado en el GPS del chofer.
-          if (_esCubalink23) {
-            try {
-              _map.move(ll, PaisMapaCentro.cubalink23StreetZoom);
-            } catch (_) {}
+      try {
+        _posSub = Geolocator.getPositionStream(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            distanceFilter: 40,
+          ),
+        ).listen((p) {
+          if (!mounted) return;
+          final ll = LatLng(p.latitude, p.longitude);
+          setState(() => _yo = ll);
+          if (_buscando) {
+            unawaited(
+              TaxiUbicacionMatchingService.instance.publicarPosicion(p),
+            );
+            // Cubalink23: mantener zoom calle centrado en el GPS del chofer.
+            if (_esCubalink23) {
+              try {
+                _map.move(ll, PaisMapaCentro.cubalink23StreetZoom);
+              } catch (_) {}
+            }
           }
-        }
-      });
+        });
+      } catch (_) {}
       return (ok: true, err: null, accionAjustes: null);
     } catch (_) {
       return (

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/services.dart';
@@ -18,13 +17,15 @@ class TaxiLlamadaPersistenteService {
       TaxiLlamadaPersistenteService._();
 
   static const int notificacionId = 77021;
-  /// v2: stream de alarma (suena con el teléfono en vibración/silencio).
-  /// El canal v1 usaba ringtone y Android no permite cambiar atributos después.
-  static const String canalId = 'taxi_llamada_v2';
-  static const String canalIdLegacy = 'taxi_llamada_v1';
+  /// v4: el canal no vibra ni suena. El timbre lo controla solo esta clase,
+  /// porque Android no deja cambiar un canal ya creado (v3 vibraba solo).
+  static const String canalId = 'taxi_llamada_v4';
+  static const String canalIdLegacy = 'taxi_llamada_v3';
+  static const String canalIdLegacyV1 = 'taxi_llamada_v2';
+  static const String canalIdLegacyV0 = 'taxi_llamada_v1';
   static const String canalNombre = 'Llamadas de viaje (taxi)';
-  static const String _assetRingtone = 'sounds/chat_mensaje.mp3';
-  static const String _assetFallback = 'sounds/taxi_buscando_on.mp3';
+  static const String _assetRingtone = 'sounds/taxi_buscando_on.mp3';
+  static const String _assetFallback = 'sounds/chat_mensaje.mp3';
 
   FlutterLocalNotificationsPlugin? _plugin;
   AudioPlayer? _player;
@@ -35,6 +36,9 @@ class TaxiLlamadaPersistenteService {
   Completer<bool?>? _resultado;
   String? _solicitudId;
   Future<bool?>? _iniciarEnCurso;
+  int _epoch = 0;
+  bool _puedeVibrar = false;
+  final Set<String> _sinTimbre = <String>{};
 
   String? get solicitudActiva => _solicitudId;
   bool get activa => _solicitudId != null;
@@ -57,6 +61,8 @@ class TaxiLlamadaPersistenteService {
     if (android != null) {
       try {
         await android.deleteNotificationChannel(canalIdLegacy);
+        await android.deleteNotificationChannel(canalIdLegacyV1);
+        await android.deleteNotificationChannel(canalIdLegacyV0);
       } catch (_) {}
 
       const canal = AndroidNotificationChannel(
@@ -65,9 +71,8 @@ class TaxiLlamadaPersistenteService {
         description:
             'Alerta persistente de viaje. Suena aunque el teléfono esté en vibración (volumen de alarma).',
         importance: Importance.max,
-        playSound: true,
-        sound: RawResourceAndroidNotificationSound('chat_mensaje'),
-        enableVibration: true,
+        playSound: false,
+        enableVibration: false,
         showBadge: true,
         audioAttributesUsage: AudioAttributesUsage.alarm,
       );
@@ -92,6 +97,15 @@ class TaxiLlamadaPersistenteService {
     );
   }
 
+  /// Consulta de precio y búsqueda de socio deben sonar igual.
+  bool _estadoAlertaTaxiActiva(String raw) {
+    final e = raw.trim().toLowerCase();
+    return e == 'buscando_chofer' ||
+        e == 'pidiendo_precios' ||
+        e == 'reserva_pendiente_chofer' ||
+        e == 'reserva_reasignando';
+  }
+
   /// Arranca ringtone + notificación ongoing. No cierra sola.
   Future<bool?> iniciar({
     required String solicitudId,
@@ -100,6 +114,7 @@ class TaxiLlamadaPersistenteService {
   }) {
     final id = solicitudId.trim();
     if (id.isEmpty) return Future.value(null);
+    if (_sinTimbre.contains(id)) return Future.value(false);
 
     // Si ya hay una alerta activa de la misma solicitud, unirse a ella.
     final activo = _resultado;
@@ -162,9 +177,9 @@ class TaxiLlamadaPersistenteService {
     _resultado = completer;
 
     try {
-      // No arrancar ringtone si el viaje ya no está en búsqueda.
+      // No arrancar ringtone si el viaje ya no está en búsqueda o consulta.
       final oferta = await TaxiChoferService.instance.detalleOferta(id);
-      if (oferta == null || oferta.estado != 'buscando_chofer') {
+      if (oferta == null || !_estadoAlertaTaxiActiva(oferta.estado)) {
         if (identical(_resultado, completer) && !completer.isCompleted) {
           completer.complete(false);
         }
@@ -188,7 +203,8 @@ class TaxiLlamadaPersistenteService {
       }
 
       await _iniciarRingtoneYVibracion();
-      if (!identical(_resultado, completer)) {
+      if (!identical(_resultado, completer) || _sinTimbre.contains(id)) {
+        await _cortarMedios();
         if (!completer.isCompleted) completer.complete(null);
         return completer.future;
       }
@@ -202,6 +218,38 @@ class TaxiLlamadaPersistenteService {
     }
 
     return completer.future;
+  }
+
+  /// El timbre en bucle solo vive en la pantalla abierta.
+  /// El aviso con la app cerrada no arranca otro bucle: ese isolate no se puede apagar
+  /// cuando el socio envía el precio y el teléfono se queda vibrando.
+  Future<void> iniciarRingtoneEnSegundoPlano() async {}
+
+  /// El socio ya envió el precio o el viaje ya no es suyo: no volver a sonar.
+  void marcarSinTimbre(String solicitudId) {
+    final id = solicitudId.trim();
+    if (id.isNotEmpty) _sinTimbre.add(id);
+  }
+
+  /// Corta timbre y vibración de esta solicitud sin apagar una alerta más nueva.
+  Future<void> silenciarSolicitud(String solicitudId) async {
+    final id = solicitudId.trim();
+    if (id.isEmpty) return;
+    _sinTimbre.add(id);
+    _puedeVibrar = false;
+    if (_solicitudId != null && _solicitudId != id) return;
+    _epoch++;
+    _solicitudId = null;
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    _vibTimer?.cancel();
+    _vibTimer = null;
+    _ringtoneWatchdog?.cancel();
+    _ringtoneWatchdog = null;
+    try {
+      await _plugin?.cancel(notificacionId);
+    } catch (_) {}
+    await _cortarMedios();
   }
 
   /// App cerrada / isolate background: solo notification ongoing.
@@ -238,20 +286,15 @@ class TaxiLlamadaPersistenteService {
   }) async {
     final id = _solicitudId;
     final completer = _resultado;
+    _puedeVibrar = false;
+    _epoch++;
+    if (id != null) _sinTimbre.add(id);
     _solicitudId = null;
     _resultado = null;
 
     _pollTimer?.cancel();
     _pollTimer = null;
-    _vibTimer?.cancel();
-    _vibTimer = null;
-    _ringtoneWatchdog?.cancel();
-    _ringtoneWatchdog = null;
-
-    try {
-      await _player?.stop();
-    } catch (_) {}
-
+    await _cortarMedios();
     try {
       await _plugin?.cancel(notificacionId);
     } catch (_) {}
@@ -315,7 +358,7 @@ class TaxiLlamadaPersistenteService {
           await detener(motivo: 'cancelado_pasajero', resultado: false);
           return;
         }
-        if (est != 'buscando_chofer') {
+        if (!_estadoAlertaTaxiActiva(est)) {
           await detener(motivo: 'tomado_por_otro', resultado: false);
         }
       } catch (_) {
@@ -324,8 +367,26 @@ class TaxiLlamadaPersistenteService {
     });
   }
 
-  Future<bool> _playAssetLoop(String asset) async {
+  Future<void> _cortarMedios() async {
+    _puedeVibrar = false;
+    _vibTimer?.cancel();
+    _vibTimer = null;
+    _ringtoneWatchdog?.cancel();
+    _ringtoneWatchdog = null;
     try {
+      await _plugin?.cancel(notificacionId);
+    } catch (_) {}
+    try {
+      await Vibration.cancel();
+    } catch (_) {}
+    try {
+      await _player?.stop();
+    } catch (_) {}
+  }
+
+  Future<bool> _playAssetLoop(String asset, int epoch) async {
+    try {
+      if (epoch != _epoch) return false;
       final ctx = _audioCtx ?? _crearContextoAlarma();
       try {
         await AudioPlayer.global.setAudioContext(ctx);
@@ -333,12 +394,21 @@ class TaxiLlamadaPersistenteService {
       _player ??= AudioPlayer();
       final p = _player!;
       await p.setAudioContext(ctx);
+      if (epoch != _epoch) return false;
       await p.setReleaseMode(ReleaseMode.loop);
       await p.setVolume(1.0);
       await p.stop();
-      // setSource + resume es más fiable que play() en Android real.
+      if (epoch != _epoch) return false;
       await p.setSource(AssetSource(asset));
+      if (epoch != _epoch) {
+        await p.stop();
+        return false;
+      }
       await p.resume();
+      if (epoch != _epoch) {
+        await p.stop();
+        return false;
+      }
       return true;
     } catch (e) {
       print('⚠️ Ringtone taxi $asset: $e');
@@ -347,20 +417,31 @@ class TaxiLlamadaPersistenteService {
   }
 
   Future<void> _iniciarRingtoneYVibracion() async {
-    var ok = await _playAssetLoop(_assetRingtone);
-    if (!ok) {
-      ok = await _playAssetLoop(_assetFallback);
+    final epoch = _epoch;
+    final solicitud = _solicitudId;
+    if (solicitud != null && _sinTimbre.contains(solicitud)) return;
+
+    var ok = await _playAssetLoop(_assetRingtone, epoch);
+    if (!ok && epoch == _epoch) {
+      ok = await _playAssetLoop(_assetFallback, epoch);
+    }
+    if (epoch != _epoch || _solicitudId == null) {
+      if (epoch != _epoch) return;
+      await _cortarMedios();
+      return;
     }
     if (!ok) {
       try {
         await SystemSound.play(SystemSoundType.alert);
       } catch (_) {}
+      if (epoch != _epoch) return;
     }
 
-    // Vibración inmediata + periódica (antes solo cada 2s → parecía “solo vibra”).
     Future<void> vibrar() async {
+      if (epoch != _epoch) return;
       try {
         if (await Vibration.hasVibrator() == true) {
+          if (epoch != _epoch) return;
           await Vibration.vibrate(pattern: [0, 500, 200, 500]);
         }
       } catch (_) {}
@@ -369,29 +450,18 @@ class TaxiLlamadaPersistenteService {
     unawaited(vibrar());
     _vibTimer?.cancel();
     _vibTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (epoch != _epoch) return;
       unawaited(vibrar());
     });
 
-    // Si el loop se corta (focus/otra app), reintentar mientras la alerta siga.
     _ringtoneWatchdog?.cancel();
     _ringtoneWatchdog = Timer.periodic(const Duration(seconds: 5), (_) async {
-      if (_solicitudId == null) return;
+      if (epoch != _epoch || _solicitudId == null) return;
       final p = _player;
       if (p == null) return;
       try {
-        final estado = p.state;
-        if (estado != PlayerState.playing) {
-          print('🚕 Ringtone no activo ($estado) — reintentando');
-          var revived = await _playAssetLoop(_assetRingtone);
-          if (!revived) {
-            revived = await _playAssetLoop(_assetFallback);
-          }
-          if (!revived) {
-            try {
-              await SystemSound.play(SystemSoundType.alert);
-            } catch (_) {}
-          }
-        }
+        if (p.state == PlayerState.playing) return;
+        await _playAssetLoop(_assetRingtone, epoch);
       } catch (_) {}
     });
   }
@@ -419,18 +489,13 @@ class TaxiLlamadaPersistenteService {
           'Alerta persistente de viaje. No se quita hasta aceptar o rechazar.',
       importance: Importance.max,
       priority: Priority.max,
-      playSound: true,
-      sound: const RawResourceAndroidNotificationSound('chat_mensaje'),
-      enableVibration: true,
-      vibrationPattern: Int64List.fromList([0, 600, 400, 600, 400, 600]),
+      playSound: false,
+      enableVibration: false,
       icon: '@mipmap/ic_launcher',
       category: AndroidNotificationCategory.call,
-      audioAttributesUsage: AudioAttributesUsage.alarm,
       ongoing: true,
       autoCancel: false,
-      // Pantalla de aceptar encima del bloqueo (como una llamada).
       fullScreenIntent: true,
-      additionalFlags: Int32List.fromList(const [4]),
       visibility: NotificationVisibility.public,
       styleInformation: BigTextStyleInformation(
         mensaje,

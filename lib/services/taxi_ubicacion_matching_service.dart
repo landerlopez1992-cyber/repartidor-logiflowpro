@@ -218,11 +218,36 @@ class TaxiUbicacionMatchingService {
     }
   }
 
+  /// En Mac/PC no hay GPS de chofer. Centro de La Habana para poder
+  /// activar «Buscar viajes» y recibir la pantalla del precio.
+  Position _posEscritorio() {
+    return Position(
+      latitude: 23.1367,
+      longitude: -82.3816,
+      timestamp: DateTime.now(),
+      accuracy: 80,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+    );
+  }
+
+  Future<({bool ok, Position? pos, String? err, String? accionAjustes})>
+      _okEscritorioSinGps() async {
+    final pos = _posEscritorio();
+    await publicarPosicion(pos);
+    return (ok: true, pos: pos, err: null, accionAjustes: null);
+  }
+
   /// Permiso + posición + publicación. Obligatoria al activar «Buscando viajes».
   Future<({bool ok, Position? pos, String? err, String? accionAjustes})>
       publicarAhora() async {
     final perm = await asegurarPermisoGps();
     if (!perm.ok) {
+      if (_esEscritorio) return _okEscritorioSinGps();
       return (
         ok: false,
         pos: null,
@@ -233,15 +258,7 @@ class TaxiUbicacionMatchingService {
 
     final pos = await leerPosicion(skipPermiso: true);
     if (pos == null) {
-      if (_esEscritorio) {
-        return (
-          ok: false,
-          pos: null,
-          err:
-              'No hay GPS en este equipo. Para recibir viajes usa la app en un teléfono.',
-          accionAjustes: null,
-        );
-      }
+      if (_esEscritorio) return _okEscritorioSinGps();
       // Sin fix: a menudo GPS apagado o sin señal; ofrecer ambos caminos.
       var accion = 'location_service';
       try {

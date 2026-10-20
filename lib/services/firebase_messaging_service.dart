@@ -558,6 +558,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         titulo: titulo,
         mensaje: cuerpo,
       );
+      await TaxiLlamadaPersistenteService.instance.iniciarRingtoneEnSegundoPlano();
     } catch (e) {
       print('⚠️ Background taxi persistente: $e');
     }

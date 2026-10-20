@@ -11,6 +11,7 @@ import '../widgets/taxi_chofer_maplibre.dart';
 import '../services/taxi_llamada_persistente_service.dart';
 import '../services/taxi_chofer_ui_bridge.dart';
 import '../widgets/taxi_cash_comision_aviso_modal.dart';
+import '../widgets/repartidor_loading_spinner.dart';
 import '../widgets/taxi_itinerario_chofer_panel.dart';
 import 'taxi_navegacion_chofer_screen.dart';
 
@@ -30,6 +31,7 @@ class TaxiIncomingCallDialog extends StatefulWidget {
   static bool esOfertaEntranteValida(String raw) {
     final e = raw.trim().toLowerCase();
     return e == 'buscando_chofer' ||
+        e == 'pidiendo_precios' ||
         e == 'reserva_pendiente_chofer' ||
         e == 'reserva_reasignando';
   }
@@ -86,6 +88,9 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
   String? _error;
   bool _loading = true;
   bool _busy = false;
+  bool _esperandoUsuario = false;
+  double? _precioEnviadoUsd;
+  final _precioCtrl = TextEditingController();
   late final AnimationController _pulse;
   Timer? _pollUi;
   List<LatLng> _rutaOverview = const [];
@@ -159,6 +164,48 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
         return;
       }
       final est = o.estado.toLowerCase();
+      if (_esperandoUsuario) {
+        await TaxiLlamadaPersistenteService.instance
+            .silenciarSolicitud(widget.solicitudId);
+        if (!mounted) return;
+        final st = await TaxiChoferService.instance
+            .estadoConsultaParaChofer(widget.solicitudId);
+        if (!mounted) return;
+        final estado = (st?.estado.isNotEmpty == true ? st!.estado : est);
+        final soy = st?.soyElegido == true;
+        if (estado == 'cancelado') {
+          await _cerrarViajePerdido('cancelado_pasajero');
+          return;
+        }
+        if (soy && _estadoViajeAsignado(estado)) {
+          await TaxiLlamadaPersistenteService.instance.detener(
+            motivo: 'viaje_en_curso',
+            resultado: true,
+          );
+          if (!mounted) return;
+          final oferta = _oferta;
+          Navigator.of(context).pop(true);
+          final rootNav = RepartidorNavigator.state;
+          if (oferta != null && rootNav != null) {
+            await rootNav.push(
+              MaterialPageRoute<void>(
+                builder: (_) => TaxiNavegacionChoferScreen(oferta: oferta),
+              ),
+            );
+          }
+          return;
+        }
+        if (soy &&
+            (estado == 'cotizado' ||
+                estado == 'buscando_chofer' ||
+                estado == 'pidiendo_precios')) {
+          return;
+        }
+        if (!soy && estado != 'pidiendo_precios') {
+          await _cerrarViajePerdido('tomado_por_otro');
+          return;
+        }
+      }
       if (_estadoViajeAsignado(est)) {
         final activo = await TaxiChoferService.instance.viajeActivo();
         if (!mounted) return;
@@ -169,6 +216,18 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
             motivo: 'viaje_en_curso',
             resultado: true,
           );
+          if (_esperandoUsuario && mounted) {
+            final oferta = _oferta;
+            Navigator.of(context).pop(true);
+            final rootNav = RepartidorNavigator.state;
+            if (oferta != null && rootNav != null) {
+              await rootNav.push(
+                MaterialPageRoute<void>(
+                  builder: (_) => TaxiNavegacionChoferScreen(oferta: oferta),
+                ),
+              );
+            }
+          }
           return;
         }
         await _cerrarViajePerdido('tomado_por_otro');
@@ -230,10 +289,29 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
       }
       final conR = await _conRating(o);
       if (!mounted) return;
+      var esperando = false;
+      double? precioYa;
+      if (conR.estado.toLowerCase() == 'pidiendo_precios') {
+        final st = await TaxiChoferService.instance
+            .estadoConsultaParaChofer(widget.solicitudId);
+        if (!mounted) return;
+        if (st?.yaEnvioPrecio == true) {
+          esperando = true;
+          precioYa = st!.precioEnviadoUsd;
+        }
+      }
       setState(() {
         _oferta = conR;
         _loading = false;
+        if (esperando) {
+          _esperandoUsuario = true;
+          _precioEnviadoUsd = precioYa;
+        }
       });
+      if (esperando) {
+        await TaxiLlamadaPersistenteService.instance
+            .silenciarSolicitud(widget.solicitudId);
+      }
       unawaited(_cargarRutaOverview(conR));
     } catch (e) {
       if (!mounted) return;
@@ -363,6 +441,29 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
     }
   }
 
+  bool _esConsultaPrecio(TaxiOfertaChofer o) =>
+      o.estado.toLowerCase() == 'pidiendo_precios';
+
+  Future<void> _noAceptar() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    final res = await TaxiChoferService.instance.rechazar(widget.solicitudId);
+    if (!mounted) return;
+    if (!res.ok) {
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(TaxiChoferService.mensajeErrorUsuario(res.err)),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return;
+    }
+    await TaxiLlamadaPersistenteService.instance.onRechazadoDesdeUi();
+    if (!mounted) return;
+    Navigator.of(context).pop(false);
+  }
+
   Future<void> _rechazar() async {
     if (_busy) return;
 
@@ -442,7 +543,49 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
   void dispose() {
     _pollUi?.cancel();
     _pulse.dispose();
+    _precioCtrl.dispose();
+    if (_esperandoUsuario) {
+      unawaited(
+        TaxiLlamadaPersistenteService.instance
+            .silenciarSolicitud(widget.solicitudId),
+      );
+    }
     super.dispose();
+  }
+
+  Future<void> _enviarPrecio() async {
+    final raw = _precioCtrl.text.trim().replaceAll(',', '.');
+    final precio = double.tryParse(raw);
+    if (precio == null || precio < 0.5) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Escribe un precio válido.')),
+      );
+      return;
+    }
+    setState(() => _busy = true);
+    await TaxiLlamadaPersistenteService.instance
+        .silenciarSolicitud(widget.solicitudId);
+    final res = await TaxiChoferService.instance.enviarPrecio(
+      solicitudId: widget.solicitudId,
+      precioUsd: precio,
+    );
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (!res.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(res.err ?? 'No se pudo enviar el precio.')),
+      );
+      return;
+    }
+    await TaxiLlamadaPersistenteService.instance.detener(
+      motivo: 'precio_enviado',
+      resultado: true,
+    );
+    if (!mounted) return;
+    setState(() {
+      _esperandoUsuario = true;
+      _precioEnviadoUsd = precio;
+    });
   }
 
   @override
@@ -526,58 +669,23 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                AnimatedBuilder(
-                  animation: _pulse,
-                  builder: (_, __) {
-                    final t = _pulse.value;
-                    return Icon(
-                      Icons.local_taxi_rounded,
-                      size: 36,
-                      color: Color.lerp(
-                        const Color(0xFFFF9800),
-                        const Color(0xFFFFB74D),
-                        t,
-                      ),
-                    );
-                  },
+                CircleAvatar(
+                  radius: 36,
+                  backgroundColor: const Color(0xFF252A35),
+                  backgroundImage: (o.pasajeroFotoUrl != null &&
+                          o.pasajeroFotoUrl!.trim().isNotEmpty)
+                      ? NetworkImage(o.pasajeroFotoUrl!.trim())
+                      : null,
+                  child: (o.pasajeroFotoUrl == null ||
+                          o.pasajeroFotoUrl!.trim().isEmpty)
+                      ? const Icon(
+                          Icons.person,
+                          size: 40,
+                          color: Color(0xFFECEFF1),
+                        )
+                      : null,
                 ),
                 const SizedBox(height: 10),
-                const Text(
-                  'Nueva solicitud de viaje',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Color(0xFFFF9800),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    height: 1.3,
-                  ),
-                ),
-                if (o.estado.startsWith('reserva_') ||
-                    o.rutaFase == 'reserva') ...[
-                  const SizedBox(height: 6),
-                  const Text(
-                    'VIAJE CON RESERVA — acepta y se confirma la cita. '
-                    'El saldo se acredita solo al completar el trayecto.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Color(0xFFECEFF1),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      height: 1.35,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 6),
-                const Text(
-                  'Revisa el trayecto y responde',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Color(0xFF9CA3AF),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 8),
                 Text(
                   o.pasajeroNombre,
                   textAlign: TextAlign.center,
@@ -608,6 +716,190 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                     ),
                   ],
                 ),
+                if (o.idaVuelta) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFECEFF1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.swap_horiz_rounded,
+                          color: Color(0xFF12151C),
+                          size: 22,
+                        ),
+                        SizedBox(width: 8),
+                        Text(
+                          'IDA Y VUELTA',
+                          style: TextStyle(
+                            color: Color(0xFF12151C),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                const Text(
+                  'Nueva solicitud de viaje',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Color(0xFFFF9800),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    height: 1.3,
+                  ),
+                ),
+                if (o.estado.startsWith('reserva_') ||
+                    o.rutaFase == 'reserva') ...[
+                  const SizedBox(height: 6),
+                  const Text(
+                    'VIAJE CON RESERVA — acepta y se confirma la cita. '
+                    'El saldo se acredita solo al completar el trayecto.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFFECEFF1),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 6),
+                Text(
+                  _esperandoUsuario
+                      ? 'Precio enviado'
+                      : _esConsultaPrecio(o)
+                          ? 'Escribe tu precio para este viaje'
+                          : 'Revisa el trayecto y responde',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF9CA3AF),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (_esConsultaPrecio(o) && !_esperandoUsuario) ...[
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: _precioCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Color(0xFFECEFF1),
+                      fontSize: 28,
+                      fontWeight: FontWeight.w800,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: '0.00',
+                      hintStyle: const TextStyle(
+                        color: Color(0xFF9CA3AF),
+                        fontSize: 28,
+                        fontWeight: FontWeight.w800,
+                      ),
+                      labelText: 'Tu precio (USD)',
+                      labelStyle: const TextStyle(
+                        color: Color(0xFFFF9800),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      filled: true,
+                      fillColor: const Color(0xFF252A35),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 18,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(color: Color(0xFFFF9800)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(color: Color(0xFFFF9800)),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(
+                          color: Color(0xFFFF9800),
+                          width: 2,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 58,
+                    child: ElevatedButton(
+                      onPressed: _busy ? null : _enviarPrecio,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFF9800),
+                        foregroundColor: const Color(0xFF12151C),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: const Text(
+                        'Enviar precio',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                if (_esConsultaPrecio(o) && _esperandoUsuario) ...[
+                  const SizedBox(height: 20),
+                  const RepartidorLoadingSpinner.large(),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Esperando aprobación del usuario',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFFECEFF1),
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      height: 1.25,
+                    ),
+                  ),
+                  if (_precioEnviadoUsd != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Tu precio: \$${_precioEnviadoUsd!.toStringAsFixed(2)}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Color(0xFFFF9800),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Esta pantalla sigue aquí hasta que acepte y empiece el viaje.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFF9CA3AF),
+                      fontSize: 13,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
                 if (o.esPagoCash) ...[
                   const SizedBox(height: 10),
                   Container(
@@ -645,7 +937,7 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                       );
                     },
                   ),
-                ] else ...[
+                ] else if (!_esConsultaPrecio(o)) ...[
                   _infoCard(
                     icon: Icons.payments_outlined,
                     label: 'Tu ganancia',
@@ -712,6 +1004,26 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
           ),
         ),
         const SizedBox(height: 12),
+        if (_esConsultaPrecio(o) && !_esperandoUsuario)
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: OutlinedButton(
+              onPressed: _busy ? null : _noAceptar,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFFDC2626),
+                side: const BorderSide(color: Color(0xFFDC2626), width: 1.5),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              child: const Text(
+                'No aceptar',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+              ),
+            ),
+          )
+        else if (!_esConsultaPrecio(o))
         Row(
           children: [
             Expanded(

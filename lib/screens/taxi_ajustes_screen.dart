@@ -155,16 +155,9 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
 
   Future<void> _guardar() async {
     final raw = _precioCtrl.text.trim().replaceAll(',', '.');
-    final precio = double.tryParse(raw);
-    if (precio == null || precio < 0.01) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Ingresa una tarifa válida (mínimo 0.01).'),
-          backgroundColor: AppColors.error,
-        ),
-      );
-      return;
-    }
+    // La tarifa fija ya no se edita. Se conserva la guardada para no romper
+    // el alta del vehículo; el precio real lo pone el socio en cada viaje.
+    final precio = double.tryParse(raw) ?? 0;
     final recargo = _recargoParsed;
     if (recargo < 0 || recargo > 500) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -193,14 +186,10 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
         ),
         content: SingleChildScrollView(
           child: Text(
-            'Cobrarás \$${precio.toStringAsFixed(2)} USD por $_unidad '
-            '(precio base del trayecto).\n\n'
-            'Plazas: $_capacidad. Incluidos en la base: $_incluidos. '
-            'Recargo por persona extra: \$${recargo.toStringAsFixed(2)}.\n\n'
+            'El precio de cada viaje lo escribes cuando te llega la alerta.\n\n'
+            'Plazas: $_capacidad.\n'
             'Zona de recogida: $_radioLabel. '
-            'Viaje máximo: $_maxViajeLabel.\n\n'
-            'Si tu precio queda muy alto frente a otros socios, '
-            'recibirás menos viajes.',
+            'Viaje máximo: $_maxViajeLabel.',
             style: const TextStyle(
               color: AppColors.darkTextMuted,
               height: 1.4,
@@ -499,7 +488,7 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
                                 SizedBox(width: 10),
                                 Expanded(
                                   child: Text(
-                                    'Tu tarifa de viaje',
+                                    'Precio del viaje',
                                     style: TextStyle(
                                       color: AppColors.darkText,
                                       fontWeight: FontWeight.w700,
@@ -511,10 +500,8 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
                             ),
                             SizedBox(height: 10),
                             Text(
-                              'Precio base = distancia × tu tarifa. '
-                              'Si van más personas de las incluidas, se suma tu '
-                              'recargo por pasajero. Así un viaje lleno paga más '
-                              'que uno de 1–2 personas.',
+                              'Ya no se guarda una tarifa fija. En cada viaje '
+                              'recibes la ruta y escribes el precio en ese momento.',
                               style: TextStyle(
                                 color: AppColors.darkTextMuted,
                                 fontSize: 13,
@@ -522,40 +509,6 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
                               ),
                             ),
                           ],
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      const Text(
-                        'Unidad',
-                        style: TextStyle(
-                          color: AppColors.darkTextMuted,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(child: _unidadChip('Por kilómetro', 'km')),
-                          const SizedBox(width: 10),
-                          Expanded(child: _unidadChip('Por milla', 'mi')),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      TextField(
-                        controller: _precioCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        inputFormatters: [
-                          FilteringTextInputFormatter.allow(
-                            RegExp(r'[0-9.,]'),
-                          ),
-                        ],
-                        style: const TextStyle(color: AppColors.darkText),
-                        decoration: _fieldDeco(
-                          'Precio por $_unidad (USD)',
-                          hint: 'Ej. 1.50',
                         ),
                       ),
                       const SizedBox(height: 20),
@@ -591,85 +544,6 @@ class _TaxiAjustesScreenState extends State<TaxiAjustesScreen> {
                             }),
                           );
                         }),
-                      ),
-                      const SizedBox(height: 20),
-                      const Text(
-                        'Pasajeros incluidos en el precio base',
-                        style: TextStyle(
-                          color: AppColors.darkTextMuted,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      const Text(
-                        'Hasta este número no hay recargo (recomendado: 2).',
-                        style: TextStyle(
-                          color: AppColors.darkTextMuted,
-                          fontSize: 12,
-                          height: 1.35,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: List.generate(_capacidad, (i) {
-                          final n = i + 1;
-                          return _numChip(
-                            n: n,
-                            selected: _incluidos == n,
-                            onTap: () => setState(() => _incluidos = n),
-                          );
-                        }),
-                      ),
-                      const SizedBox(height: 20),
-                      TextField(
-                        controller: _recargoCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        inputFormatters: [
-                          FilteringTextInputFormatter.allow(
-                            RegExp(r'[0-9.,]'),
-                          ),
-                        ],
-                        style: const TextStyle(color: AppColors.darkText),
-                        decoration: _fieldDeco(
-                          'Recargo por pasajero extra (USD)',
-                          hint: 'Ej. 10',
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Si pones \$0, el precio no cambia con más personas '
-                        '(solo limita quién cabe). Para una minivan llena, '
-                        'usa un recargo alto.',
-                        style: TextStyle(
-                          color: AppColors.darkTextMuted,
-                          fontSize: 12,
-                          height: 1.35,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Container(
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: AppColors.darkElevated,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.08),
-                          ),
-                        ),
-                        child: Text(
-                          _ejemploCobro,
-                          style: const TextStyle(
-                            color: Color(0xFFECEFF1),
-                            fontSize: 13,
-                            height: 1.4,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
                       ),
                       const SizedBox(height: 24),
                       const Text(

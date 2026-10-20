@@ -103,6 +103,7 @@ class TaxiOfertaChofer {
     this.itinerarioIndice = 0,
     this.itinerarioEsperando = false,
     this.itinerarioPersistido = false,
+    this.idaVuelta = false,
   });
 
   final String id;
@@ -148,6 +149,7 @@ class TaxiOfertaChofer {
   final int itinerarioIndice;
   final bool itinerarioEsperando;
   final bool itinerarioPersistido;
+  final bool idaVuelta;
 
   bool get esReserva =>
       estado.startsWith('reserva_') || rutaFase.trim().toLowerCase() == 'reserva';
@@ -305,6 +307,7 @@ class TaxiOfertaChofer {
           itinerarioEsperando ?? this.itinerarioEsperando,
       itinerarioPersistido:
           itinerarioPersistido ?? this.itinerarioPersistido,
+      idaVuelta: this.idaVuelta,
     );
   }
 
@@ -439,6 +442,7 @@ class TaxiOfertaChofer {
       solicitanteTelefono: m['solicitante_telefono']?.toString() ?? '',
       paraMi: m['para_mi'] != false,
       ofertaTipo: m['oferta_tipo']?.toString() ?? '',
+      idaVuelta: m['ida_vuelta'] == true,
       origenProvincia: m['origen_provincia']?.toString() ?? '',
       origenMunicipio: m['origen_municipio']?.toString() ?? '',
       precioUsd: (m['precio_usd'] as num?)?.toDouble(),
@@ -523,13 +527,74 @@ class TaxiChoferService {
 
   static String _errUi(Object e) => mensajeErrorUsuario(e.toString());
 
+  Future<({bool ok, String? err})> enviarPrecio({
+    required String solicitudId,
+    required double precioUsd,
+  }) async {
+    try {
+      final res = await _db.rpc(
+        'taxi_chofer_enviar_precio',
+        params: {
+          'p_solicitud_id': solicitudId,
+          'p_precio': precioUsd,
+        },
+      );
+      final map = res is Map ? Map<String, dynamic>.from(res) : null;
+      if (map == null || map['ok'] != true) {
+        return (
+          ok: false,
+          err: map?['error']?.toString() ?? 'No se pudo enviar el precio.',
+        );
+      }
+      return (ok: true, err: null);
+    } catch (e) {
+      return (ok: false, err: e.toString());
+    }
+  }
+
+  /// Mientras espera la aprobación: si el pasajero eligió a otro, hay que salir.
+  /// [yaEnvioPrecio] permite reabrir la espera tras reiniciar el teléfono.
+  Future<
+      ({
+        String estado,
+        bool soyElegido,
+        bool yaEnvioPrecio,
+        double? precioEnviadoUsd,
+      })?> estadoConsultaParaChofer(
+    String solicitudId,
+  ) async {
+    try {
+      final res = await _db.rpc(
+        'taxi_consulta_estado_para_chofer',
+        params: {'p_solicitud_id': solicitudId},
+      );
+      if (res is! Map || res['ok'] != true) return null;
+      return (
+        estado: (res['estado']?.toString() ?? '').toLowerCase(),
+        soyElegido: res['soy_elegido'] == true,
+        yaEnvioPrecio: res['ya_envio_precio'] == true,
+        precioEnviadoUsd: (res['precio_enviado_usd'] as num?)?.toDouble(),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<TaxiOfertaChofer?> detalleOferta(String solicitudId) async {
     final res = await _db.rpc(
       'taxi_oferta_detalle_chofer',
       params: {'p_solicitud_id': solicitudId},
     );
     if (res is! Map || res['ok'] != true) return null;
-    return TaxiOfertaChofer.fromJson(Map<String, dynamic>.from(res));
+    final map = Map<String, dynamic>.from(res);
+    try {
+      final flag = await _db.rpc(
+        'taxi_solicitud_es_ida_vuelta',
+        params: {'p_solicitud_id': solicitudId},
+      );
+      if (flag == true) map['ida_vuelta'] = true;
+    } catch (_) {}
+    return TaxiOfertaChofer.fromJson(map);
   }
 
   /// Viaje aceptado / en curso del chofer autenticado (para reabrir el mapa).
