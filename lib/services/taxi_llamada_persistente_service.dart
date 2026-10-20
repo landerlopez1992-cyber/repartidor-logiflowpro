@@ -244,11 +244,13 @@ class TaxiLlamadaPersistenteService {
     } catch (e) {
       print('⚠️ pitido viaje comenzó: $e');
     }
-    try {
-      if (await Vibration.hasVibrator() == true) {
-        await Vibration.vibrate(duration: 700);
-      }
-    } catch (_) {}
+    unawaited(Future<void>.delayed(const Duration(milliseconds: 800), () async {
+      try {
+        if (await Vibration.hasVibrator() == true) {
+          await Vibration.vibrate(duration: 700);
+        }
+      } catch (_) {}
+    }));
   }
 
   /// El timbre en bucle solo vive en la pantalla abierta.

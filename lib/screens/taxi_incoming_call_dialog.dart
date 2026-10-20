@@ -234,13 +234,13 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
             resultado: true,
           );
           if (!mounted) return;
-          final oferta = _oferta;
           Navigator.of(context).pop(true);
           final rootNav = RepartidorNavigator.state;
-          if (oferta != null && rootNav != null) {
+          if (rootNav != null &&
+              TaxiIncomingCallDialog._viajeAbierto.add(widget.solicitudId.trim())) {
             await rootNav.push(
               MaterialPageRoute<void>(
-                builder: (_) => TaxiNavegacionChoferScreen(oferta: oferta),
+                builder: (_) => TaxiNavegacionChoferScreen(oferta: o),
               ),
             );
           }
@@ -276,13 +276,13 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
             resultado: true,
           );
           if (_esperandoUsuario && mounted) {
-            final oferta = _oferta;
             Navigator.of(context).pop(true);
             final rootNav = RepartidorNavigator.state;
-            if (oferta != null && rootNav != null) {
+            if (rootNav != null &&
+                TaxiIncomingCallDialog._viajeAbierto.add(widget.solicitudId.trim())) {
               await rootNav.push(
                 MaterialPageRoute<void>(
-                  builder: (_) => TaxiNavegacionChoferScreen(oferta: oferta),
+                  builder: (_) => TaxiNavegacionChoferScreen(oferta: o),
                 ),
               );
             }
