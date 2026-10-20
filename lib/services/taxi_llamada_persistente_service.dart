@@ -29,6 +29,7 @@ class TaxiLlamadaPersistenteService {
 
   FlutterLocalNotificationsPlugin? _plugin;
   AudioPlayer? _player;
+  AudioPlayer? _pitidoPlayer;
   AudioContext? _audioCtx;
   Timer? _vibTimer;
   Timer? _pollTimer;
@@ -39,6 +40,7 @@ class TaxiLlamadaPersistenteService {
   int _epoch = 0;
   bool _puedeVibrar = false;
   final Set<String> _sinTimbre = <String>{};
+  final Set<String> _pitidoInicioHecho = <String>{};
 
   String? get solicitudActiva => _solicitudId;
   bool get activa => _solicitudId != null;
@@ -224,6 +226,29 @@ class TaxiLlamadaPersistenteService {
     }
 
     return completer.future;
+  }
+
+  /// Un solo pitido cuando el pasajero ya pagó y el viaje comenzó.
+  /// No usa el timbre en bucle de la oferta.
+  Future<void> pitidoViajeComenzo(String solicitudId) async {
+    final id = solicitudId.trim();
+    if (id.isEmpty || !_pitidoInicioHecho.add(id)) return;
+    try {
+      _pitidoPlayer ??= AudioPlayer();
+      final ctx = _audioCtx ?? _crearContextoAlarma();
+      await _pitidoPlayer!.setAudioContext(ctx);
+      await _pitidoPlayer!.setReleaseMode(ReleaseMode.release);
+      await _pitidoPlayer!.setVolume(1.0);
+      await _pitidoPlayer!.stop();
+      await _pitidoPlayer!.play(AssetSource(_assetFallback));
+    } catch (e) {
+      print('⚠️ pitido viaje comenzó: $e');
+    }
+    try {
+      if (await Vibration.hasVibrator() == true) {
+        await Vibration.vibrate(duration: 700);
+      }
+    } catch (_) {}
   }
 
   /// El timbre en bucle solo vive en la pantalla abierta.

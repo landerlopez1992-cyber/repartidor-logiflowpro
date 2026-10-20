@@ -226,6 +226,10 @@ class FirebaseMessagingService {
         unawaited(handleRemoteMessage(message));
         return;
       }
+      if (tipo == RepartidorNotificacionTipos.taxiViajeIniciado) {
+        unawaited(_avisarViajeComenzo(message));
+        return;
+      }
       unawaited(_showLocalFromRemote(message));
     });
 
@@ -270,6 +274,19 @@ class FirebaseMessagingService {
       ),
       payload: payload,
     );
+  }
+
+  Future<void> _avisarViajeComenzo(RemoteMessage message) async {
+    final id = (message.data['numero_orden'] ?? message.data['orden_id'] ?? '')
+        .toString()
+        .trim();
+    if (id.isEmpty) return;
+    await TaxiLlamadaPersistenteService.instance.pitidoViajeComenzo(id);
+    if (TaxiIncomingCallDialog.hayPantallaEspera) {
+      TaxiIncomingCallDialog.refrescarEspera(id);
+      return;
+    }
+    await TaxiIncomingCallDialog.abrirViajeYaPagado(id);
   }
 
   static String? payloadFromData(Map<String, dynamic> data) {
@@ -344,6 +361,16 @@ class FirebaseMessagingService {
       if (nav == null) return;
       // El dialog ya arranca la alerta persistente (evitar doble iniciar).
       await TaxiIncomingCallDialog.show(nav.context, solicitudId);
+      return;
+    }
+    if (tipo == RepartidorNotificacionTipos.taxiViajeIniciado ||
+        t == 'TAXI_VIAJE_INICIADO') {
+      final solicitudId =
+          numeroOrden.isNotEmpty ? numeroOrden : ordenId;
+      if (solicitudId.isEmpty) return;
+      await TaxiLlamadaPersistenteService.instance
+          .pitidoViajeComenzo(solicitudId);
+      await TaxiIncomingCallDialog.abrirViajeYaPagado(solicitudId);
       return;
     }
     if (RepartidorNotificacionTipos.tiposTaxiReservaCancelada.contains(tipo) ||

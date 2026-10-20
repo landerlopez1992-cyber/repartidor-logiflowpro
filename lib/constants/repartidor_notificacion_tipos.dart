@@ -6,6 +6,7 @@ class RepartidorNotificacionTipos {
   static const String legacyOrdenNueva = 'ORDEN_NUEVA';
 
   static const String taxiViaje = 'taxi_viaje';
+  static const String taxiViajeIniciado = 'taxi_viaje_iniciado';
   static const String taxiReserva = 'taxi_reserva';
   static const String taxiReservaCancelada = 'taxi_reserva_cancelada';
   static const String taxiViajeCompletado = 'taxi_viaje_completado';
@@ -26,6 +27,7 @@ class RepartidorNotificacionTipos {
   /// Badge / lista de notificaciones (todos los avisos del módulo taxi).
   static const List<String> tiposTaxiTodos = [
     taxiViaje,
+    taxiViajeIniciado,
     taxiReserva,
     taxiReservaCancelada,
     taxiViajeCompletado,

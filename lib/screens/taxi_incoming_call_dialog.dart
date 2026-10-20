@@ -26,6 +26,50 @@ class TaxiIncomingCallDialog extends StatefulWidget {
   final String solicitudId;
 
   static String? _solicitudMostrada;
+  static void Function(String solicitudId)? _refrescarEspera;
+
+  /// La pantalla de espera sigue abierta: el push puede despertarla al momento.
+  static void refrescarEspera(String solicitudId) {
+    _refrescarEspera?.call(solicitudId);
+  }
+
+  static bool get hayPantallaEspera => _refrescarEspera != null;
+
+  static final Set<String> _viajeAbierto = <String>{};
+
+  /// El pasajero ya pagó y esta pantalla de oferta no está abierta.
+  static Future<void> abrirViajeYaPagado(String solicitudId) async {
+    final id = solicitudId.trim();
+    if (id.isEmpty || !_viajeAbierto.add(id)) return;
+    if (hayPantallaEspera) {
+      _viajeAbierto.remove(id);
+      refrescarEspera(id);
+      return;
+    }
+    try {
+      final oferta = await TaxiChoferService.instance.detalleOferta(id);
+      final activo = await TaxiChoferService.instance.viajeActivo();
+      final mio = oferta != null &&
+          activo != null &&
+          activo.id.trim() == id;
+      if (!mio) {
+        _viajeAbierto.remove(id);
+        return;
+      }
+      final nav = RepartidorNavigator.state;
+      if (nav == null) {
+        _viajeAbierto.remove(id);
+        return;
+      }
+      await nav.push(
+        MaterialPageRoute<void>(
+          builder: (_) => TaxiNavegacionChoferScreen(oferta: oferta),
+        ),
+      );
+    } catch (_) {
+      _viajeAbierto.remove(id);
+    }
+  }
 
   /// Oferta aún disponible para aceptar/rechazar (inmediato o reserva futura).
   static bool esOfertaEntranteValida(String raw) {
@@ -124,6 +168,10 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
     _cargar();
     _pollUi =
         Timer.periodic(const Duration(seconds: 4), (_) => _cargarSilencioso());
+    TaxiIncomingCallDialog._refrescarEspera = (id) {
+      if (!mounted || id.trim() != widget.solicitudId.trim()) return;
+      unawaited(_cargarSilencioso());
+    };
   }
 
   Future<void> _cerrarViajePerdido(String motivo) async {
@@ -179,6 +227,8 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
           return;
         }
         if (soy && _estadoViajeAsignado(estado)) {
+          await TaxiLlamadaPersistenteService.instance
+              .pitidoViajeComenzo(widget.solicitudId);
           await TaxiLlamadaPersistenteService.instance.detener(
             motivo: 'viaje_en_curso',
             resultado: true,
@@ -197,6 +247,8 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
           return;
         }
         if (soy && estado == 'buscando_chofer') {
+          await TaxiLlamadaPersistenteService.instance
+              .pitidoViajeComenzo(widget.solicitudId);
           if (mounted && !_listoParaAceptar) {
             setState(() => _listoParaAceptar = true);
           }
@@ -217,6 +269,8 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
         final mio = activo != null &&
             activo.id.trim() == widget.solicitudId.trim();
         if (mio) {
+          await TaxiLlamadaPersistenteService.instance
+              .pitidoViajeComenzo(widget.solicitudId);
           await TaxiLlamadaPersistenteService.instance.detener(
             motivo: 'viaje_en_curso',
             resultado: true,
@@ -348,16 +402,36 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
     try {
       final res = await TaxiChoferService.instance.aceptar(widget.solicitudId);
       if (!mounted) return;
-      if (!res.ok || res.oferta == null) {
+        if (!res.ok || res.oferta == null) {
         setState(() => _busy = false);
         final msg = TaxiChoferService.mensajeErrorUsuario(res.err);
+        final low = (res.err ?? msg).toLowerCase();
+        if (low.contains('ya_tomado') || low.contains('ya aceptó')) {
+          final activo = await TaxiChoferService.instance.viajeActivo();
+          if (!mounted) return;
+          final mio = activo != null &&
+              activo.id.trim() == widget.solicitudId.trim();
+          if (mio) {
+            await TaxiLlamadaPersistenteService.instance.onAceptadoDesdeUi();
+            if (!mounted) return;
+            Navigator.of(context).pop(true);
+            final rootNav = RepartidorNavigator.state;
+            if (rootNav != null) {
+              await rootNav.push(
+                MaterialPageRoute<void>(
+                  builder: (_) => TaxiNavegacionChoferScreen(oferta: activo),
+                ),
+              );
+            }
+            return;
+          }
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(msg),
             backgroundColor: AppColors.error,
           ),
         );
-        final low = (res.err ?? msg).toLowerCase();
         if (low.contains('ya_tomado') ||
             low.contains('otro socio') ||
             low.contains('no está disponible') ||
@@ -547,6 +621,9 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
   @override
   void dispose() {
     _pollUi?.cancel();
+    if (TaxiIncomingCallDialog._refrescarEspera != null) {
+      TaxiIncomingCallDialog._refrescarEspera = null;
+    }
     _pulse.dispose();
     _precioCtrl.dispose();
     if (_esperandoUsuario) {
@@ -908,7 +985,7 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                 if (_listoParaAceptar) ...[
                   const SizedBox(height: 20),
                   const Text(
-                    'El pasajero eligió tu precio',
+                    'El pasajero ya pagó',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: Color(0xFFECEFF1),
@@ -929,26 +1006,13 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                     ),
                   ],
                   const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 58,
-                    child: ElevatedButton(
-                      onPressed: _busy ? null : _aceptar,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFFF9800),
-                        foregroundColor: const Color(0xFF12151C),
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      child: const Text(
-                        'Aceptar viaje',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 18,
-                        ),
-                      ),
+                  const Text(
+                    'Iniciando el viaje…',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFF9CA3AF),
+                      fontSize: 14,
+                      height: 1.35,
                     ),
                   ),
                 ],
