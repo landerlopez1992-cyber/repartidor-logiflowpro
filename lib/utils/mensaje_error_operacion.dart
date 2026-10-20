@@ -65,6 +65,9 @@ String _desdePostgrest(PostgrestException e, {String? contexto}) {
   if (blob.contains('violates not-null') || code == '23502') {
     return 'Faltan datos obligatorios. Revisa el formulario.';
   }
+  if (blob.contains('horario de atención') || blob.contains('horario de atencion')) {
+    return 'No es horario de atención. El soporte atiende de lunes a viernes, de 9:00 a 17:00.';
+  }
   return _mensajeGenerico(contexto);
 }
 

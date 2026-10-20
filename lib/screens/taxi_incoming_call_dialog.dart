@@ -89,6 +89,7 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
   bool _loading = true;
   bool _busy = false;
   bool _esperandoUsuario = false;
+  bool _listoParaAceptar = false;
   double? _precioEnviadoUsd;
   final _precioCtrl = TextEditingController();
   late final AnimationController _pulse;
@@ -195,10 +196,14 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
           }
           return;
         }
+        if (soy && estado == 'buscando_chofer') {
+          if (mounted && !_listoParaAceptar) {
+            setState(() => _listoParaAceptar = true);
+          }
+          return;
+        }
         if (soy &&
-            (estado == 'cotizado' ||
-                estado == 'buscando_chofer' ||
-                estado == 'pidiendo_precios')) {
+            (estado == 'cotizado' || estado == 'pidiendo_precios')) {
           return;
         }
         if (!soy && estado != 'pidiendo_precios') {
@@ -863,7 +868,7 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                     ),
                   ),
                 ],
-                if (_esConsultaPrecio(o) && _esperandoUsuario) ...[
+                if (_esConsultaPrecio(o) && _esperandoUsuario && !_listoParaAceptar) ...[
                   const SizedBox(height: 20),
                   const RepartidorLoadingSpinner.large(),
                   const SizedBox(height: 16),
@@ -897,6 +902,53 @@ class _TaxiIncomingCallDialogState extends State<TaxiIncomingCallDialog>
                       color: Color(0xFF9CA3AF),
                       fontSize: 13,
                       height: 1.35,
+                    ),
+                  ),
+                ],
+                if (_listoParaAceptar) ...[
+                  const SizedBox(height: 20),
+                  const Text(
+                    'El pasajero eligió tu precio',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFFECEFF1),
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  if (_precioEnviadoUsd != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Tu precio: \$${_precioEnviadoUsd!.toStringAsFixed(2)}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Color(0xFFFF9800),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 58,
+                    child: ElevatedButton(
+                      onPressed: _busy ? null : _aceptar,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFF9800),
+                        foregroundColor: const Color(0xFF12151C),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: const Text(
+                        'Aceptar viaje',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 18,
+                        ),
+                      ),
                     ),
                   ),
                 ],

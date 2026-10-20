@@ -191,13 +191,19 @@ class TaxiLlamadaPersistenteService {
         return completer.future;
       }
 
+      if (_sinTimbre.contains(id)) {
+        if (!completer.isCompleted) completer.complete(false);
+        return completer.future;
+      }
+      _puedeVibrar = true;
       await _mostrarNotificacionPersistente(
         titulo: titulo,
         mensaje: mensaje,
         solicitudId: id,
       );
       // Si otro detener/reemplazo invalidó este ciclo, no seguir.
-      if (!identical(_resultado, completer)) {
+      if (!identical(_resultado, completer) || !_puedeVibrar) {
+        await _cortarMedios();
         if (!completer.isCompleted) completer.complete(null);
         return completer.future;
       }
@@ -259,7 +265,7 @@ class TaxiLlamadaPersistenteService {
     String mensaje = 'Toca para aceptar o rechazar',
   }) async {
     final id = solicitudId.trim();
-    if (id.isEmpty) return;
+    if (id.isEmpty || _sinTimbre.contains(id)) return;
     _solicitudId ??= id;
     try {
       await _mostrarNotificacionPersistente(
@@ -420,13 +426,13 @@ class TaxiLlamadaPersistenteService {
     final epoch = _epoch;
     final solicitud = _solicitudId;
     if (solicitud != null && _sinTimbre.contains(solicitud)) return;
+    _puedeVibrar = true;
 
     var ok = await _playAssetLoop(_assetRingtone, epoch);
     if (!ok && epoch == _epoch) {
       ok = await _playAssetLoop(_assetFallback, epoch);
     }
-    if (epoch != _epoch || _solicitudId == null) {
-      if (epoch != _epoch) return;
+    if (epoch != _epoch || _solicitudId == null || !_puedeVibrar) {
       await _cortarMedios();
       return;
     }
@@ -438,19 +444,27 @@ class TaxiLlamadaPersistenteService {
     }
 
     Future<void> vibrar() async {
-      if (epoch != _epoch) return;
+      if (!_puedeVibrar || epoch != _epoch) return;
       try {
         if (await Vibration.hasVibrator() == true) {
-          if (epoch != _epoch) return;
-          await Vibration.vibrate(pattern: [0, 500, 200, 500]);
+          if (!_puedeVibrar || epoch != _epoch) return;
+          await Vibration.vibrate(pattern: [0, 400, 200, 400], repeat: -1);
+          if (!_puedeVibrar || epoch != _epoch) {
+            await Vibration.cancel();
+          }
         }
       } catch (_) {}
     }
 
+    if (!_puedeVibrar || epoch != _epoch) return;
     unawaited(vibrar());
     _vibTimer?.cancel();
     _vibTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      if (epoch != _epoch) return;
+      if (!_puedeVibrar || epoch != _epoch) {
+        _vibTimer?.cancel();
+        _vibTimer = null;
+        return;
+      }
       unawaited(vibrar());
     });
 
@@ -492,7 +506,7 @@ class TaxiLlamadaPersistenteService {
       playSound: false,
       enableVibration: false,
       icon: '@mipmap/ic_launcher',
-      category: AndroidNotificationCategory.call,
+      category: AndroidNotificationCategory.status,
       ongoing: true,
       autoCancel: false,
       fullScreenIntent: true,
@@ -527,6 +541,9 @@ class TaxiLlamadaPersistenteService {
         NotificationDetails(android: android, iOS: ios),
         payload: payload,
       );
+      if (_sinTimbre.contains(solicitudId.trim())) {
+        await plugin.cancel(notificacionId);
+      }
     } catch (e) {
       print('⚠️ Notificación persistente taxi: $e');
     }

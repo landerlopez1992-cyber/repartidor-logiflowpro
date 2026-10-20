@@ -1040,10 +1040,14 @@ class _ChatSoporteFiltradoScreenState extends State<ChatSoporteFiltradoScreen> {
     } catch (e) {
       print('❌ Error al enviar mensaje: $e');
       if (mounted) {
+        _mensajeController.text = mensaje;
+        _mensajeController.selection = TextSelection.collapsed(
+          offset: _mensajeController.text.length,
+        );
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(mensajeErrorOperacion(e, contexto: 'chat')),
-            backgroundColor: Colors.orange,
+            backgroundColor: const Color(0xFF37474F),
           ),
         );
       }
