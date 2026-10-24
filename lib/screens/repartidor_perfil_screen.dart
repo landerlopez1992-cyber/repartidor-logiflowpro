@@ -2153,7 +2153,14 @@ class _RepartidorPerfilScreenState extends State<RepartidorPerfilScreen> {
       );
       final data = res.data;
       if (data is! Map || data['ok'] != true) {
+        final code = data is Map ? (data['code']?.toString() ?? '') : '';
         final errMsg = data is Map ? (data['error']?.toString() ?? '') : '';
+        if (code == 'CUENTA_EN_REVISION' ||
+            errMsg.toLowerCase().contains('revisión')) {
+          throw Exception(
+            'Tu cuenta está en revisión. No puedes eliminarla hasta que la empresa cierre la investigación. Contacta a soporte.',
+          );
+        }
         throw Exception(
           errMsg.isNotEmpty ? errMsg : 'No se pudo eliminar la cuenta',
         );
